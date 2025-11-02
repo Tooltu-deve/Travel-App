@@ -1,18 +1,11 @@
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Tabs } from 'expo-router';
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COLORS } from '@/constants';
-import FavoritesScreen from '@/screens/FavoritesScreen/FavoritesScreen';
-import HomeScreen from '@/screens/HomeScreen/HomeScreen';
-import ItineraryScreen from '@/screens/ItineraryScreen/ItineraryScreen';
-import NotificationScreen from '@/screens/NotificationScreen/NotificationScreen';
-import ProfileScreen from '@/screens/ProfileScreen/ProfileScreen';
-
-const Tab = createBottomTabNavigator();
 
 // Custom Tab Icon Component with Animation
 const TabIcon: React.FC<{
@@ -24,11 +17,9 @@ const TabIcon: React.FC<{
 }> = ({ focused, color, iconName, iconLibrary = 'FontAwesome', size = 22 }) => {
   const IconComponent = iconLibrary === 'MaterialCommunityIcons' ? MaterialCommunityIcons : FontAwesome;
   
-  // Animation value
   const scaleAnim = useRef(new Animated.Value(1)).current;
   
   useEffect(() => {
-    // Animation đơn giản: scale lên rồi về
     Animated.sequence([
       Animated.timing(scaleAnim, {
         toValue: focused ? 1.3 : 1,
@@ -65,7 +56,7 @@ const TabIcon: React.FC<{
   );
 };
 
-export const BottomTabNavigator: React.FC = () => {
+export default function TabLayout() {
   const insets = useSafeAreaInsets();
   
   return (
@@ -80,7 +71,7 @@ export const BottomTabNavigator: React.FC = () => {
       {/* Blue border line with shadow on top of tab bar */}
       <View style={[styles.topBorderLine, { bottom: 70 + insets.bottom }]} pointerEvents="none" />
       
-      <Tab.Navigator
+      <Tabs
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: COLORS.primary,
@@ -104,99 +95,69 @@ export const BottomTabNavigator: React.FC = () => {
             marginTop: 0,
           },
           tabBarHideOnKeyboard: true,
-          lazy: true,
         }}
       >
-      {/* Itinerary Tab */}
-      <Tab.Screen
-        name="itinerary"
-        component={ItineraryScreen}
-        options={{
-          tabBarLabel: 'Lộ trình',
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon 
-              focused={focused} 
-              color={color} 
-              iconName="map-outline" 
-              iconLibrary="MaterialCommunityIcons"
-              size={24}
-            />
-          ),
-        }}
-      />
-
-      {/* Favorites Tab */}
-      <Tab.Screen
-        name="favorites"
-        component={FavoritesScreen}
-        options={{
-          tabBarLabel: 'Yêu thích',
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon 
-              focused={focused} 
-              color={color} 
-              iconName="heart" 
-              size={22}
-            />
-          ),
-        }}
-      />
-
-      {/* Home Tab */}
-      <Tab.Screen
-        name="home"
-        component={HomeScreen}
-        options={{
-          tabBarLabel: 'Trang chủ',
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon 
-              focused={focused} 
-              color={color} 
-              iconName="home" 
-              size={24}
-            />
-          ),
-        }}
-      />
-
-      {/* Notifications Tab */}
-      <Tab.Screen
-        name="notifications"
-        component={NotificationScreen}
-        options={{
-          tabBarLabel: 'Thông báo',
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon 
-              focused={focused} 
-              color={color} 
-              iconName="bell" 
-              size={22}
-            />
-          ),
-        }}
-      />
-
-      {/* Profile Tab */}
-      <Tab.Screen
-        name="profile"
-        component={ProfileScreen}
-        options={{
-          tabBarLabel: 'Tài khoản',
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon 
-              focused={focused} 
-              color={color} 
-              iconName="user-circle" 
-              size={22}
-            />
-          ),
-        }}
-      />
-    </Tab.Navigator>
-    <View style={[styles.safeAreaBottom, { height: insets.bottom, backgroundColor: '#FFFFFF' }]} />
+        <Tabs.Screen
+          name="itinerary"
+          options={{
+            title: 'Lộ trình',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon 
+                focused={focused} 
+                color={color} 
+                iconName="map-outline" 
+                iconLibrary="MaterialCommunityIcons"
+                size={24}
+              />
+            ),
+          }}
+        />
+        
+        <Tabs.Screen
+          name="favorites"
+          options={{
+            title: 'Yêu thích',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon focused={focused} color={color} iconName="heart" size={22} />
+            ),
+          }}
+        />
+        
+        <Tabs.Screen
+          name="index"
+          options={{
+            title: 'Trang chủ',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon focused={focused} color={color} iconName="home" size={24} />
+            ),
+          }}
+        />
+        
+        <Tabs.Screen
+          name="notifications"
+          options={{
+            title: 'Thông báo',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon focused={focused} color={color} iconName="bell" size={22} />
+            ),
+          }}
+        />
+        
+        <Tabs.Screen
+          name="profile"
+          options={{
+            title: 'Tài khoản',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon focused={focused} color={color} iconName="user-circle" size={22} />
+            ),
+          }}
+        />
+      </Tabs>
+      
+      <View style={[styles.safeAreaBottom, { height: insets.bottom, backgroundColor: '#FFFFFF' }]} />
     </>
   );
-};
+}
 
 const styles = StyleSheet.create({
   topBorderLine: {

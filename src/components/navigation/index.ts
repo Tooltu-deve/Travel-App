@@ -1,1 +1,0 @@
-export { BottomTabNavigator } from './BottomTabNavigator';

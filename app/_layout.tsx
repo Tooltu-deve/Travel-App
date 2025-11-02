@@ -1,7 +1,10 @@
-import React from "react";
-import "./global.css";
-import { BottomTabNavigator } from "@/components/navigation/BottomTabNavigator";
+import { Stack } from 'expo-router';
+import './global.css';
 
 export default function RootLayout() {
-  return <BottomTabNavigator />;
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+    </Stack>
+  );
 }
