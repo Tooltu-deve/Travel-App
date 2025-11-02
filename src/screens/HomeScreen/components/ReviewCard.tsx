@@ -1,7 +1,7 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
 import { COLORS, SPACING } from '@/constants';
+import { FontAwesome } from '@expo/vector-icons';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
 interface ReviewCardProps {
   review: {
@@ -20,12 +20,12 @@ export const ReviewCard: React.FC<ReviewCardProps> = ({ review }) => {
       <View style={styles.reviewHeader}>
         <View style={styles.reviewUserInfo}>
           <View style={styles.avatarPlaceholder}>
-            <FontAwesome name="user" size={20} color="#3083ffc9" />
+            <FontAwesome name="user" size={20} color={COLORS.primary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.reviewUserName}>{review.userName}</Text>
             <View style={styles.reviewLocationContainer}>
-              <FontAwesome name="map-marker" size={12} color="#3083ffc9" />
+              <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
               <Text style={styles.reviewLocation}>{review.location}</Text>
             </View>
           </View>
@@ -104,7 +104,7 @@ const styles = StyleSheet.create({
 
   reviewLocation: {
     fontSize: 12,
-    color: '#3083ffc9',
+    color: COLORS.primary,
     fontWeight: '500',
   },
 

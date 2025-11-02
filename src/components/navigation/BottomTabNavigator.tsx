@@ -1,13 +1,13 @@
-import React, { useEffect, useRef } from 'react';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, StyleSheet, Text, Platform, Animated } from 'react-native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { LinearGradient } from 'expo-linear-gradient';
+import React, { useEffect, useRef } from 'react';
+import { Animated, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COLORS } from '@/constants';
-import HomeScreen from '@/screens/HomeScreen/HomeScreen';
 import FavoritesScreen from '@/screens/FavoritesScreen/FavoritesScreen';
+import HomeScreen from '@/screens/HomeScreen/HomeScreen';
 import ItineraryScreen from '@/screens/ItineraryScreen/ItineraryScreen';
 import NotificationScreen from '@/screens/NotificationScreen/NotificationScreen';
 import ProfileScreen from '@/screens/ProfileScreen/ProfileScreen';
@@ -48,7 +48,7 @@ const TabIcon: React.FC<{
       <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
         {focused ? (
           <LinearGradient
-            colors={['#3083ff', '#60a5ff']}
+            colors={[COLORS.primary, '#60a5ff']}
             style={styles.activeIconBackground}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
@@ -72,7 +72,7 @@ export const BottomTabNavigator: React.FC = () => {
     <>
       {/* Shadow gradient overlay above tab bar - positioned ABOVE the border */}
       <LinearGradient
-        colors={['rgba(48, 131, 255, 0)', 'rgba(48, 131, 255, 0.15)', 'rgba(48, 131, 255, 0.25)']}
+        colors={['rgba(0, 163, 255, 0)', 'rgba(0, 163, 255, 0.15)', 'rgba(0, 163, 255, 0.25)']}
         style={[styles.shadowGradient, { bottom: 70 + insets.bottom + 2 }]}
         pointerEvents="none"
       />
@@ -83,7 +83,7 @@ export const BottomTabNavigator: React.FC = () => {
       <Tab.Navigator
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: '#3083ff',
+          tabBarActiveTintColor: COLORS.primary,
           tabBarInactiveTintColor: '#8E9AAF',
           tabBarShowLabel: true,
           tabBarStyle: {
@@ -204,9 +204,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 2,
-    backgroundColor: '#3083ff',
+    backgroundColor: COLORS.primary,
     zIndex: 1001,
-    shadowColor: '#3083ff',
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.4,
     shadowRadius: 6,
@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#3083ff',
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,

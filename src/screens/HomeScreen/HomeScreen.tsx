@@ -1,20 +1,20 @@
-﻿import React, { useState, useRef, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Dimensions,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  Animated,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+﻿import { COLORS, SPACING } from '@/constants';
 import { FontAwesome } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+    Animated,
+    Dimensions,
+    NativeScrollEvent,
+    NativeSyntheticEvent,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { COLORS, SPACING } from '@/constants';
-import { DestinationCard, CategorySection, ReviewCard, ChatButton, SearchBar } from './components';
+import { CategorySection, ChatButton, DestinationCard, ReviewCard, SearchBar } from './components';
 import { featuredDestinations, reviews } from './mockData';
 
 const { width } = Dimensions.get('window');
@@ -147,7 +147,7 @@ const HomeScreen: React.FC = () => {
           <View style={[styles.headerButtonsContainer, { top: insets.top + SPACING.md }]}>
             <SearchBar onExpandChange={setIsSearchExpanded} />
             <TouchableOpacity style={styles.headerButton}>
-              <FontAwesome name="cog" size={22} color="#3083ffc9" />
+              <FontAwesome name="cog" size={22} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -198,7 +198,7 @@ const HomeScreen: React.FC = () => {
 
         {/* Divider before categories */}
         <LinearGradient
-          colors={['rgba(48, 131, 255, 0)', 'rgba(48, 131, 255, 0.3)', 'rgba(48, 131, 255, 0)']}
+          colors={['rgba(0, 163, 255, 0)', 'rgba(0, 163, 255, 0.3)', 'rgba(0, 163, 255, 0)']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={styles.sectionDivider}
@@ -211,7 +211,7 @@ const HomeScreen: React.FC = () => {
 
         {/* Divider before reviews */}
         <LinearGradient
-          colors={['rgba(48, 131, 255, 0)', 'rgba(48, 131, 255, 0.3)', 'rgba(48, 131, 255, 0)']}
+          colors={['rgba(0, 163, 255, 0)', 'rgba(0, 163, 255, 0.3)', 'rgba(0, 163, 255, 0)']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={styles.sectionDivider}
@@ -235,7 +235,7 @@ const HomeScreen: React.FC = () => {
               <FontAwesome 
                 name={showAllReviews ? 'angle-up' : 'angle-down'} 
                 size={18} 
-                color="#3083ff" 
+                color={COLORS.primary} 
               />
             </TouchableOpacity>
           )}
@@ -294,17 +294,17 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     marginBottom: SPACING.xs / 2,
     letterSpacing: 0.5,
-    textShadowColor: 'rgba(48, 131, 255, 0.15)',
+    textShadowColor: 'rgba(0, 163, 255, 0.15)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
   },
   subtitleText: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#3083ff',
+    color: COLORS.primary,
     fontStyle: 'italic',
     letterSpacing: 1,
-    textShadowColor: 'rgba(48, 131, 255, 0.1)',
+    textShadowColor: 'rgba(0, 163, 255, 0.1)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
@@ -325,7 +325,7 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     paddingHorizontal: SPACING.xs,
     letterSpacing: 0.5,
-    textShadowColor: 'rgba(48, 131, 255, 0.25)',
+    textShadowColor: 'rgba(0, 163, 255, 0.25)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
@@ -370,7 +370,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xs,
     paddingHorizontal: SPACING.xs,
     letterSpacing: 0.5,
-    textShadowColor: 'rgba(48, 131, 255, 0.25)',
+    textShadowColor: 'rgba(0, 163, 255, 0.25)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
@@ -389,7 +389,7 @@ const styles = StyleSheet.create({
   showMoreText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#3083ff',
+    color: COLORS.primary,
   },
 });
 

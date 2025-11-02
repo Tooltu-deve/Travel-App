@@ -1,7 +1,8 @@
-import React, { useRef, useEffect } from 'react';
-import { TouchableOpacity, View, StyleSheet, Animated } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { COLORS } from '@/constants';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useEffect, useRef } from 'react';
+import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
 
 interface ChatButtonProps {
   visible: boolean;
@@ -38,13 +39,13 @@ export const ChatButton: React.FC<ChatButtonProps> = ({ visible }) => {
     >
       <TouchableOpacity activeOpacity={0.8}>
         <LinearGradient
-          colors={['#FFFFFF', '#b4d2ffff', '#3083FF']}
+          colors={['#FFFFFF', '#b4d2ffff', COLORS.primary]}
           style={styles.chatBubbleGradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
         >
           <View style={styles.chatBubbleInner}>
-            <MaterialCommunityIcons name="robot" size={32} color="#3083FF" />
+            <MaterialCommunityIcons name="robot" size={32} color={COLORS.primary} />
           </View>
         </LinearGradient>
       </TouchableOpacity>
@@ -60,7 +61,7 @@ const styles = StyleSheet.create({
     width: 65,
     height: 65,
     borderRadius: 32.5,
-    shadowColor: '#3083FF',
+    shadowColor: COLORS.primary,
     shadowOffset: {
       width: 0,
       height: 6,

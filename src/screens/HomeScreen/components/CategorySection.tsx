@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
 import { COLORS, SPACING } from '@/constants';
+import { FontAwesome } from '@expo/vector-icons';
+import React, { useEffect, useState } from 'react';
+import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface CategorySectionProps {
   isExpanded: boolean;
@@ -72,7 +72,7 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
                 <FontAwesome 
                   name={category.icon as any} 
                   size={24} 
-                  color="#3083ffc9" 
+                  color={COLORS.primary} 
                 />
               </View>
               <Text style={styles.categoryName}>{category.name}</Text>
@@ -88,7 +88,7 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
               onPress={onToggleExpanded}
             >
               <View style={styles.categoryIconContainer}>
-                <FontAwesome name="angle-down" size={24} color="#3083ffc9" />
+                <FontAwesome name="angle-down" size={24} color={COLORS.primary} />
               </View>
               <Text style={styles.categoryName}>Xem thêm</Text>
             </TouchableOpacity>
@@ -112,7 +112,7 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
                 <FontAwesome 
                   name={category.icon as any} 
                   size={24} 
-                  color="#3083ffc9" 
+                  color={COLORS.primary} 
                 />
               </View>
               <Text style={styles.categoryName}>{category.name}</Text>
@@ -128,7 +128,7 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
             onPress={onToggleExpanded}
           >
             <Text style={styles.collapseButtonText}>Thu gọn</Text>
-            <FontAwesome name="angle-up" size={16} color="#3083ffc9" />
+            <FontAwesome name="angle-up" size={16} color={COLORS.primary} />
           </TouchableOpacity>
         </Animated.View>
       )}
@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
     paddingHorizontal: SPACING.xs,
     letterSpacing: 0.5,
-    textShadowColor: 'rgba(48, 131, 255, 0.25)',
+    textShadowColor: 'rgba(0, 163, 255, 0.25)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
@@ -177,7 +177,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0f4ff',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#3083ffc9',
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
 
   collapseButtonText: {
     fontSize: 14,
-    color: '#3083ffc9',
+    color: COLORS.primary,
     fontWeight: '600',
   },
 });
