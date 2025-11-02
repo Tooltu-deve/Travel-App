@@ -1,7 +1,6 @@
-import React from "react";
+import { Stack } from "expo-router";
 import "./global.css";
-import { BottomTabNavigator } from "@/components/navigation/BottomTabNavigator";
 
 export default function RootLayout() {
-  return <BottomTabNavigator />;
+  return <Stack />;
 }
