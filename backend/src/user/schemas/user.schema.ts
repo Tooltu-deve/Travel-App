@@ -1,30 +1,58 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 
-export type UserDocument = User & Document;
+export type UserDocument = Document & {
+  _id: Types.ObjectId;
+  email: string;
+  password?: string | null;
+  fullName: string;
+  avatar?: string;
+  googleId?: string;
+  facebookId?: string;
+  id: string;
+};
 
-@Schema({ timestamps: true })
+@Schema({
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+})
 export class User {
-  @Prop({ required: true, unique: true, index: true })
+  _id: Types.ObjectId;
+
+  @Prop({ type: String, required: true, unique: true, index: true })
   email: string;
 
-  @Prop({ required: true })
-  password: string;
+  @Prop({ type: String, required: false, default: null })
+  password?: string | null;
 
-  @Prop()
+  @Prop({ type: String, required: true })
   fullName: string;
 
-  // Thêm các trường khác bạn cần: avatar, preferences (sở thích du lịch),...
+  @Prop({ type: String, required: false })
+  avatar?: string;
+
+  @Prop({ type: String, unique: true, sparse: true, required: false })
+  googleId?: string;
+
+  @Prop({ type: String, unique: true, sparse: true, required: false })
+  facebookId?: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
-// Tự động hash password trước khi lưu vào DB
+UserSchema.virtual('id').get(function () {
+  return this._id.toHexString();
+});
+
+// Tự động hash password TRƯỚC KHI LƯU (nếu password được cung cấp)
 UserSchema.pre<UserDocument>('save', async function (next) {
-  if (this.isModified('password')) {
+  // Chỉ hash nếu password được thay đổi (hoặc là user mới)
+  if (this.isModified('password') && this.password) {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
   }
   next();
 });
+
