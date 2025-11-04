@@ -1,3 +1,3 @@
-import FavoritesScreen from '@/screens/FavoritesScreen/FavoritesScreen';
+import FavoritesScreen from '../screens/FavoritesScreen/FavoritesScreen';
 
 export default FavoritesScreen;

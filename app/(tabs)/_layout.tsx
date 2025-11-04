@@ -5,7 +5,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { COLORS } from '@/constants';
+import { COLORS } from '../../constants';
 
 // Custom Tab Icon Component with Animation
 const TabIcon: React.FC<{
@@ -39,12 +39,12 @@ const TabIcon: React.FC<{
       <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
         {focused ? (
           <LinearGradient
-            colors={[COLORS.primary, '#60a5ff']}
+            colors={[COLORS.primary, COLORS.gradientSecondary]}
             style={styles.activeIconBackground}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
           >
-            <IconComponent name={iconName as any} size={size} color="#FFFFFF" />
+            <IconComponent name={iconName as any} size={size} color={COLORS.textWhite} />
           </LinearGradient>
         ) : (
           <View style={styles.inactiveIconContainer}>
@@ -63,7 +63,7 @@ export default function TabLayout() {
     <>
       {/* Shadow gradient overlay above tab bar - positioned ABOVE the border */}
       <LinearGradient
-        colors={['rgba(0, 163, 255, 0)', 'rgba(0, 163, 255, 0.15)', 'rgba(0, 163, 255, 0.25)']}
+        colors={[COLORS.primaryTransparent, COLORS.primaryLight, COLORS.primaryMedium]}
         style={[styles.shadowGradient, { bottom: 70 + insets.bottom + 2 }]}
         pointerEvents="none"
       />
@@ -75,10 +75,10 @@ export default function TabLayout() {
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: COLORS.primary,
-          tabBarInactiveTintColor: '#8E9AAF',
+          tabBarInactiveTintColor: COLORS.iconInactive,
           tabBarShowLabel: true,
           tabBarStyle: {
-            backgroundColor: '#FFFFFF',
+            backgroundColor: COLORS.bgMain,
             borderTopColor: 'transparent',
             borderTopWidth: 0,
             height: 70 + insets.bottom,
@@ -154,7 +154,7 @@ export default function TabLayout() {
         />
       </Tabs>
       
-      <View style={[styles.safeAreaBottom, { height: insets.bottom, backgroundColor: '#FFFFFF' }]} />
+      <View style={[styles.safeAreaBottom, { height: insets.bottom, backgroundColor: COLORS.bgMain }]} />
     </>
   );
 }
