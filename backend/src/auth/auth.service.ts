@@ -78,7 +78,7 @@ export class AuthService {
       const createDto: CreateUserDto = {
         email,
         fullName,
-        password: null,
+        password: '',
         [providerKey]: providerId,
       };
 
@@ -137,7 +137,7 @@ export class AuthService {
         // Tạo user mới từ thông tin Google
         const createUserDto: CreateUserDto = {
           email: googleUser.email,
-          password: null,
+          password: '',
           fullName: `${googleUser.firstName} ${googleUser.lastName}`,
           googleId: googleUser.accessToken,
           avatar: googleUser.picture,

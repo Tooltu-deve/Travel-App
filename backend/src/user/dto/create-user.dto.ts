@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 // DTO (Data Transfer Object) dùng để validate data gửi lên từ client
 export class CreateUserDto {
@@ -6,12 +6,25 @@ export class CreateUserDto {
   @IsNotEmpty()
   email: string;
 
+  // Password optional cho các tài khoản OAuth (Google/Facebook)
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MinLength(6)
-  password: string;
+  password?: string;
 
   @IsString()
   @IsNotEmpty()
   fullName: string;
+
+  @IsOptional()
+  @IsString()
+  googleId?: string;
+
+  @IsOptional()
+  @IsString()
+  avatar?: string;
+
+  @IsOptional()
+  @IsString()
+  facebookId?: string;
 }
