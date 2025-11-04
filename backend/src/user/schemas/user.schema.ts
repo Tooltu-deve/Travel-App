@@ -1,6 +1,33 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { isEmail, IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 import * as bcrypt from 'bcrypt';
+import { isDeepStrictEqual } from 'util';
+
+export class CreateUserDto {
+  @IsEmail()
+  email: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  password?: string | null;
+
+  @IsString()
+  fullName: string;
+
+  @IsOptional()
+  @IsString()
+  avatar?: string;
+
+  @IsOptional()
+  @IsString()
+  googleId?: string;
+
+  @IsOptional()
+  @IsString()
+  facebookId?: string;
+}
 
 export type UserDocument = Document & {
   _id: Types.ObjectId;
@@ -24,6 +51,9 @@ export class User {
   @Prop({ type: String, required: true, unique: true, index: true })
   email: string;
 
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
   @Prop({ type: String, required: false, default: null })
   password?: string | null;
 
