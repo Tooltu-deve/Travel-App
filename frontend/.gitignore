@@ -42,3 +42,10 @@ app-example
 # generated native folders
 /ios
 /android
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml

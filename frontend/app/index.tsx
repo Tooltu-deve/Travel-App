@@ -1,4 +1,4 @@
-﻿/**
+/**
  * All screens consolidated in one file
  * Contains: HomeScreen, ProfileScreen, FavoritesScreen, ItineraryScreen, NotificationScreen
  */
