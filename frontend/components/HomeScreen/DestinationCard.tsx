@@ -4,8 +4,9 @@ import React, { useRef, useState } from 'react';
 import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { COLORS, SPACING } from '../../constants';
 
-const { width } = Dimensions.get('window');
-const CARD_WIDTH = width;
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CARD_PADDING = SPACING.md * 2; // Padding trái phải
+const CARD_WIDTH = SCREEN_WIDTH - CARD_PADDING;
 
 interface DestinationCardProps {
   destination: {
@@ -160,6 +161,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 5,
     marginBottom: 0,
+    marginRight: SPACING.md,
     borderTopLeftRadius: 40,
     borderTopRightRadius: 40,
     borderBottomLeftRadius: 50,
