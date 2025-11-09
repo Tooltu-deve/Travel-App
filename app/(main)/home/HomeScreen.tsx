@@ -14,7 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING } from '@/constants';
-import { DestinationCard, CategorySection, ReviewCard, ChatButton, SearchBar } from './components';
+import { DestinationCard, CategorySection, ReviewCard, ChatButton, SearchBar } from '@/components/screens/home';
 import { featuredDestinations, reviews } from './mockData';
 
 const { width } = Dimensions.get('window');

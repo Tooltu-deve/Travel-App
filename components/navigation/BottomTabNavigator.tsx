@@ -6,11 +6,11 @@ import { View, StyleSheet, Text, Platform, Animated } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import { COLORS } from '@/constants';
-import HomeScreen from '@/screens/HomeScreen/HomeScreen';
-import FavoritesScreen from '@/screens/FavoritesScreen/FavoritesScreen';
-import ItineraryScreen from '@/screens/ItineraryScreen/ItineraryScreen';
-import NotificationScreen from '@/screens/NotificationScreen/NotificationScreen';
-import ProfileScreen from '@/screens/ProfileScreen/ProfileScreen';
+import HomeScreen from '@/app/(main)/home/HomeScreen';
+import FavoritesScreen from '@/app/(main)/favorites/FavoritesScreen';
+import ItineraryScreen from '@/app/(main)/itinerary/ItineraryScreen';
+import NotificationScreen from '@/app/(main)/notifications/NotificationScreen';
+import ProfileScreen from '@/app/(main)/profile/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -78,7 +78,7 @@ export const BottomTabNavigator: React.FC = () => {
       />
       
       {/* Blue border line with shadow on top of tab bar */}
-      <View style={[styles.topBorderLine, { bottom: 70 + insets.bottom }]} pointerEvents="none" />
+      <View style={[styles.topBorderLine, { bottom: 70 + insets.bottom }]} pointerEvents="none" /> 
       
       <Tab.Navigator
         screenOptions={{
@@ -106,6 +106,7 @@ export const BottomTabNavigator: React.FC = () => {
           tabBarHideOnKeyboard: true,
           lazy: true,
         }}
+        initialRouteName="home"
       >
       {/* Itinerary Tab */}
       <Tab.Screen

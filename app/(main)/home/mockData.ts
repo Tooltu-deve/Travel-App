@@ -156,3 +156,10 @@ export const categories = [
   { id: '8', name: 'Sự kiện', icon: 'calendar' },
   { id: '9', name: 'Đặc sản', icon: 'gift' },
 ];
+
+// Default export
+export default {
+  reviews,
+  featuredDestinations,
+  categories,
+};
