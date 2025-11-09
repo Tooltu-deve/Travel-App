@@ -1,0 +1,201 @@
+# ============================================
+# Dependencies
+# ============================================
+node_modules/
+dist/
+build/
+
+# ============================================
+# Python
+# ============================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+env.bak/
+venv.bak/
+
+# PyTorch / ML models (có thể rất lớn)
+*.pth
+*.pt
+*.bin
+*.safetensors
+models/
+checkpoints/
+*.ckpt
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================
+# Node.js / TypeScript
+# ============================================
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# TypeScript
+*.tsbuildinfo
+
+# Expo
+.expo/
+web-build/
+expo-env.d.ts
+nativewind-env.d.ts
+
+# Metro
+.metro-health-check*
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+
+# ============================================
+# Data files & Output files
+# ============================================
+# CSV files trong thư mục reviews (có thể rất lớn)
+data_processing/reviews/*.csv
+
+# Generated JSON output files (kết quả xử lý)
+data_processing/poi_location_details.json
+data_processing/*.json
+ai_optimizer_servive/*.json
+
+# Giữ lại các file config JSON cần thiết
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!nest-cli.json
+!app.json
+!babel.config.js
+!tailwind.config.js
+!eslint.config.*
+!*.schema.json
+
+# MongoDB dumps
+*.bson
+*.mongodb
+
+# ============================================
+# Environment & Secrets
+# ============================================
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.secret
+
+# ============================================
+# Logs & Temporary files
+# ============================================
+*.out
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# ============================================
+# IDE specific
+# ============================================
+# PyCharm / IntelliJ
+.idea/
+*.iml
+.project
+.classpath
+*.launch
+.settings/
+*.sublime-workspace
+
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# C9
+.c9/
+
+# ============================================
+# OS specific
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.Trash-*
+
+# ============================================
+# Project specific
+# ============================================
+app-example
+/ios
+/android
+/temp
+.temp
+.tmp
+/coverage
+/.nyc_output
