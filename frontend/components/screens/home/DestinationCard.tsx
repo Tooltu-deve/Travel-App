@@ -1,11 +1,11 @@
-import { FontAwesome } from '@expo/vector-icons';
+import React, { useState, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Dimensions, Animated } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useRef, useState } from 'react';
-import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { COLORS, SPACING } from '../../constants';
+import { FontAwesome } from '@expo/vector-icons';
+import { COLORS, SPACING } from '@/constants';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
+const { width } = Dimensions.get('window');
+const CARD_WIDTH = width;
 
 interface DestinationCardProps {
   destination: {
@@ -93,7 +93,7 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
             </View>
 
             <View style={styles.reviewsRow}>
-              <FontAwesome name="star" size={14} color={COLORS.ratingAlt} />
+              <FontAwesome name="star" size={14} color="#FFD700" />
               <Text style={styles.rating}>{destination.rating}</Text>
               <Text style={styles.reviews}>({destination.reviews})</Text>
             </View>
@@ -120,7 +120,7 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
                 <FontAwesome 
                   name={isFavorite ? "heart" : "heart-o"} 
                   size={20} 
-                  color={isFavorite ? COLORS.favoriteActive : COLORS.textWhite} 
+                  color={isFavorite ? "#ff3b5c" : "#ffffff"} 
                 />
               </Animated.View>
             </TouchableOpacity>
@@ -153,14 +153,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     borderBottomWidth: 4,
-    borderBottomColor: COLORS.primary,
+    borderBottomColor: '#00A3FF',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
     shadowRadius: 8,
     elevation: 5,
     marginBottom: 0,
-    marginRight: 0, // Bỏ margin right để full width
     borderTopLeftRadius: 40,
     borderTopRightRadius: 40,
     borderBottomLeftRadius: 50,
@@ -239,7 +238,7 @@ const styles = StyleSheet.create({
   regionLabel: {
     fontSize: 9,
     fontWeight: '700',
-    color: COLORS.textWhite,
+    color: '#FFFFFF',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
@@ -250,7 +249,7 @@ const styles = StyleSheet.create({
   destinationName: {
     fontSize: 20,
     fontWeight: '700',
-    color: COLORS.textWhite,
+    color: '#FFFFFF',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
@@ -265,7 +264,7 @@ const styles = StyleSheet.create({
   rating: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textWhite,
+    color: '#FFFFFF',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
@@ -273,7 +272,7 @@ const styles = StyleSheet.create({
 
   reviews: {
     fontSize: 11,
-    color: COLORS.textLight,
+    color: '#e0e0e0ff',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
@@ -282,7 +281,7 @@ const styles = StyleSheet.create({
   destinationLocation: {
     fontSize: 14,
     fontWeight: '600',
-    color: COLORS.textWhite,
+    color: '#FFFFFF',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
@@ -292,10 +291,10 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: COLORS.favorite,
+    backgroundColor: '#FF6B6B',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: COLORS.favorite,
+    shadowColor: '#FF6B6B',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
@@ -303,8 +302,8 @@ const styles = StyleSheet.create({
   },
 
   favoriteButtonActive: {
-    backgroundColor: COLORS.favoriteBg,
-    shadowColor: COLORS.favoriteActive,
+    backgroundColor: '#ffe5ea',
+    shadowColor: '#ff3b5c',
     shadowOpacity: 0.5,
     shadowRadius: 6,
     elevation: 6,
@@ -328,7 +327,7 @@ const styles = StyleSheet.create({
 
   amenityText: {
     fontSize: 11,
-    color: COLORS.textWhite,
+    color: '#FFFFFF',
     fontWeight: '600',
   },
 
@@ -351,7 +350,7 @@ const styles = StyleSheet.create({
 
   priceLabel: {
     fontSize: 12,
-    color: COLORS.textLight,
+    color: '#e0e0e0',
     fontWeight: '500',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
@@ -361,7 +360,7 @@ const styles = StyleSheet.create({
   price: {
     fontSize: 20,
     fontWeight: '700',
-    color: COLORS.textWhite,
+    color: '#FFFFFF',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
@@ -382,7 +381,7 @@ const styles = StyleSheet.create({
   bookButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textWhite,
+    color: '#FFFFFF',
     letterSpacing: 0.5,
   },
 });
