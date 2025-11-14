@@ -5,6 +5,7 @@ import { Place, PlaceDocument } from './schemas/place.schema';
 import { CreatePlaceDto } from './dto/create-place.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
 import { PlaceSeedDto } from './dto/place-seed.dto';
+import { SearchPlaceDto } from './dto/search-place.dto';
 
 @Injectable()
 export class PlaceService {
@@ -39,11 +40,11 @@ export class PlaceService {
 
         // Tìm và cập nhật (nếu tồn tại) hoặc tạo mới (nếu không)
         const place = await this.placeModel.findOneAndUpdate(
-            { googlePlaceId: placeID }, 
-            { $set: placePayload }, 
+            { googlePlaceId: placeID },
+            { $set: placePayload },
             {
-                upsert: true, 
-                new: true, 
+                upsert: true,
+                new: true,
             },
         );
 
@@ -107,6 +108,7 @@ export class PlaceService {
         return { message: `Đã xóa thành công địa điểm ${id}` };
     }
 
+    // Tìm lân cận
     findNear(
         lon: number,
         lat: number,
@@ -126,5 +128,38 @@ export class PlaceService {
                 },
             })
             .exec();
+    }
+    async searchByEmotions(
+        searchDto: SearchPlaceDto,
+    ): Promise<Place[]> {
+        const { tags, minScore, sortBy } = searchDto;
+
+        // 1. Chuyển chuỗi "tag1,tag2" thành mảng ['tag1', 'tag2']
+        const tagArray = tags.split(',').map((tag) => tag.trim());
+
+        // 2. Xây dựng câu truy vấn (query) cho MongoDB
+        // Chúng ta muốn tìm các địa điểm CÓ TẤT CẢ các tags (AND)
+        // và mỗi tag phải có điểm >= minScore
+        const query: { $and: Record<string, any>[] } = { $and: [] };
+
+        tagArray.forEach((tag) => {
+            query.$and.push({
+                // Dùng cú pháp "dot notation" để truy vấn key bên trong Map
+                [`emotionalTags.${tag}`]: { $gte: minScore },
+            });
+        });
+
+        // 3. Xây dựng logic sắp xếp (sort)
+        const sort = {};
+        if (sortBy === 'emotion' && tagArray.length > 0) {
+            // Sắp xếp theo điểm của TAG ĐẦU TIÊN mà user gửi lên (cao->thấp)
+            sort[`emotionalTags.${tagArray[0]}`] = -1;
+        } else {
+            // Mặc định sắp xếp theo rating (cao->thấp)
+            sort['rating'] = -1;
+        }
+
+        // 4. Thực thi truy vấn
+        return this.placeModel.find(query).sort(sort).limit(20).exec(); // Giới hạn 20 kết quả
     }
 }
