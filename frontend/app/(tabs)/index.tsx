@@ -14,10 +14,8 @@ import { SearchBar } from '../../components/HomeScreen/SearchBar';
 import { ChatButton } from '../../components/HomeScreen/ChatButton';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_PADDING = SPACING.md * 2; // Padding trái phải
-const CARD_WIDTH = SCREEN_WIDTH - CARD_PADDING;
-const CARD_GAP = SPACING.md; // Khoảng cách giữa các cards
-const SNAP_INTERVAL = CARD_WIDTH + CARD_GAP; // Width + gap để snap đúng
+const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
+const SNAP_INTERVAL = CARD_WIDTH; // Snap theo full width
 const INITIAL_REVIEWS_COUNT = 2;
 
 const HomeScreen: React.FC = () => {
@@ -328,7 +326,7 @@ const homeStyles = StyleSheet.create({
     position: 'relative',
   },
   carouselContent: { 
-    paddingHorizontal: SPACING.md,
+    paddingHorizontal: 0, // Bỏ padding để card full width
   },
   cardDotsContainer: {
     flexDirection: 'row',
