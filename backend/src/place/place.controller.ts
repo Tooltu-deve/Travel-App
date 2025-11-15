@@ -35,6 +35,11 @@ export class PlaceController {
     findAll() {
         return this.placeService.findAll();
     }
+    
+    @Get('available-moods')
+    getAvailableMoods() {
+        return this.placeService.getAvailableMoods();
+    }
 
     @Get('search-by-emotion')
     findEmotional(@Query() searchDto: SearchPlaceDto) {
