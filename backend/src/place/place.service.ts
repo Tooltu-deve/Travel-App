@@ -162,4 +162,37 @@ export class PlaceService {
         // 4. Thực thi truy vấn
         return this.placeModel.find(query).sort(sort).limit(20).exec(); // Giới hạn 20 kết quả
     }
+      getAvailableMoods(): string[] {
+    // Tạm thời chúng ta sẽ trả về một danh sách TĨNH (hardcoded)
+    // Đây là cách làm nhanh và hiệu quả.
+    // (Cách nâng cao là quét toàn bộ CSDL để tự động tìm, nhưng sẽ chậm)
+    return [
+      'quiet',
+      'peaceful',
+      'relaxing',
+      'crowded',
+      'lively',
+      'vibrant',
+      'romantic',
+      'good for couples',
+      'expensive',
+      'luxury',
+      'good value',
+      'cheap',
+      'affordable',
+      'touristy',
+      'local gem',
+      'authentic',
+      'adventurous',
+      'exciting',
+      'family-friendly',
+      'cozy',
+      'comfortable',
+      'modern',
+      'artistic',
+      'historical',
+      'cultural',
+      'spiritual',
+    ];
+  }
 }
