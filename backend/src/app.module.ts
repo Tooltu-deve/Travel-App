@@ -4,6 +4,7 @@ import { UserModule } from './user/user.module';
 import { DatabaseModule } from './database/database.module';
 import { ConfigModule } from '@nestjs/config';
 import { PlaceModule } from './place/place.module';
+import { ItineraryModule } from './itinerary/itinerary.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { PlaceModule } from './place/place.module';
     AuthModule,
     UserModule,
     PlaceModule,
+    ItineraryModule,
   ],
   controllers: [],
   providers: [],
