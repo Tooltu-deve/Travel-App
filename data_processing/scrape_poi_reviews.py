@@ -43,7 +43,7 @@ if not GOOGLE_PLACES_API_KEY:
 else:
     print(f"✅ GOOGLE_PLACES_API_KEY đã được set (độ dài: {len(GOOGLE_PLACES_API_KEY)} ký tự)")
 
-def search_pois_by_text(query: str, location: str = None, min_results: int = 65, max_results: int = 200):
+def search_pois_by_text(query: str, location: str = None, min_results: int = 65, max_results: int = 200, existing_place_ids: set = None):
     """
     Tìm kiếm POI bằng Google Places API (Text Search) với pagination
     
@@ -80,7 +80,7 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
                         "latitude": lat,
                         "longitude": lng
                     },
-                    "radius": 5000.0  # 5km radius
+                    "radius": 15000.0  # Tăng lên 15km radius để tìm được nhiều POI hơn
                 }
             }
         except:
@@ -90,6 +90,7 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
     session = create_requests_session()
     
     all_pois = []
+    all_place_ids = existing_place_ids.copy() if existing_place_ids else set()
     next_page_token = None
     page_count = 0
     
@@ -126,13 +127,14 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
                 name = place.get('displayName', {}).get('text', '') if isinstance(place.get('displayName'), dict) else place.get('displayName', '')
                 user_rating_count = place.get('userRatingCount', 0)
                 
-                # Chỉ lấy POI có số lượng reviews > 100
-                if user_rating_count and user_rating_count > 100:
+                # Chỉ lấy POI có số lượng reviews > 100 và chưa có trong danh sách
+                if user_rating_count and user_rating_count > 100 and place_id not in all_place_ids:
                     all_pois.append({
                         'place_id': place_id,
                         'name': name,
                         'user_rating_total': user_rating_count
                     })
+                    all_place_ids.add(place_id)  # Thêm vào set để tránh trùng lặp
                     valid_count += 1
                     print(f"   ✅ [{len(all_pois):3d}] {name[:50]:<50} | {user_rating_count:>6} reviews")
                 else:
@@ -352,20 +354,23 @@ def setup_playwright_browser(playwright):
         print("   Gợi ý: Chạy 'playwright install chromium' để cài đặt browser")
         return None, None, None
 
-def scrape_reviews_from_google_maps(place_id: str, page, max_reviews: int = 150):
+def scrape_reviews_from_google_maps(place_id: str, page, min_reviews: int = 90, max_reviews: int = 120):
     """
     Scrape reviews từ Google Maps bằng Playwright với anti-detection
     
     Args:
         place_id: Place ID của POI
         page: Playwright Page instance
-        max_reviews: Số lượng reviews tối đa cần lấy
+        min_reviews: Số lượng reviews tối thiểu cần lấy (mặc định 90)
+        max_reviews: Số lượng reviews tối đa cần lấy (mặc định 120)
     
     Returns:
         List các review text
     """
-    # URL Google Maps cho place_id
+    # URL Google Maps cho place_id - sử dụng format đúng
     url = f"https://www.google.com/maps/place/?q=place_id:{place_id}"
+    # Hoặc có thể thử format khác nếu không hoạt động:
+    # url = f"https://www.google.com/maps/search/?api=1&query=place_id:{place_id}"
     
     reviews = []
     
@@ -502,29 +507,39 @@ def scrape_reviews_from_google_maps(place_id: str, page, max_reviews: int = 150)
             
             # Bước 4: Scroll trong phần reviews feed để load thêm reviews
             scroll_attempts = 0
-            max_scroll_attempts = 100  # Tăng lên 100 lần scroll
+            max_scroll_attempts = 200  # Tăng lên 200 lần scroll để lấy nhiều reviews hơn
             last_review_count = 0
             no_change_count = 0
-            min_scrolls_before_stop = 30  # Phải scroll ít nhất 30 lần trước khi có thể dừng
+            min_scrolls_before_stop = 50  # Phải scroll ít nhất 50 lần trước khi có thể dừng
+            consecutive_no_change_threshold = 15  # Tăng threshold lên 15 lần không thay đổi
             
             while scroll_attempts < max_scroll_attempts and len(reviews) < max_reviews:
+                # Dừng ngay khi đạt max_reviews
+                if len(reviews) >= max_reviews:
+                    break
                 scroll_attempts += 1
                 
                 # Human-like scroll với random delay
                 if review_feed:
                     # Scroll trong feed element bằng JavaScript
                     try:
-                        scroll_amount = random.randint(300, 800)  # Tăng scroll amount
+                        scroll_amount = random.randint(500, 1000)  # Tăng scroll amount để scroll xa hơn
                         # Dùng page.evaluate() để scroll phần tử feed
                         page.evaluate("""
                             (feedElement, scrollAmount) => {
                                 if (feedElement) {
+                                    const beforeScroll = feedElement.scrollTop;
                                     // Scroll xuống
                                     feedElement.scrollTop += scrollAmount;
                                     
-                                    // Hoặc scroll đến cuối nếu gần cuối
+                                    // Nếu scroll không thay đổi (đã đến cuối), thử scroll đến cuối cùng
+                                    if (feedElement.scrollTop === beforeScroll) {
+                                        feedElement.scrollTop = feedElement.scrollHeight;
+                                    }
+                                    
+                                    // Hoặc scroll đến cuối nếu gần cuối (90%)
                                     const maxScroll = feedElement.scrollHeight - feedElement.clientHeight;
-                                    if (feedElement.scrollTop + scrollAmount >= maxScroll * 0.9) {
+                                    if (feedElement.scrollTop + scrollAmount >= maxScroll * 0.85) {
                                         feedElement.scrollTop = feedElement.scrollHeight;
                                     }
                                 }
@@ -533,27 +548,54 @@ def scrape_reviews_from_google_maps(place_id: str, page, max_reviews: int = 150)
                     except Exception as e:
                         # Fallback: scroll page
                         try:
-                            page.mouse.wheel(0, random.randint(400, 700))
+                            page.mouse.wheel(0, random.randint(500, 900))
                         except:
                             pass
                 else:
                     # Scroll trang nếu không tìm thấy feed
-                    human_scroll(page, steps=random.randint(1, 3))
+                    human_scroll(page, steps=random.randint(2, 4))
                 
-                # Random delay để mô phỏng hành vi con người (1.5-3.5 giây)
-                human_delay(1.5, 3.5)
+                # Đợi để reviews mới load (tăng delay)
+                human_delay(2.0, 4.0)  # Tăng delay lên 2-4 giây
+                
+                # Thỉnh thoảng scroll thêm một chút để trigger lazy loading
+                if scroll_attempts % 5 == 0:
+                    try:
+                        if review_feed:
+                            page.evaluate("""
+                                (feedElement) => {
+                                    if (feedElement) {
+                                        feedElement.scrollTop += 100;
+                                        setTimeout(() => {
+                                            feedElement.scrollTop -= 50;
+                                        }, 200);
+                                    }
+                                }
+                            """, review_feed.element_handle())
+                        human_delay(0.5, 1.0)
+                    except:
+                        pass
                 
                 # Tìm và lấy reviews sau mỗi lần scroll
                 review_texts = set()
                 
-                # Các selector cho Google Maps reviews
+                # Các selector cho Google Maps reviews (cập nhật với nhiều selector hơn)
                 selectors = [
-                    "span.wiI7pd",
+                    "span.wiI7pd",  # Selector chính
                     "div.MyEned span.wiI7pd",
                     "div.jftiEf span.wiI7pd",
                     "div[data-review-id] span.wiI7pd",
                     "span[data-review-id] span.wiI7pd",
                     "div.MyEned",
+                    # Thêm các selector mới
+                    "span[jsaction] span.wiI7pd",
+                    "div[data-review-id]",
+                    "span[data-review-id]",
+                    "div[aria-label*='review'] span",
+                    "div[aria-label*='Review'] span",
+                    # Selector cho reviews dạng text
+                    "div.jftiEf",
+                    "div[class*='MyEned']",
                 ]
                 
                 for selector in selectors:
@@ -561,23 +603,43 @@ def scrape_reviews_from_google_maps(place_id: str, page, max_reviews: int = 150)
                         elements = page.locator(selector).all()
                         for elem in elements:
                             try:
-                                text = elem.inner_text(timeout=500).strip() if elem.is_visible(timeout=500) else ""
-                                # Lọc text hợp lệ
-                                if (text and 
-                                    len(text) > 15 and 
-                                    len(text) < 5000 and
-                                    not text.isdigit() and
-                                    not text.startswith('★') and
-                                    ':' not in text[:15] and
-                                    'See more' not in text and
-                                    'Show more' not in text and
-                                    'Helpful' not in text and
-                                    'Translate' not in text):
-                                    review_texts.add(text)
+                                # Thử lấy text với timeout dài hơn
+                                if elem.is_visible(timeout=1000):
+                                    text = elem.inner_text(timeout=1000).strip()
+                                    
+                                    # Lọc text hợp lệ (giảm độ dài tối thiểu xuống 10 ký tự)
+                                    if (text and 
+                                        len(text) > 10 and 
+                                        len(text) < 5000 and
+                                        not text.isdigit() and
+                                        not text.startswith('★') and
+                                        ':' not in text[:15] and
+                                        'See more' not in text.lower() and
+                                        'Show more' not in text.lower() and
+                                        'Helpful' not in text and
+                                        'Translate' not in text and
+                                        'Read more' not in text.lower() and
+                                        'Less' not in text[:10] and
+                                        'Reply' not in text[:10]):
+                                        review_texts.add(text)
                             except:
                                 continue
                     except:
                         continue
+                
+                # Thử expand "See more" trong các reviews đã có
+                if scroll_attempts % 10 == 0:  # Mỗi 10 lần scroll, thử expand một lần
+                    try:
+                        see_more_in_review = page.locator("button:has-text('See more'), button:has-text('Show more'), span:has-text('See more')").all()
+                        for btn in see_more_in_review[:5]:  # Chỉ expand 5 cái đầu tiên
+                            try:
+                                if btn.is_visible(timeout=1000):
+                                    btn.click(timeout=2000)
+                                    human_delay(0.5, 1.0)
+                            except:
+                                continue
+                    except:
+                        pass
                 
                 # Cập nhật reviews
                 current_count = len(review_texts)
@@ -586,8 +648,27 @@ def scrape_reviews_from_google_maps(place_id: str, page, max_reviews: int = 150)
                     no_change_count = 0  # Reset counter khi có reviews mới
                 else:
                     no_change_count += 1
-                    # Chỉ dừng nếu đã scroll ít nhất min_scrolls_before_stop lần VÀ không có thay đổi trong 10 lần liên tiếp
-                    if scroll_attempts >= min_scrolls_before_stop and no_change_count >= 10:
+                    # Chỉ dừng nếu:
+                    # 1. Đã đạt tối thiểu min_reviews VÀ không có thay đổi trong threshold lần liên tiếp
+                    # 2. Hoặc đã đạt max_reviews
+                    if len(reviews) >= max_reviews:
+                        break
+                    
+                    if len(reviews) >= min_reviews and scroll_attempts >= min_scrolls_before_stop and no_change_count >= consecutive_no_change_threshold:
+                        # Thử scroll đến cuối cùng một lần nữa trước khi dừng (nếu chưa đạt max)
+                        if len(reviews) < max_reviews:
+                            try:
+                                if review_feed:
+                                    page.evaluate("""
+                                        (feedElement) => {
+                                            if (feedElement) {
+                                                feedElement.scrollTop = feedElement.scrollHeight;
+                                            }
+                                        }
+                                    """, review_feed.element_handle())
+                                    human_delay(3.0, 5.0)  # Đợi lâu hơn để load reviews cuối cùng
+                            except:
+                                pass
                         break
                 
                 # Cập nhật danh sách reviews
@@ -669,8 +750,52 @@ def scrape_reviews_from_google_maps(place_id: str, page, max_reviews: int = 150)
             except:
                 pass
             
-            # Giới hạn số lượng reviews
+            # Giới hạn số lượng reviews (tối đa max_reviews)
             reviews = reviews[:max_reviews]
+            
+            # Kiểm tra xem có đủ min_reviews không
+            if len(reviews) < min_reviews:
+                # Nếu chưa đủ, thử scroll thêm một lần nữa
+                try:
+                    if review_feed:
+                        page.evaluate("""
+                            (feedElement) => {
+                                if (feedElement) {
+                                    feedElement.scrollTop = feedElement.scrollHeight;
+                                }
+                            }
+                        """, review_feed.element_handle())
+                        human_delay(3.0, 5.0)
+                        # Lấy lại reviews một lần nữa
+                        review_texts = set()
+                        for selector in selectors:
+                            try:
+                                elements = page.locator(selector).all()
+                                for elem in elements:
+                                    try:
+                                        if elem.is_visible(timeout=1000):
+                                            text = elem.inner_text(timeout=1000).strip()
+                                            if (text and 
+                                                len(text) > 10 and 
+                                                len(text) < 5000 and
+                                                not text.isdigit() and
+                                                not text.startswith('★') and
+                                                ':' not in text[:15] and
+                                                'See more' not in text.lower() and
+                                                'Show more' not in text.lower() and
+                                                'Helpful' not in text and
+                                                'Translate' not in text and
+                                                'Read more' not in text.lower() and
+                                                'Less' not in text[:10] and
+                                                'Reply' not in text[:10]):
+                                                review_texts.add(text)
+                                    except:
+                                        continue
+                            except:
+                                continue
+                        reviews = list(review_texts)[:max_reviews]
+                except:
+                    pass
             
         except PlaywrightTimeoutError:
             print(f"      ⚠️  Timeout khi đợi reviews load")
@@ -692,16 +817,16 @@ VIETNAM_CITIES = [
     {"name": "Nha Trang", "lat": 12.2388, "lng": 109.1967},
     {"name": "Huế", "lat": 16.4637, "lng": 107.5909},
     {"name": "Vũng Tàu", "lat": 10.3460, "lng": 107.0843},
-    {"name": "Phan Thiết", "lat": 10.9376, "lng": 108.1018},
-    {"name": "Quy Nhon", "lat": 13.7765, "lng": 109.2237},
-    {"name": "Hạ Long", "lat": 20.9101, "lng": 107.1839},
-    {"name": "Sapa", "lat": 22.3364, "lng": 103.8437},
-    {"name": "Đà Lạt", "lat": 11.9404, "lng": 108.4583},
-    {"name": "Hội An", "lat": 15.8801, "lng": 108.3380},
-    {"name": "Phú Quốc", "lat": 10.2899, "lng": 103.9840},
-    {"name": "Mũi Né", "lat": 10.9600, "lng": 108.2800},
-    {"name": "Tam Đảo", "lat": 21.4500, "lng": 105.6500},
-    {"name": "Cát Bà", "lat": 20.8000, "lng": 107.0167},
+    # {"name": "Phan Thiết", "lat": 10.9376, "lng": 108.1018},
+    # {"name": "Quy Nhon", "lat": 13.7765, "lng": 109.2237},
+    # {"name": "Hạ Long", "lat": 20.9101, "lng": 107.1839},
+    # {"name": "Sapa", "lat": 22.3364, "lng": 103.8437},
+    # {"name": "Đà Lạt", "lat": 11.9404, "lng": 108.4583},
+    # {"name": "Hội An", "lat": 15.8801, "lng": 108.3380},
+    # {"name": "Phú Quốc", "lat": 10.2899, "lng": 103.9840},
+    # {"name": "Mũi Né", "lat": 10.9600, "lng": 108.2800},
+    # {"name": "Tam Đảo", "lat": 21.4500, "lng": 105.6500},
+    # {"name": "Cát Bà", "lat": 20.8000, "lng": 107.0167},
 ]
 
 def main():
@@ -714,10 +839,10 @@ def main():
     print("="*60)
     
     # Hỏi số lượng POI tối đa cho mỗi thành phố
-    print("\n📋 Yêu cầu: Ít nhất 65 POI mỗi thành phố, tối đa 80 POI, mỗi POI có > 100 reviews")
-    max_results_input = input("Số lượng POI tối đa cho mỗi thành phố (mặc định 80, nhấn Enter để dùng mặc định): ").strip()
-    max_results_per_city = int(max_results_input) if max_results_input.isdigit() else 80
-    min_results_per_city = 65  # Yêu cầu tối thiểu 65 POI
+    print("\n📋 Yêu cầu: Ít nhất 70 POI mỗi thành phố, tối đa 200 POI, mỗi POI có > 100 reviews")
+    max_results_input = input("Số lượng POI tối đa cho mỗi thành phố (mặc định 200, nhấn Enter để dùng mặc định): ").strip()
+    max_results_per_city = int(max_results_input) if max_results_input.isdigit() else 200
+    min_results_per_city = 70  # Yêu cầu tối thiểu 70 POI
     
     # Hỏi có muốn scrape reviews không
     scrape_reviews = input("\nBạn có muốn scrape reviews từ Google Maps không? (y/n, mặc định: n): ").strip().lower()
@@ -743,17 +868,67 @@ def main():
         print(f"🏙️  [{city_idx:2d}/{len(VIETNAM_CITIES)}] {city['name']}")
         print("═"*70)
         
-        # Tạo query
-        query = f"Địa điểm du lịch và thắng cảnh ở {city['name']}"
+        # Tạo nhiều query khác nhau để tìm được nhiều POI hơn
+        queries = [
+            f"Địa điểm du lịch và thắng cảnh ở {city['name']}",
+            f"Bảo tàng ở {city['name']}",
+            f"Chùa ở {city['name']}",
+            f"Công viên ở {city['name']}",
+            f"Di tích lịch sử ở {city['name']}",
+            f"Vường quốc gia ở {city['name']}",
+            f"Khu bảo tồn và du lịch sinh thái ở {city['name']}",
+        ]
+        
         location = f"{city['lat']},{city['lng']}"
         
-        print(f"   🔍 Query: {query}")
         print(f"   📍 Location: ({city['lat']}, {city['lng']})")
         print(f"   📋 Yêu cầu: {min_results_per_city}-{max_results_per_city} POI, mỗi POI > 100 reviews")
+        print(f"   🔍 Sử dụng {len(queries)} query khác nhau để tìm POI...")
         
         try:
-            # Tìm kiếm POI với pagination
-            pois = search_pois_by_text(query, location, min_results=min_results_per_city, max_results=max_results_per_city)
+            # Tìm kiếm POI với nhiều query khác nhau
+            all_place_ids = set()
+            pois = []
+            
+            for query_idx, query in enumerate(queries, 1):
+                if len(pois) >= max_results_per_city:
+                    print(f"\n   ✅ Đã đạt {max_results_per_city} POI, dừng tìm kiếm")
+                    break
+                
+                remaining_needed = max_results_per_city - len(pois)
+                if remaining_needed <= 0:
+                    break
+                
+                print(f"\n   🔍 Query {query_idx}/{len(queries)}: {query}")
+                print(f"   📊 Đã có: {len(pois)} POI, cần thêm: {remaining_needed} POI")
+                
+                # Tìm kiếm với query này, truyền existing_place_ids để tránh trùng lặp
+                query_pois = search_pois_by_text(
+                    query, 
+                    location, 
+                    min_results=0,  # Không yêu cầu tối thiểu cho từng query
+                    max_results=remaining_needed + 20,  # Lấy thêm một chút để đảm bảo
+                    existing_place_ids=all_place_ids
+                )
+                
+                # Cập nhật place_ids
+                for poi in query_pois:
+                    all_place_ids.add(poi['place_id'])
+                
+                pois.extend(query_pois)
+                
+                print(f"   ✅ Query này tìm thấy {len(query_pois)} POI mới, tổng: {len(pois)} POI")
+                
+                # Nếu đã đủ, dừng lại
+                if len(pois) >= min_results_per_city:
+                    print(f"   ✅ Đã đạt tối thiểu {min_results_per_city} POI")
+                
+                # Đợi một chút giữa các query để tránh rate limit
+                if query_idx < len(queries):
+                    time.sleep(1)
+            
+            # Giới hạn số lượng POI
+            pois = pois[:max_results_per_city]
             
             if not pois:
                 print(f"\n   ❌ Không tìm thấy POI nào phù hợp")
@@ -798,17 +973,17 @@ def main():
                             
                             print(f"      [{idx:3d}/{len(pois)}] 🔄 {poi['name'][:45]:<45} | {poi['user_rating_total']:>6} reviews")
                             
-                            reviews = scrape_reviews_from_google_maps(poi['place_id'], page, max_reviews=150)
+                            reviews = scrape_reviews_from_google_maps(poi['place_id'], page, min_reviews=90, max_reviews=120)
                             
                             # Trả về cả số reviews để xử lý sau
                             review_count = len(reviews) if reviews else 0
                             
-                            # Chỉ lưu POI có số reviews > 80
-                            if review_count > 80:
-                                print(f"      [{idx:3d}/{len(pois)}] ✅ {poi['name'][:45]:<45} | {review_count:>3d} reviews (đủ điều kiện > 80)")
+                            # Chỉ lưu POI có số reviews >= 90 (tối thiểu)
+                            if review_count >= 90:
+                                print(f"      [{idx:3d}/{len(pois)}] ✅ {poi['name'][:45]:<45} | {review_count:>3d} reviews (đủ điều kiện >= 90)")
                                 return [(poi['place_id'], review_count, review) for review in reviews]
                             elif review_count > 0:
-                                print(f"      [{idx:3d}/{len(pois)}] ⏭️  {poi['name'][:45]:<45} | {review_count:>3d} reviews (bỏ qua, < 80)")
+                                print(f"      [{idx:3d}/{len(pois)}] ⏭️  {poi['name'][:45]:<45} | {review_count:>3d} reviews (bỏ qua, < 90)")
                                 return [(poi['place_id'], review_count, None)]  # Trả về với review_count nhưng không có reviews
                             else:
                                 print(f"      [{idx:3d}/{len(pois)}] ⚠️  {poi['name'][:45]:<45} | 0 reviews")
@@ -856,8 +1031,8 @@ def main():
                                 if place_id:
                                     poi_review_counts[place_id] = review_count
                                 
-                                # Thread-safe append (chỉ append reviews nếu > 80)
-                                if review_count > 80:
+                                # Thread-safe append (chỉ append reviews nếu >= 90)
+                                if review_count >= 90:
                                     with data_lock:
                                         for result in results:
                                             if len(result) > 2 and result[2] is not None:  # Có review text
@@ -868,12 +1043,12 @@ def main():
                         except Exception as e:
                             print(f"      ❌ Lỗi xử lý kết quả: {str(e)[:50]}")
                     
-                    # Cập nhật all_pois_summary: chỉ giữ POI có > 80 reviews
+                    # Cập nhật all_pois_summary: chỉ giữ POI có >= 90 reviews
                     filtered_pois_summary = []
                     for poi in pois:
                         place_id = poi['place_id']
                         review_count = poi_review_counts.get(place_id, 0)
-                        if review_count > 80:
+                        if review_count >= 90:
                             filtered_pois_summary.append({
                                 'city': city['name'],
                                 'place_id': place_id,
@@ -881,14 +1056,14 @@ def main():
                                 'user_rating_total': poi['user_rating_total']
                             })
                     
-                    # Cập nhật all_pois_summary với filtered list (chỉ POI có > 80 reviews)
+                    # Cập nhật all_pois_summary với filtered list (chỉ POI có >= 90 reviews)
                     with data_lock:
                         all_pois_summary.extend(filtered_pois_summary)
                     
                     # Thống kê
                     total_pois = len(pois)
                     qualified_pois = len(filtered_pois_summary)
-                    print(f"\n   ✅ Hoàn tất: {total_pois} POI đã xử lý, {qualified_pois} POI có > 80 reviews (đủ điều kiện)")
+                    print(f"\n   ✅ Hoàn tất: {total_pois} POI đã xử lý, {qualified_pois} POI có >= 90 reviews (đủ điều kiện)")
             else:
                 # Nếu không scrape reviews, không lưu POI nào vào summary
                 # (vì không biết số reviews thực tế)
