@@ -388,7 +388,7 @@ for placeID, group in grouped:
         for label, score in zip(pred['labels'], pred['scores']):
             if label in tag_scores_sum:
             tag_scores_sum[label] += score
-                tag_counts[label] += 1
+            tag_counts[label] += 1
             
     # Tính trung bình cộng (chỉ tính cho các tags có xuất hiện ít nhất 1 lần)
     num_reviews = len(reviews_list)

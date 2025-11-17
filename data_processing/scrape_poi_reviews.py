@@ -61,7 +61,7 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
     headers = {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.userRatingCount,places.rating,nextPageToken'
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.userRatingCount,nextPageToken'
     }
     
     # Tạo request body
@@ -126,40 +126,33 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
                 place_id = place.get('id', '')
                 name = place.get('displayName', {}).get('text', '') if isinstance(place.get('displayName'), dict) else place.get('displayName', '')
                 user_rating_count = place.get('userRatingCount', 0)
-                rating = place.get('rating', 0)  # Lấy rating (sao)
                 
                 # Chỉ lấy POI có:
                 # 1. Số lượng reviews > 100
-                # 2. Rating >= 3.5 sao
-                # 3. Chưa có trong danh sách
-                if (user_rating_count and user_rating_count > 100 and 
-                    rating and rating >= 3.5 and 
-                    place_id not in all_place_ids):
+                # 2. Chưa có trong danh sách
+                if user_rating_count and user_rating_count > 100 and place_id not in all_place_ids:
                     all_pois.append({
                         'place_id': place_id,
                         'name': name,
-                        'user_rating_total': user_rating_count,
-                        'rating': rating
+                        'user_rating_total': user_rating_count
                     })
                     all_place_ids.add(place_id)  # Thêm vào set để tránh trùng lặp
                     valid_count += 1
-                    print(f"   ✅ [{len(all_pois):3d}] {name[:50]:<50} | {user_rating_count:>6} reviews | ⭐ {rating:.1f}")
+                    print(f"   ✅ [{len(all_pois):3d}] {name[:50]:<50} | {user_rating_count:>6} reviews")
                 else:
                     skipped_count += 1
                     skip_reason = []
                     if not user_rating_count or user_rating_count <= 100:
                         skip_reason.append(f"< 100 reviews")
-                    if not rating or rating < 3.5:
-                        skip_reason.append(f"< 3.5⭐ ({rating:.1f if rating else 'N/A'})")
                     if place_id in all_place_ids:
                         skip_reason.append("trùng lặp")
                     
                     if skipped_count <= 3:  # Chỉ hiển thị 3 POI đầu tiên bị bỏ qua
                         reason = ", ".join(skip_reason) if skip_reason else "không hợp lệ"
-                        print(f"   ⏭️  [{skipped_count:3d}] {name[:50]:<50} | {user_rating_count:>6} reviews | ⭐ {rating:.1f if rating else 'N/A'} ({reason})")
+                        print(f"   ⏭️  [{skipped_count:3d}] {name[:50]:<50} | {user_rating_count:>6} reviews (bỏ qua: {reason})")
             
             if skipped_count > 3:
-                print(f"   ⏭️  ... và {skipped_count - 3} POI khác bị bỏ qua (< 100 reviews hoặc < 3.5⭐)")
+                print(f"   ⏭️  ... và {skipped_count - 3} POI khác bị bỏ qua (< 100 reviews)")
             
             print(f"   📊 Trang này: {valid_count} hợp lệ, {skipped_count} bỏ qua")
             
@@ -833,16 +826,16 @@ VIETNAM_CITIES = [
     {"name": "Nha Trang", "lat": 12.2388, "lng": 109.1967},
     {"name": "Huế", "lat": 16.4637, "lng": 107.5909},
     {"name": "Vũng Tàu", "lat": 10.3460, "lng": 107.0843},
-    # {"name": "Phan Thiết", "lat": 10.9376, "lng": 108.1018},
-    # {"name": "Quy Nhon", "lat": 13.7765, "lng": 109.2237},
-    # {"name": "Hạ Long", "lat": 20.9101, "lng": 107.1839},
-    # {"name": "Sapa", "lat": 22.3364, "lng": 103.8437},
-    # {"name": "Đà Lạt", "lat": 11.9404, "lng": 108.4583},
-    # {"name": "Hội An", "lat": 15.8801, "lng": 108.3380},
-    # {"name": "Phú Quốc", "lat": 10.2899, "lng": 103.9840},
-    # {"name": "Mũi Né", "lat": 10.9600, "lng": 108.2800},
-    # {"name": "Tam Đảo", "lat": 21.4500, "lng": 105.6500},
-    # {"name": "Cát Bà", "lat": 20.8000, "lng": 107.0167},
+    {"name": "Phan Thiết", "lat": 10.9376, "lng": 108.1018},
+    {"name": "Quy Nhon", "lat": 13.7765, "lng": 109.2237},
+    {"name": "Hạ Long", "lat": 20.9101, "lng": 107.1839},
+    {"name": "Sapa", "lat": 22.3364, "lng": 103.8437},
+    {"name": "Đà Lạt", "lat": 11.9404, "lng": 108.4583},
+    {"name": "Hội An", "lat": 15.8801, "lng": 108.3380},
+    {"name": "Phú Quốc", "lat": 10.2899, "lng": 103.9840},
+    {"name": "Mũi Né", "lat": 10.9600, "lng": 108.2800},
+    {"name": "Tam Đảo", "lat": 21.4500, "lng": 105.6500},
+    {"name": "Cát Bà", "lat": 20.8000, "lng": 107.0167},
 ]
 
 def main():
