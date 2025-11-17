@@ -13,6 +13,7 @@ import json
 import requests
 import random
 import urllib3
+import re
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -209,6 +210,32 @@ VIEWPORT_SIZES = [
     {"width": 1280, "height": 720},
 ]
 
+def is_metadata_text(text: str) -> bool:
+    """
+    Kiểm tra xem đoạn text có phải metadata (Local Guide, thời gian, số reviews, ...) hay không
+    để loại bỏ khỏi danh sách reviews thực tế.
+    """
+    if not text:
+        return True
+    normalized = text.strip()
+    lower_text = normalized.lower()
+    
+    # Các pattern phổ biến không phải review
+    if 'local guide' in lower_text:
+        return True
+    if 'reviews' in lower_text and 'photos' in lower_text and '·' in normalized:
+        return True
+    if re.match(r'^\d+\s+reviews\s+·\s+\d+\s+photos$', lower_text):
+        return True
+    if re.match(r'^(?:\d+\s+)?(?:minute|minutes|hour|hours|day|days|week|weeks|month|months|year|years)\s+ago$', lower_text):
+        return True
+    if re.match(r'^(?:a|an)\s+(?:minute|hour|day|week|month|year)\s+ago$', lower_text):
+        return True
+    if lower_text in {'local guide', 'translate review'}:
+        return True
+    
+    return False
+
 def human_delay(min_seconds=0.5, max_seconds=2.0):
     """Random delay để mô phỏng hành vi con người"""
     delay = random.uniform(min_seconds, max_seconds)
@@ -270,14 +297,14 @@ def setup_playwright_browser(playwright):
         context = browser.new_context(
             viewport=viewport,
             user_agent=user_agent,
-            locale='en-US',
-            timezone_id='America/New_York',
+            locale='vi-VN',
+            timezone_id='Asia/Ho_Chi_Minh',
             permissions=['geolocation'],
             geolocation={'latitude': 10.8231, 'longitude': 106.6297},  # HCM coordinates
             color_scheme='light',
             # Thêm extra HTTP headers
             extra_http_headers={
-                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.5',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Connection': 'keep-alive',
@@ -315,7 +342,7 @@ def setup_playwright_browser(playwright):
             
             // Override languages
             Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en']
+                get: () => ['vi-VN', 'vi']
             });
             
             // Override platform
@@ -629,7 +656,8 @@ def scrape_reviews_from_google_maps(place_id: str, page, min_reviews: int = 90, 
                                         'Translate' not in text and
                                         'Read more' not in text.lower() and
                                         'Less' not in text[:10] and
-                                        'Reply' not in text[:10]):
+                                        'Reply' not in text[:10] and
+                                        not is_metadata_text(text)):
                                         review_texts.add(text)
                             except:
                                 continue
@@ -745,7 +773,8 @@ def scrape_reviews_from_google_maps(place_id: str, page, min_reviews: int = 90, 
                                                     'See more' not in text and
                                                     'Show more' not in text and
                                                     'Helpful' not in text and
-                                                    'Translate' not in text):
+                                                    'Translate' not in text and
+                                                    not is_metadata_text(text)):
                                                     review_texts.add(text)
                                             except:
                                                 continue
@@ -796,7 +825,8 @@ def scrape_reviews_from_google_maps(place_id: str, page, min_reviews: int = 90, 
                                                 'Translate' not in text and
                                                 'Read more' not in text.lower() and
                                                 'Less' not in text[:10] and
-                                                'Reply' not in text[:10]):
+                                                'Reply' not in text[:10] and
+                                                not is_metadata_text(text)):
                                                 review_texts.add(text)
                                     except:
                                         continue
@@ -818,24 +848,24 @@ def scrape_reviews_from_google_maps(place_id: str, page, min_reviews: int = 90, 
 
 # Danh sách 20 thành phố nổi tiếng nhất ở Việt Nam với tọa độ trung tâm
 VIETNAM_CITIES = [
-    {"name": "Hà Nội", "lat": 21.0285, "lng": 105.8542},
+    # {"name": "Hà Nội", "lat": 21.0285, "lng": 105.8542},
     {"name": "Thành phố Hồ Chí Minh", "lat": 10.8231, "lng": 106.6297},
-    {"name": "Đà Nẵng", "lat": 16.0544, "lng": 108.2022},
-    {"name": "Hải Phòng", "lat": 20.8449, "lng": 106.6881},
-    {"name": "Cần Thơ", "lat": 10.0452, "lng": 105.7469},
-    {"name": "Nha Trang", "lat": 12.2388, "lng": 109.1967},
-    {"name": "Huế", "lat": 16.4637, "lng": 107.5909},
-    {"name": "Vũng Tàu", "lat": 10.3460, "lng": 107.0843},
-    {"name": "Phan Thiết", "lat": 10.9376, "lng": 108.1018},
-    {"name": "Quy Nhon", "lat": 13.7765, "lng": 109.2237},
-    {"name": "Hạ Long", "lat": 20.9101, "lng": 107.1839},
-    {"name": "Sapa", "lat": 22.3364, "lng": 103.8437},
-    {"name": "Đà Lạt", "lat": 11.9404, "lng": 108.4583},
-    {"name": "Hội An", "lat": 15.8801, "lng": 108.3380},
-    {"name": "Phú Quốc", "lat": 10.2899, "lng": 103.9840},
-    {"name": "Mũi Né", "lat": 10.9600, "lng": 108.2800},
-    {"name": "Tam Đảo", "lat": 21.4500, "lng": 105.6500},
-    {"name": "Cát Bà", "lat": 20.8000, "lng": 107.0167},
+    # {"name": "Đà Nẵng", "lat": 16.0544, "lng": 108.2022},
+    # {"name": "Hải Phòng", "lat": 20.8449, "lng": 106.6881},
+    # {"name": "Cần Thơ", "lat": 10.0452, "lng": 105.7469},
+    # {"name": "Nha Trang", "lat": 12.2388, "lng": 109.1967},
+    # {"name": "Huế", "lat": 16.4637, "lng": 107.5909},
+    # {"name": "Vũng Tàu", "lat": 10.3460, "lng": 107.0843},
+    # {"name": "Phan Thiết", "lat": 10.9376, "lng": 108.1018},
+    # {"name": "Quy Nhon", "lat": 13.7765, "lng": 109.2237},
+    # {"name": "Hạ Long", "lat": 20.9101, "lng": 107.1839},
+    # {"name": "Sapa", "lat": 22.3364, "lng": 103.8437},
+    # {"name": "Đà Lạt", "lat": 11.9404, "lng": 108.4583},
+    # {"name": "Hội An", "lat": 15.8801, "lng": 108.3380},
+    # {"name": "Phú Quốc", "lat": 10.2899, "lng": 103.9840},
+    # {"name": "Mũi Né", "lat": 10.9600, "lng": 108.2800},
+    # {"name": "Tam Đảo", "lat": 21.4500, "lng": 105.6500},
+    # {"name": "Cát Bà", "lat": 20.8000, "lng": 107.0167},
 ]
 
 def main():
