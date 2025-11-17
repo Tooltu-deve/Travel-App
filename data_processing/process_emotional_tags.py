@@ -272,7 +272,7 @@ try:
     
 except Exception as e:
     print(f"Lỗi khi đọc file CSV: {e}")
-    exit() 
+    exit()
 
 # ---- 5. XỬ LÝ VÀ GÁN THẺ (THE CORE LOOP) ----
 print("Bắt đầu xử lý gán thẻ...")
@@ -387,7 +387,7 @@ for placeID, group in grouped:
     for pred in predictions:
         for label, score in zip(pred['labels'], pred['scores']):
             if label in tag_scores_sum:
-                tag_scores_sum[label] += score
+            tag_scores_sum[label] += score
                 tag_counts[label] += 1
             
     # Tính trung bình cộng (chỉ tính cho các tags có xuất hiện ít nhất 1 lần)

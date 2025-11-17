@@ -61,7 +61,7 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
     headers = {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.userRatingCount,nextPageToken'
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.userRatingCount,places.rating,nextPageToken'
     }
     
     # Tạo request body
@@ -126,24 +126,40 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
                 place_id = place.get('id', '')
                 name = place.get('displayName', {}).get('text', '') if isinstance(place.get('displayName'), dict) else place.get('displayName', '')
                 user_rating_count = place.get('userRatingCount', 0)
+                rating = place.get('rating', 0)  # Lấy rating (sao)
                 
-                # Chỉ lấy POI có số lượng reviews > 100 và chưa có trong danh sách
-                if user_rating_count and user_rating_count > 100 and place_id not in all_place_ids:
+                # Chỉ lấy POI có:
+                # 1. Số lượng reviews > 100
+                # 2. Rating >= 3.5 sao
+                # 3. Chưa có trong danh sách
+                if (user_rating_count and user_rating_count > 100 and 
+                    rating and rating >= 3.5 and 
+                    place_id not in all_place_ids):
                     all_pois.append({
                         'place_id': place_id,
                         'name': name,
-                        'user_rating_total': user_rating_count
+                        'user_rating_total': user_rating_count,
+                        'rating': rating
                     })
                     all_place_ids.add(place_id)  # Thêm vào set để tránh trùng lặp
                     valid_count += 1
-                    print(f"   ✅ [{len(all_pois):3d}] {name[:50]:<50} | {user_rating_count:>6} reviews")
+                    print(f"   ✅ [{len(all_pois):3d}] {name[:50]:<50} | {user_rating_count:>6} reviews | ⭐ {rating:.1f}")
                 else:
                     skipped_count += 1
+                    skip_reason = []
+                    if not user_rating_count or user_rating_count <= 100:
+                        skip_reason.append(f"< 100 reviews")
+                    if not rating or rating < 3.5:
+                        skip_reason.append(f"< 3.5⭐ ({rating:.1f if rating else 'N/A'})")
+                    if place_id in all_place_ids:
+                        skip_reason.append("trùng lặp")
+                    
                     if skipped_count <= 3:  # Chỉ hiển thị 3 POI đầu tiên bị bỏ qua
-                        print(f"   ⏭️  [{skipped_count:3d}] {name[:50]:<50} | {user_rating_count:>6} reviews (bỏ qua)")
+                        reason = ", ".join(skip_reason) if skip_reason else "không hợp lệ"
+                        print(f"   ⏭️  [{skipped_count:3d}] {name[:50]:<50} | {user_rating_count:>6} reviews | ⭐ {rating:.1f if rating else 'N/A'} ({reason})")
             
             if skipped_count > 3:
-                print(f"   ⏭️  ... và {skipped_count - 3} POI khác bị bỏ qua (< 100 reviews)")
+                print(f"   ⏭️  ... và {skipped_count - 3} POI khác bị bỏ qua (< 100 reviews hoặc < 3.5⭐)")
             
             print(f"   📊 Trang này: {valid_count} hợp lệ, {skipped_count} bỏ qua")
             
@@ -858,25 +874,25 @@ def main():
         print("   ⚡ Anti-detection: Random user agents, viewports, human-like behavior")
         print("   ⚡ Tốc độ sẽ nhanh hơn nhờ chạy song song nhiều browser")
     
-    # Tổng hợp dữ liệu từ tất cả thành phố
+    # Tổng hợp dữ liệu từ tất cả thành phố (chỉ để thống kê, không lưu file tổng hợp)
     all_reviews_data = []
     all_pois_summary = []
     
     # Chạy cho từng thành phố
     for city_idx, city in enumerate(VIETNAM_CITIES, 1):
+        # Dữ liệu reviews cho thành phố hiện tại
+        city_reviews_data = []
+        city_pois_summary = []
         print("\n" + "═"*70)
         print(f"🏙️  [{city_idx:2d}/{len(VIETNAM_CITIES)}] {city['name']}")
         print("═"*70)
         
-        # Tạo nhiều query khác nhau để tìm được nhiều POI hơn
+        # Tạo nhiều query khác nhau để tìm được nhiều POI hơn (4 queries chính)
         queries = [
             f"Địa điểm du lịch và thắng cảnh ở {city['name']}",
-            f"Bảo tàng ở {city['name']}",
-            f"Chùa ở {city['name']}",
-            f"Công viên ở {city['name']}",
-            f"Di tích lịch sử ở {city['name']}",
-            f"Vường quốc gia ở {city['name']}",
-            f"Khu bảo tồn và du lịch sinh thái ở {city['name']}",
+            f"Bảo tàng và di tích lịch sử ở {city['name']}",
+            f"Chùa và đền thờ ở {city['name']}",
+            f"Vườn quốc gia và khu du lịch sinh thái ở {city['name']}",
         ]
         
         location = f"{city['lat']},{city['lng']}"
@@ -1036,10 +1052,12 @@ def main():
                                     with data_lock:
                                         for result in results:
                                             if len(result) > 2 and result[2] is not None:  # Có review text
-                                                all_reviews_data.append({
+                                                review_data = {
                                                     'placeID': result[0],
                                                     'reviews': result[2]
-                                                })
+                                                }
+                                                all_reviews_data.append(review_data)
+                                                city_reviews_data.append(review_data)  # Thêm vào city-specific list
                         except Exception as e:
                             print(f"      ❌ Lỗi xử lý kết quả: {str(e)[:50]}")
                     
@@ -1049,12 +1067,14 @@ def main():
                         place_id = poi['place_id']
                         review_count = poi_review_counts.get(place_id, 0)
                         if review_count >= 90:
-                            filtered_pois_summary.append({
+                            poi_summary = {
                                 'city': city['name'],
                                 'place_id': place_id,
                                 'name': poi['name'],
                                 'user_rating_total': poi['user_rating_total']
-                            })
+                            }
+                            filtered_pois_summary.append(poi_summary)
+                            city_pois_summary.append(poi_summary)  # Thêm vào city-specific list
                     
                     # Cập nhật all_pois_summary với filtered list (chỉ POI có >= 90 reviews)
                     with data_lock:
@@ -1064,6 +1084,24 @@ def main():
                     total_pois = len(pois)
                     qualified_pois = len(filtered_pois_summary)
                     print(f"\n   ✅ Hoàn tất: {total_pois} POI đã xử lý, {qualified_pois} POI có >= 90 reviews (đủ điều kiện)")
+                
+                # Xuất file CSV cho thành phố hiện tại
+                if city_reviews_data:
+                    # Sanitize tên thành phố để dùng làm tên file (loại bỏ ký tự đặc biệt)
+                    city_name_safe = city['name'].replace(' ', '_').replace('/', '_').replace('\\', '_')
+                    city_reviews_file = f'./reviews/reviews_{city_name_safe}.csv'
+                    
+                    print(f"\n   💾 Đang lưu reviews cho {city['name']}...")
+                    try:
+                        with open(city_reviews_file, 'w', newline='', encoding='utf-8') as f:
+                            writer = csv.DictWriter(f, fieldnames=['placeID', 'reviews'])
+                            writer.writeheader()
+                            writer.writerows(city_reviews_data)
+                        print(f"   ✅ Đã lưu {len(city_reviews_data):,} reviews → {city_reviews_file}")
+                    except Exception as e:
+                        print(f"   ❌ Lỗi khi lưu file CSV cho {city['name']}: {e}")
+                else:
+                    print(f"\n   ⚠️  Không có reviews nào để lưu cho {city['name']}")
             else:
                 # Nếu không scrape reviews, không lưu POI nào vào summary
                 # (vì không biết số reviews thực tế)
@@ -1097,45 +1135,30 @@ def main():
     except Exception as e:
         print(f"   ❌ Lỗi khi lưu summary: {e}")
     
-    # Lưu reviews vào CSV (nếu có)
+    # Thống kê theo thành phố (không lưu file tổng hợp)
     if all_reviews_data:
-        output_file = './reviews/all_reviews.csv'
-        print(f"   📄 Đang lưu {len(all_reviews_data):,} reviews...")
+        city_stats = {}
+        for poi in all_pois_summary:
+            city = poi['city']
+            if city not in city_stats:
+                city_stats[city] = {'pois': 0, 'reviews': 0}
+            city_stats[city]['pois'] += 1
         
-        try:
-            # Kiểm tra file đã tồn tại chưa để append hoặc tạo mới
-            file_exists = os.path.exists(output_file)
-            with open(output_file, 'a' if file_exists else 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=['placeID', 'reviews'])
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerows(all_reviews_data)
-            
-            print(f"   ✅ Đã lưu {len(all_reviews_data):,} reviews → {output_file}")
-            
-            # Thống kê theo thành phố
-            city_stats = {}
-            for poi in all_pois_summary:
-                city = poi['city']
-                if city not in city_stats:
-                    city_stats[city] = {'pois': 0, 'reviews': 0}
-                city_stats[city]['pois'] += 1
-            
-            # Đếm reviews theo placeID và map về city
-            poi_to_city = {poi['place_id']: poi['city'] for poi in all_pois_summary}
-            for row in all_reviews_data:
-                place_id = row['placeID']
-                if place_id in poi_to_city:
-                    city = poi_to_city[place_id]
-                    city_stats[city]['reviews'] += 1
-            
-            print(f"\n   📊 Thống kê theo thành phố:")
-            print(f"   {'─'*66}")
-            for city, stats in sorted(city_stats.items()):
-                print(f"   {city:30s} | {stats['pois']:3d} POI | {stats['reviews']:6,} reviews")
-            
-        except Exception as e:
-            print(f"   ❌ Lỗi khi lưu file CSV: {e}")
+        # Đếm reviews theo placeID và map về city
+        poi_to_city = {poi['place_id']: poi['city'] for poi in all_pois_summary}
+        for row in all_reviews_data:
+            place_id = row['placeID']
+            if place_id in poi_to_city:
+                city = poi_to_city[place_id]
+                city_stats[city]['reviews'] += 1
+        
+        print(f"\n   📊 Thống kê theo thành phố:")
+        print(f"   {'─'*66}")
+        for city, stats in sorted(city_stats.items()):
+            print(f"   {city:30s} | {stats['pois']:3d} POI | {stats['reviews']:6,} reviews")
+        
+        print(f"\n   ✅ Tất cả reviews đã được lưu vào các file riêng trong folder ./reviews/")
+        print(f"   📁 Mỗi thành phố có file: reviews_{{tên_thành_phố}}.csv")
     else:
         print(f"   ⚠️  Không có reviews nào được scrape")
     
@@ -1149,7 +1172,8 @@ def main():
         print(f"   📝 Tổng số reviews: {len(all_reviews_data):,}")
     print(f"   💾 File summary: {summary_file}")
     if all_reviews_data:
-        print(f"   💾 File reviews: ./reviews/all_reviews.csv")
+        print(f"   📁 Reviews đã được lưu vào các file riêng trong ./reviews/")
+        print(f"   📄 Mỗi thành phố: reviews_{{tên_thành_phố}}.csv")
     print(f"{'═'*70}\n")
 
 if __name__ == "__main__":
