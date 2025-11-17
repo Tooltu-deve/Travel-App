@@ -3,19 +3,19 @@ import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { DatabaseModule } from './database/database.module';
 import { ConfigModule } from '@nestjs/config';
+import { PlaceModule } from './place/place.module';
+import { ItineraryModule } from './itinerary/itinerary.module';
 
 @Module({
   imports: [
-    // Tải .env file và làm cho nó có sẵn toàn ứng dụng
     ConfigModule.forRoot({ isGlobal: true }),
-    // Module kết nối Database (MongoDB)
     DatabaseModule,
-    // Module nghiệp vụ
     AuthModule,
     UserModule,
-    // ChatModule (như trong hình, bạn có thể thêm sau)
+    PlaceModule,
+    ItineraryModule,
   ],
   controllers: [],
   providers: [],
 })
-export class AppModule {}
+export class AppModule { }

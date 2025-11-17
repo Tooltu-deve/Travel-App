@@ -1,5 +1,5 @@
 import pandas as pd
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from datasets import Dataset
 import json
 import torch # Cần thiết để kiểm tra và sử dụng GPU
@@ -8,6 +8,7 @@ import os
 import requests
 from dotenv import load_dotenv
 from glob import glob
+import numpy as np
 
 # Load biến môi trường từ file .env
 load_dotenv()
@@ -174,28 +175,51 @@ else:
     device_index = -1  # CPU
     print("Không tìm thấy GPU, đang sử dụng CPU (sẽ rất chậm!).")
 
-# ---- 2. TẢI MÔ HÌNH (PIPELINE) ----
-# Tải pipeline Zero-Shot Classification.
-# 'facebook/bart-large-mnli' là mô hình tiêu chuẩn, mạnh mẽ cho nhiệm vụ này.
-# Nó sẽ tự động tải về (khoảng 1.6GB) trong lần chạy đầu tiên.
-print("Đang tải mô hình Zero-Shot...")
+# ---- 2. TẢI MÔ HÌNH PHOBERT ĐÃ FINE-TUNE ----
+# Tải mô hình PhoBERT đã được fine-tune cho emotional tag classification
+MODEL_PATH = "./final_few_shot_phobert_model"
+
+print(f"Đang tải mô hình PhoBERT đã fine-tune từ: {MODEL_PATH}...")
 try:
-    # device=device_index: 
-    #   - 0: NVIDIA CUDA GPU
-    #   - 'mps': Apple Silicon GPU (Mac M1/M2/M3)
-    #   - -1: CPU
-    classifier = pipeline(
-        "zero-shot-classification",
-        model="facebook/bart-large-mnli",
-        device=device_index
-    )
-    print("Tải mô hình thành công.")
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            f"Không tìm thấy mô hình tại {MODEL_PATH}. "
+            "Hãy chạy fine_tune_phoBERT.py trước để tạo mô hình."
+        )
+    
+    # Load tokenizer và model
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, use_fast=False)
+    
+    # Xác định device cho model
+    if device_index == 'mps':
+        device = torch.device('mps')
+    elif device_index == 0:
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    
+    model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH)
+    model.to(device)
+    model.eval()  # Chuyển sang chế độ evaluation
+    
+    # Load label mappings từ model config
+    id_to_label = model.config.id2label
+    label_to_id = model.config.label2id
+    NUM_LABELS = len(id_to_label)
+    
+    print(f"✅ Tải mô hình thành công!")
+    print(f"   - Số lượng tags: {NUM_LABELS}")
+    print(f"   - Device: {device}")
+    print(f"   - Tags: {sorted(id_to_label.values())}")
+    
 except Exception as e:
-    print(f"Lỗi khi tải mô hình: {e}")
-    print("Gợi ý: Nếu lỗi liên quan đến MPS, thử chạy lại hoặc fallback về CPU bằng cách set device_index = -1")
+    print(f"❌ Lỗi khi tải mô hình: {e}")
+    print("Gợi ý: Hãy chạy fine_tune_phoBERT.py trước để tạo mô hình.")
     exit()
 
 # ---- 3. ĐỊNH NGHĨA CÁC THẺ CẢM XÚC ----
+# Lưu ý: Tags sẽ được load từ model config, không cần định nghĩa ở đây nữa
+# Nhưng giữ lại để tương thích với code cũ (nếu cần)
 EMOTIONAL_TAGS = [
     'quiet', 'peaceful', 'relaxing',  # Nhóm Yên tĩnh
     'crowded', 'lively', 'vibrant',     # Nhóm Náo nhiệt
@@ -203,7 +227,7 @@ EMOTIONAL_TAGS = [
     'expensive', 'luxury', 'high-end',          # Nhóm Đắt đỏ
     'good value', 'cheap', 'affordable', # Nhóm Đáng tiền
     'touristy', 'tourist-friendly',                      # Nhiều khách du lịch
-    'local gem', 'authentic', 'genuine',       # Địa phương, đích thực
+    'local_gem', 'authentic', 'genuine',       # Địa phương, đích thực (lưu ý: local_gem không có dấu cách)
     'adventurous', 'exciting', 'thrilling',        # Mạo hiểm
     'family-friendly', 'cozy', 'comfortable', # Nhóm Gia đình, thoải mái
     'modern', 'artistic', 'creative', 
@@ -248,7 +272,7 @@ try:
     
 except Exception as e:
     print(f"Lỗi khi đọc file CSV: {e}")
-    exit() 
+    exit()
 
 # ---- 5. XỬ LÝ VÀ GÁN THẺ (THE CORE LOOP) ----
 print("Bắt đầu xử lý gán thẻ...")
@@ -267,48 +291,85 @@ for placeID, group in grouped:
         print(f"POI {placeID} không có review text hợp lệ, bỏ qua.")
         continue
 
-    # CHẠY PHÂN LOẠI (INFERENCE) - TỐI ƯU VỚI DATASET VÀ BATCH PROCESSING
+    # CHẠY PHÂN LOẠI (INFERENCE) - SỬ DỤNG PHOBERT FINE-TUNED
     # Sử dụng Dataset để batch processing hiệu quả hơn, tận dụng GPU tốt hơn
     try:
         # Tạo Dataset từ reviews_list để xử lý theo batch
         dataset = Dataset.from_dict({"text": reviews_list})
         
-        # Hàm xử lý batch - được gọi với batch_size reviews cùng lúc
-        def classify_batch(examples):
-            texts = examples["text"]  # List các text trong batch
-            # Pipeline tự động xử lý batch này, tận dụng GPU tốt hơn
-            results = classifier(
-                texts,
-                candidate_labels=EMOTIONAL_TAGS,
-                multi_label=True
+        # Hàm tokenize và encode
+        def tokenize_batch(examples):
+            return tokenizer(
+                examples["text"],
+                truncation=True,
+                padding='max_length',
+                max_length=128,
+                return_tensors=None  # Trả về list thay vì tensor
             )
-            # Trả về dạng dict với labels và scores cho mỗi text trong batch
-            return {
-                "labels": [r["labels"] for r in results],
-                "scores": [r["scores"] for r in results]
-            }
         
-        # Map với batched=True để xử lý theo batch
-        # batch_size: số reviews xử lý cùng lúc (tăng nếu GPU memory đủ)
-        # Với GPU: 32-128 thường tốt, với CPU: 8-16
-        batch_size = 64 if device_index != -1 else 16
-        dataset = dataset.map(
-            classify_batch,
+        # Tokenize tất cả reviews
+        tokenized_dataset = dataset.map(
+            tokenize_batch,
             batched=True,
-            batch_size=batch_size,
-            remove_columns=["text"]  # Xóa cột text sau khi xử lý để tiết kiệm memory
+            remove_columns=["text"]
         )
         
-        # Chuyển kết quả từ Dataset về dạng list predictions (giữ format cũ)
+        # Hàm predict batch
+        def predict_batch(examples):
+            # Chuẩn bị input_ids và attention_mask
+            input_ids = torch.tensor(examples["input_ids"]).to(device)
+            attention_mask = torch.tensor(examples["attention_mask"]).to(device)
+            
+            # Predict
+            with torch.no_grad():
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                logits = outputs.logits  # Shape: (batch_size, num_labels)
+            
+            # Chuyển logits sang probabilities bằng softmax
+            probs = torch.nn.functional.softmax(logits, dim=-1).cpu().numpy()
+            
+            # Lấy top-k labels và scores cho mỗi review (multi-label: lấy tất cả labels có prob > threshold)
+            threshold = 0.1  # Ngưỡng để coi là positive label
+            batch_labels = []
+            batch_scores = []
+            
+            for prob in probs:
+                # Lấy tất cả labels có probability > threshold
+                label_indices = np.where(prob > threshold)[0]
+                if len(label_indices) == 0:
+                    # Nếu không có label nào > threshold, lấy top-3
+                    label_indices = np.argsort(prob)[-3:][::-1]
+                
+                # Sắp xếp theo score giảm dần
+                sorted_indices = label_indices[np.argsort(prob[label_indices])[::-1]]
+                
+                labels = [id_to_label[int(idx)] for idx in sorted_indices]
+                scores = [float(prob[int(idx)]) for idx in sorted_indices]
+                
+                batch_labels.append(labels)
+                batch_scores.append(scores)
+            
+            return {
+                "labels": batch_labels,
+                "scores": batch_scores
+            }
+        
+        # Predict theo batch
+        batch_size = 32 if device_index != -1 else 8
         predictions = []
-        for i in range(len(dataset)):
-            predictions.append({
-                "labels": dataset[i]["labels"],
-                "scores": dataset[i]["scores"]
-            })
+        
+        for i in range(0, len(tokenized_dataset), batch_size):
+            batch = tokenized_dataset[i:i+batch_size]
+            batch_results = predict_batch(batch)
+            predictions.extend([
+                {"labels": labels, "scores": scores}
+                for labels, scores in zip(batch_results["labels"], batch_results["scores"])
+            ])
             
     except Exception as e:
         print(f"Lỗi khi chạy mô hình cho POI {placeID}: {e}")
+        import traceback
+        traceback.print_exc()
         continue
 
     # ---- 6. TÍNH TOÁN ĐIỂM SỐ TRUNG BÌNH ----
@@ -317,17 +378,26 @@ for placeID, group in grouped:
     
     # Chúng ta cần tính điểm TRUNG BÌNH của tất cả các review cho POI này
     
-    # Khởi tạo điểm số cho POI này
-    tag_scores_sum = {tag: 0.0 for tag in EMOTIONAL_TAGS}
+    # Khởi tạo điểm số cho POI này - sử dụng tất cả labels từ model
+    all_tags = list(id_to_label.values())
+    tag_scores_sum = {tag: 0.0 for tag in all_tags}
+    tag_counts = {tag: 0 for tag in all_tags}  # Đếm số lần tag xuất hiện
     
     # Cộng dồn điểm số từ mỗi review
     for pred in predictions:
         for label, score in zip(pred['labels'], pred['scores']):
+            if label in tag_scores_sum:
             tag_scores_sum[label] += score
+            tag_counts[label] += 1
             
-    # Tính trung bình cộng
+    # Tính trung bình cộng (chỉ tính cho các tags có xuất hiện ít nhất 1 lần)
     num_reviews = len(reviews_list)
-    avg_scores = {tag: (total_score / num_reviews) for tag, total_score in tag_scores_sum.items()}
+    avg_scores = {}
+    for tag in all_tags:
+        if tag_counts[tag] > 0:
+            avg_scores[tag] = tag_scores_sum[tag] / num_reviews
+        else:
+            avg_scores[tag] = 0.0
     
     # Lưu kết quả
     poi_final_scores[placeID] = avg_scores
