@@ -61,7 +61,7 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
     headers = {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.userRatingCount,nextPageToken'
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.userRatingCount,places.rating,nextPageToken'
     }
     
     # Tạo request body
@@ -126,24 +126,40 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
                 place_id = place.get('id', '')
                 name = place.get('displayName', {}).get('text', '') if isinstance(place.get('displayName'), dict) else place.get('displayName', '')
                 user_rating_count = place.get('userRatingCount', 0)
+                rating = place.get('rating', 0)  # Lấy rating (sao)
                 
-                # Chỉ lấy POI có số lượng reviews > 100 và chưa có trong danh sách
-                if user_rating_count and user_rating_count > 100 and place_id not in all_place_ids:
+                # Chỉ lấy POI có:
+                # 1. Số lượng reviews > 100
+                # 2. Rating >= 3.5 sao
+                # 3. Chưa có trong danh sách
+                if (user_rating_count and user_rating_count > 100 and 
+                    rating and rating >= 3.5 and 
+                    place_id not in all_place_ids):
                     all_pois.append({
                         'place_id': place_id,
                         'name': name,
-                        'user_rating_total': user_rating_count
+                        'user_rating_total': user_rating_count,
+                        'rating': rating
                     })
                     all_place_ids.add(place_id)  # Thêm vào set để tránh trùng lặp
                     valid_count += 1
-                    print(f"   ✅ [{len(all_pois):3d}] {name[:50]:<50} | {user_rating_count:>6} reviews")
+                    print(f"   ✅ [{len(all_pois):3d}] {name[:50]:<50} | {user_rating_count:>6} reviews | ⭐ {rating:.1f}")
                 else:
                     skipped_count += 1
+                    skip_reason = []
+                    if not user_rating_count or user_rating_count <= 100:
+                        skip_reason.append(f"< 100 reviews")
+                    if not rating or rating < 3.5:
+                        skip_reason.append(f"< 3.5⭐ ({rating:.1f if rating else 'N/A'})")
+                    if place_id in all_place_ids:
+                        skip_reason.append("trùng lặp")
+                    
                     if skipped_count <= 3:  # Chỉ hiển thị 3 POI đầu tiên bị bỏ qua
-                        print(f"   ⏭️  [{skipped_count:3d}] {name[:50]:<50} | {user_rating_count:>6} reviews (bỏ qua)")
+                        reason = ", ".join(skip_reason) if skip_reason else "không hợp lệ"
+                        print(f"   ⏭️  [{skipped_count:3d}] {name[:50]:<50} | {user_rating_count:>6} reviews | ⭐ {rating:.1f if rating else 'N/A'} ({reason})")
             
             if skipped_count > 3:
-                print(f"   ⏭️  ... và {skipped_count - 3} POI khác bị bỏ qua (< 100 reviews)")
+                print(f"   ⏭️  ... và {skipped_count - 3} POI khác bị bỏ qua (< 100 reviews hoặc < 3.5⭐)")
             
             print(f"   📊 Trang này: {valid_count} hợp lệ, {skipped_count} bỏ qua")
             
@@ -868,15 +884,12 @@ def main():
         print(f"🏙️  [{city_idx:2d}/{len(VIETNAM_CITIES)}] {city['name']}")
         print("═"*70)
         
-        # Tạo nhiều query khác nhau để tìm được nhiều POI hơn
+        # Tạo nhiều query khác nhau để tìm được nhiều POI hơn (4 queries chính)
         queries = [
             f"Địa điểm du lịch và thắng cảnh ở {city['name']}",
-            f"Bảo tàng ở {city['name']}",
-            f"Chùa ở {city['name']}",
-            f"Công viên ở {city['name']}",
-            f"Di tích lịch sử ở {city['name']}",
-            f"Vường quốc gia ở {city['name']}",
-            f"Khu bảo tồn và du lịch sinh thái ở {city['name']}",
+            f"Bảo tàng và di tích lịch sử ở {city['name']}",
+            f"Chùa và đền thờ ở {city['name']}",
+            f"Vườn quốc gia và khu du lịch sinh thái ở {city['name']}",
         ]
         
         location = f"{city['lat']},{city['lng']}"
