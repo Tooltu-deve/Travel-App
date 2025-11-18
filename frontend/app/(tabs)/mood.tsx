@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import axios from "axios" ;
 import {
   Dimensions,
   ImageBackground,
@@ -14,6 +15,96 @@ import {
 import { SPACING } from '../../constants';
 
 const { width } = Dimensions.get('window');
+
+const BASE_URL = "https://travel-app-r9qu.onrender.com/api/v1";
+
+// Lấy danh sách mood có sẵn từ backend
+async function fetchAvailableMoods() {
+  try {
+    const url = `${BASE_URL}/places/available-moods`;
+    console.log('🔄 GET:', url);
+    const res = await axios.get(url);
+    console.log('✅ Available moods response:', res.data);
+    return res.data;
+  } catch (err: any) {
+    console.error("❌ fetchAvailableMoods error:", {
+      status: err?.response?.status,
+      url: err?.config?.url,
+      data: err?.response?.data,
+      message: err.message
+    });
+    return [];
+  }
+}
+
+// Lưu preferences của user
+async function saveUserPreferences(moods: string[], token?: string) {
+  try {
+    const url = `${BASE_URL}/users/profile/preferences`;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    console.log('🔄 POST:', url);
+    console.log('📦 Body:', { preferences: moods });
+    const res = await axios.post(url, { preferences: moods }, { headers });
+    console.log('✅ Save preferences response:', res.data);
+    return res.data;
+  } catch (err: any) {
+    console.error("❌ saveUserPreferences error:", {
+      status: err?.response?.status,
+      url: err?.config?.url,
+      data: err?.response?.data,
+      message: err.message
+    });
+    throw err;
+  }
+}
+
+// Tìm kiếm địa điểm theo cảm xúc
+async function searchPlacesByEmotion(emotions: string[]) {
+  try {
+    const url = `${BASE_URL}/places/search-by-emotion`;
+    const body = { emotions, mode: 'any', limit: 30 };
+    console.log('🔄 POST:', url);
+    console.log('📦 Body:', body);
+    const res = await axios.post(url, body);
+    console.log('✅ Search response:', res.data);
+    return res.data;
+  } catch (err: any) {
+    console.error("❌ searchPlacesByEmotion error:", {
+      status: err?.response?.status,
+      url: err?.config?.url,
+      data: err?.response?.data,
+      message: err.message
+    });
+    throw err;
+  }
+}
+
+
+// -------------------- MOOD MAPPING --------------------
+// Map UI mood IDs sang backend emotion tags
+const MOOD_TO_TAGS: Record<string, string[]> = {
+  'calm_relax': ['quiet', 'peaceful', 'relaxing'],
+  'social_energy': ['crowded', 'lively', 'vibrant'],
+  'romantic_private': ['romantic', 'good for couples'],
+  'luxury_premium': ['expensive', 'luxury'],
+  'budget_value': ['good value', 'cheap', 'affordable'],
+  'tourist_hotspot': ['touristy'],
+  'adventure_fun': ['adventurous', 'exciting'],
+  'family_cozy': ['family friendly'],
+  'modern_creative': ['trendy', 'instagrammable'],
+  'spiritual_religious': ['spiritual', 'serene'],
+  'local_authentic': ['local gem', 'authentic'],
+};
+
+// Convert selected mood IDs to backend emotion tags
+function convertMoodsToEmotions(moodIds: string[]): string[] {
+  const emotions = new Set<string>();
+  moodIds.forEach(id => {
+    const tags = MOOD_TO_TAGS[id] || [];
+    tags.forEach(tag => emotions.add(tag));
+  });
+  return Array.from(emotions);
+}
 
 // -------------------- TYPES --------------------
 interface MoodOption {
@@ -108,7 +199,7 @@ const MOOD_OPTIONS: readonly MoodOption[] = [
     image: require('../../assets/images/moods/local_authentic.jpg'),
     colors: ['#FFFFFF', '#F5F5F5'],
   },
-] as const;
+] as const; 
 
 // -------------------- COMPONENT: MoodCard --------------------
 const MoodCard: React.FC<{
@@ -188,6 +279,22 @@ const MoodCard: React.FC<{
 // -------------------- MAIN SCREEN --------------------
 export default function MoodScreen() {
   const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [availableMoods, setAvailableMoods] = useState<string[]>([]);
+
+  // Load available moods từ backend khi mount
+  useEffect(() => {
+    const loadMoods = async () => {
+      const moods = await fetchAvailableMoods();
+      if (moods.length > 0) {
+        setAvailableMoods(moods);
+        console.log('Available moods từ backend:', moods);
+      } else {
+        console.log('Sử dụng moods mặc định');
+      }
+    };
+    loadMoods();
+  }, []);
 
   const handleMoodSelect = useCallback((moodId: string) => {
     setSelectedMoods((prev) =>
@@ -197,8 +304,39 @@ export default function MoodScreen() {
     );
   }, []);
 
-  const handleContinue = useCallback(() => {
-    console.log('Selected moods:', selectedMoods);
+  const handleContinue = useCallback(async () => {
+    if (selectedMoods.length === 0) {
+      console.log('Chưa chọn tâm trạng nào');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      // Convert mood IDs sang backend emotion tags
+      const emotions = convertMoodsToEmotions(selectedMoods);
+      console.log('Selected moods:', selectedMoods);
+      console.log('Converted emotions:', emotions);
+      
+      // 1. Lưu preferences (mood IDs)
+      try {
+        await saveUserPreferences(selectedMoods);
+        console.log('✅ Đã lưu preferences');
+      } catch (prefErr) {
+        console.warn('⚠️ Không thể lưu preferences (có thể chưa đăng nhập)');
+      }
+      
+      // 2. Tìm kiếm địa điểm (dùng emotion tags)
+      const places = await searchPlacesByEmotion(emotions);
+      console.log('✅ Tìm thấy', places.length, 'địa điểm');
+      
+      // TODO: Điều hướng tới màn hình kết quả với places
+      
+    } catch (error: any) {
+      console.error('Lỗi:', error?.response?.data || error.message);
+    } finally {
+      setLoading(false);
+    }
   }, [selectedMoods]);
 
   return (
@@ -234,12 +372,13 @@ export default function MoodScreen() {
 
       <View style={styles.buttonContainer}>
         <TouchableOpacity
-          style={styles.continueButton}
+          style={[styles.continueButton, loading && { opacity: 0.6 }]}
           onPress={handleContinue}
+          disabled={loading}
           activeOpacity={0.8}
         >
           <Text style={styles.buttonText}>
-            Tiếp tục với [{selectedMoods.length}] tâm trạng
+            {loading ? 'Đang tìm kiếm...' : `Tiếp tục với [${selectedMoods.length}] tâm trạng`}
           </Text>
         </TouchableOpacity>
       </View>
@@ -305,18 +444,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: SPACING.md,
   },
-  moodCard: {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
+  cardWrapper: {
     borderRadius: CARD_SIZE / 2,
-    overflow: 'hidden', // quan trọng để ảnh tròn đều
-    backgroundColor: 'transparent', // bỏ nền trắng vuông
-    marginBottom: SPACING.sm,
     shadowColor: '#000',
     shadowOpacity: 0.1,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
     elevation: 3,
+    overflow: 'hidden',
+  },
+
+  moodCard: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    borderRadius: CARD_SIZE / 2,
+    overflow: 'hidden',
+    borderWidth: 0,
   },
 
   selectedCard: {
