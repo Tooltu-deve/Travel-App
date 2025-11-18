@@ -15,6 +15,7 @@ import { PlaceService } from './place.service';
 import { CreatePlaceDto } from './dto/create-place.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { SearchPlaceDto } from './dto/search-place.dto';
 
 @Controller('places') // Tất cả API sẽ bắt đầu bằng /api/v1/places
 export class PlaceController {
@@ -33,6 +34,18 @@ export class PlaceController {
     @Get()
     findAll() {
         return this.placeService.findAll();
+    }
+    
+    @Get('available-moods')
+    getAvailableMoods() {
+        return this.placeService.getAvailableMoods();
+    }
+
+    @Get('search-by-emotion')
+    findEmotional(@Query() searchDto: SearchPlaceDto) {
+        // Nhờ dùng DTO, NestJS sẽ tự động validate
+        // (tags là bắt buộc, minScore/sortBy là tùy chọn)
+        return this.placeService.searchByEmotions(searchDto);
     }
 
     // GET /places/near?lon=...&lat=...&dist=...

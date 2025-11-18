@@ -5,8 +5,7 @@ import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View }
 import { COLORS, SPACING } from '../../constants';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_PADDING = SPACING.md * 2; // Padding trái phải
-const CARD_WIDTH = SCREEN_WIDTH - CARD_PADDING;
+const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
 
 interface DestinationCardProps {
   destination: {
@@ -161,7 +160,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 5,
     marginBottom: 0,
-    marginRight: SPACING.md,
+    marginRight: 0, // Bỏ margin right để full width
     borderTopLeftRadius: 40,
     borderTopRightRadius: 40,
     borderBottomLeftRadius: 50,

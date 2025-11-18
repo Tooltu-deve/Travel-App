@@ -5,4 +5,8 @@ datasets>=2.14.0
 requests>=2.31.0
 pymongo>=4.5.0
 python-dotenv>=1.0.0
+numpy>=1.24.0
+evaluate>=0.4.0
+accelerate>=0.26.0
+playwright>=1.40.0
 

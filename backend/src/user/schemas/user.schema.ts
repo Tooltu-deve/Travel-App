@@ -68,6 +68,9 @@ export class User {
 
   @Prop({ type: String, unique: true, sparse: true, required: false })
   facebookId?: string;
+
+  @Prop([String]) // Một mảng các chuỗi
+  preferredTags?: string[]; // vd: ['romantic', 'quiet', 'local gem']
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

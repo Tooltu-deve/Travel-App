@@ -1,10 +1,12 @@
 import { Controller, Get, Request, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { UserService } from './user.service';
+import { Body, Patch } from '@nestjs/common';
+import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
 
 @Controller('users')
 export class UserController {
-  constructor(private userService: UserService) {}
+  constructor(private userService: UserService) { }
 
   // Route này được bảo vệ, chỉ user đã login mới xem được
   @UseGuards(JwtAuthGuard)
@@ -19,5 +21,14 @@ export class UserController {
     const plain: any = typeof (user as any).toObject === 'function' ? (user as any).toObject() : { ...(user as any) };
     delete plain.password;
     return plain;
+  }
+  @Patch('profile/preferences')
+  async updatePreferences(
+    @Request() req,
+    @Body() dto: UpdateUserPreferencesDto,
+  ) {
+    const userId = req.user.userId;
+    // req.user.userId được lấy từ JWT token
+    return this.userService.updatePreferences(userId, dto);
   }
 }
