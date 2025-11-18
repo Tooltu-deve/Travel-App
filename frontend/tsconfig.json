@@ -4,7 +4,14 @@
     "strict": true,
     "paths": {
       "@/*": [
+        "./*",
         "./src/*"
+      ],
+      "@components/*": [
+        "./components/*"
+      ],
+      "@Profile": [
+        "./services/profile.ts"
       ]
     }
   },
