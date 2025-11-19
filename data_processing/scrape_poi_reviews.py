@@ -179,7 +179,7 @@ def search_pois_by_text(query: str, location: str = None, min_results: int = 65,
 
 # Danh sách 10 thành phố nổi tiếng nhất ở Việt Nam với tọa độ trung tâm
 VIETNAM_CITIES = [
-    # {"name": "Hà Nội", "lat": 21.0285, "lng": 105.8542},
+    {"name": "Hà Nội", "lat": 21.0285, "lng": 105.8542},
     {"name": "Thành phố Hồ Chí Minh", "lat": 10.8231, "lng": 106.6297},
     {"name": "Đà Nẵng", "lat": 16.0544, "lng": 108.2022},
     {"name": "Hải Phòng", "lat": 20.8449, "lng": 106.6881},
@@ -189,6 +189,11 @@ VIETNAM_CITIES = [
     {"name": "Vũng Tàu", "lat": 10.3460, "lng": 107.0843},
     {"name": "Hạ Long", "lat": 20.9101, "lng": 107.1839},
     {"name": "Đà Lạt", "lat": 11.9404, "lng": 108.4583},
+    {"name": "Sa Pa", "lat": 22.3354, "lng": 103.8438},
+    {"name": "Hội An", "lat": 15.8801, "lng": 108.3380},
+    {"name": "Phú Quốc", "lat": 10.2899, "lng": 103.9840},
+    {"name": "Phan Thiết", "lat": 10.9804, "lng": 108.2615},
+    {"name": "Ninh Bình", "lat": 20.2506, "lng": 105.9745},
 ]
 
 def main():
@@ -206,11 +211,13 @@ def main():
     print(f"\n📋 Yêu cầu: {min_results_per_city}-{max_results_per_city} POI mỗi thành phố, mỗi POI có > 100 reviews")
     
     # Tạo thư mục reviews nếu chưa có
-    os.makedirs('./reviews', exist_ok=True)
+    os.makedirs('./placeID', exist_ok=True)
     
     # Tổng hợp dữ liệu từ tất cả thành phố
     all_pois_summary = []
     
+    per_query_limit = 20  # Luôn cố lấy tối đa 20 POI cho mỗi query
+
     # Chạy cho từng thành phố
     for city_idx, city in enumerate(VIETNAM_CITIES, 1):
         city_pois_summary = []
@@ -223,6 +230,8 @@ def main():
             f"Địa điểm du lịch và thắng cảnh ở {city['name']}",
             f"Bảo tàng và di tích lịch sử ở {city['name']}",
             f"Chùa và đền thờ ở {city['name']}",
+            f"Cà phê và nhà hàng nổi tiếng ở {city['name']}",
+            f"Bãi biển và khu nghĩ dưỡng ở {city['name']}",
             f"Vườn quốc gia và khu du lịch sinh thái ở {city['name']}",
         ]
         
@@ -241,20 +250,21 @@ def main():
                 if len(pois) >= max_results_per_city:
                     print(f"\n   ✅ Đã đạt {max_results_per_city} POI, dừng tìm kiếm")
                     break
-                
+
                 remaining_needed = max_results_per_city - len(pois)
-                if remaining_needed <= 0:
-                    break
-                
+                max_for_this_query = min(per_query_limit, remaining_needed)
+                if max_for_this_query <= 0:
+                    continue
+
                 print(f"\n   🔍 Query {query_idx}/{len(queries)}: {query}")
-                print(f"   📊 Đã có: {len(pois)} POI, cần thêm: {remaining_needed} POI")
+                print(f"   📊 Đã có: {len(pois)} POI, sẽ lấy tối đa: {max_for_this_query} POI trong query này")
                 
                 # Tìm kiếm với query này, truyền existing_place_ids để tránh trùng lặp
                 query_pois = search_pois_by_text(
                     query, 
                     location, 
                     min_results=0,  # Không yêu cầu tối thiểu cho từng query
-                    max_results=remaining_needed + 20,  # Lấy thêm một chút để đảm bảo
+                    max_results=max_for_this_query,
                     existing_place_ids=all_place_ids
                 )
                 
@@ -268,7 +278,7 @@ def main():
                 
                 # Nếu đã đủ, dừng lại
                 if len(pois) >= min_results_per_city:
-                    print(f"   ✅ Đã đạt tối thiểu {min_results_per_city} POI")
+                    print(f"   ✅ Đã đạt tối thiểu {min_results_per_city} POI (tiếp tục chạy hết các query để đa dạng)")
                 
                 # Đợi một chút giữa các query để tránh rate limit
                 if query_idx < len(queries):
@@ -304,7 +314,7 @@ def main():
             if pois:
                 # Sanitize tên thành phố để dùng làm tên file (loại bỏ ký tự đặc biệt)
                 city_name_safe = city['name'].replace(' ', '_').replace('/', '_').replace('\\', '_')
-                city_pois_file = f'./reviews/{city_name_safe}.csv'
+                city_pois_file = f'./placeID/{city_name_safe}.csv'
                 
                 print(f"\n   💾 Đang lưu POI cho {city['name']}...")
                 try:
@@ -331,7 +341,7 @@ def main():
             time.sleep(3)
     
     # Lưu summary POI
-    summary_file = './reviews/pois_summary.csv'
+    summary_file = './placeID/pois_summary.csv'
     print(f"\n{'═'*70}")
     print(f"💾 LƯU DỮ LIỆU")
     print(f"{'═'*70}")
