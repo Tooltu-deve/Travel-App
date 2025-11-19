@@ -18,48 +18,52 @@ GOOGLE_GEOCODING_API_KEY = os.getenv("GOOGLE_GEOCODING_API_KEY", "") or os.geten
 
 MOOD_WEIGHTS = {
     "Yên tĩnh & Thư giãn": {
-        "quiet": 1.0, "peaceful": 0.9, "relaxing": 0.8,
-        "crowded": -1.0, "lively": -0.9, "vibrant": -0.8
+        "peaceful": 1.0, "scenic": 0.8, "seaside": 0.7,
+        "lively": -0.9, "festive": -0.8, "touristy": -0.7
     },
     "Náo nhiệt & Xã hội": {
-        "lively": 1.0, "crowded": 0.8, "vibrant": 0.7, 
-        "quiet": -1.0, "peaceful": -0.8, "relaxing": -0.7
+        "lively": 1.0, "festive": 0.9, "touristy": 0.7,
+        "peaceful": -0.9, "scenic": -0.7, "spiritual": -0.6
     },
     "Lãng mạn & Riêng tư": {
-        "romantic": 1.0, "good for couples": 0.9, "quiet": 0.8,
-        "crowded": -1.0, "lively": -0.9, "vibrant": -0.8,
-    },
-    "Đắt đỏ & Sang trọng": {
-        "expensive": 1.0, "luxury": 0.9, "high-end": 0.8,
-        "cheap": -1.0, "affordable": -0.9, "good value": -0.8
-    },
-    "Đáng tiền & Giá rẻ": {
-        "cheap": 1.0, "affordable": 0.9, "good value": 0.8,
-        "expensive": -1.0, "luxury": -0.9, "high-end": -0.8,
+        "romantic": 1.0, "scenic": 0.8, "peaceful": 0.7,
+        "lively": -0.9, "festive": -0.8, "touristy": -0.7
     },
     "Điểm thu hút khách du lịch": {
-        "touristy": 1.0, "tourist-friendly": 0.9,
-        "quiet": -1.0, "peaceful": -0.9,
+        "touristy": 1.0, "lively": 0.8, "festive": 0.7,
+        "peaceful": -0.9, "local_gem": -0.8, "spiritual": -0.6
     },
     "Mạo hiểm & Thú vị": {
-        "adventurous": 1.0, "exciting": 0.9, "thrilling": 0.8,
-        "peaceful": -1.0, "relaxing": -0.9, "quiet": -0.8
+        "adventurous": 1.0, "scenic": 0.8, "seaside": 0.7,
+        "peaceful": -0.9, "spiritual": -0.7, "historical": -0.6
     },
     "Gia đình & Thoải mái": {
-        "family-friendly": 1.0, "cozy": 0.9, "comfortable": 0.8,
-        "good for couples": -1.0, "romantic": -0.9, "adventurous": -0.8,
+        "family-friendly": 1.0, "scenic": 0.8, "peaceful": 0.7,
+        "adventurous": -0.8, "romantic": -0.7, "festive": -0.6
     },
     "Hiện đại & Sáng tạo": {
-        "modern": 1.0, "creative": 0.9, "artistic": 0.8,
-        "historical": -1.0, "traditional": -0.9, "cultural": -0.8,
+        "modern": 1.0, "lively": 0.7,
+        "historical": -1.0, "spiritual": -0.8, "local_gem": -0.7
     },
     "Tâm linh & Tôn giáo": {
-        "spiritual": 1.0, "religious": 0.9, "faith": 0.8,
-        "modern": -1.0, "creative": -0.9, "artistic": -0.8,
+        "spiritual": 1.0, "historical": 0.8, "peaceful": 0.7,
+        "modern": -1.0, "adventurous": -0.7, "lively": -0.6
     },
     "Địa phương & Đích thực": {
-        "local gem": 1.0, "authentic": 0.9, "genuine": 0.8,
-        "modern": -1.0, "creative": -0.9, "artistic": -0.8,
+        "local_gem": 1.0, "historical": 0.8, "peaceful": 0.7,
+        "touristy": -1.0, "modern": -0.8, "lively": -0.7
+    },
+    "Cảnh quan thiên nhiên": {
+        "scenic": 1.0, "peaceful": 0.9, "seaside": 0.8,
+        "lively": -0.7, "festive": -0.6, "touristy": -0.5
+    },
+    "Lễ hội & Sôi động": {
+        "festive": 1.0, "lively": 0.9, "touristy": 0.7,
+        "peaceful": -1.0, "scenic": -0.8, "spiritual": -0.6
+    },
+    "Ven biển & Nghỉ dưỡng": {
+        "seaside": 1.0, "scenic": 0.9, "peaceful": 0.8,
+        "adventurous": -0.7, "historical": -0.6, "spiritual": -0.5
     },
 }
 
@@ -502,7 +506,7 @@ async def optimize_route_endpoint(request: OptimizerRequest):
     return {"optimized_route": daily_plan}
 
 # --- 5. LỆNH CHẠY SERVER ---
-# if __name__ == "__main__":
-#     uvicorn.run(app, host="0.0.0.0", port=5000)
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
