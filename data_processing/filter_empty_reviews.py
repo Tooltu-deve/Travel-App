@@ -1,9 +1,10 @@
 """
-Script lọc các dòng không có nội dung review và các POI có số reviews < 80 trong toàn bộ thư mục `reviews/`.
+Script lọc các dòng không có nội dung review, review không phải tiếng Việt, và các POI có số reviews < 80 trong toàn bộ thư mục `reviews/`.
 
 - Tự động duyệt tất cả file CSV trong `data_processing/reviews`.
 - Chuẩn hoá tên cột để hỗ trợ nhiều định dạng (`placeId` -> `placeID`, `text` -> `review-text`, ...).
 - Loại bỏ các dòng có nội dung review bị rỗng hoặc chỉ chứa khoảng trắng.
+- Loại bỏ các review không phải tiếng Việt bằng heuristic đơn giản.
 - Lọc các POI có số reviews < 80 (chỉ giữ lại các POI có >= 80 reviews).
 - Ghi đè file gốc sau khi lọc.
 """
@@ -11,6 +12,7 @@ Script lọc các dòng không có nội dung review và các POI có số revie
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pandas as pd
 
@@ -30,6 +32,30 @@ COLUMN_MAPPING = {
     "review": "review-text",
     "Review": "review-text",
 }
+
+
+VIETNAMESE_DIACRITIC_PATTERN = re.compile(
+    "[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]",
+    re.IGNORECASE,
+)
+COMMON_VI_WORDS = (" không ", " và ", " ở ", " của ", " đã ", " rồi ", " nhưng ", " với ")
+
+
+def is_vietnamese_text(text: str) -> bool:
+    """
+    Heuristic: giữ review có ký tự tiếng Việt hoặc chứa nhiều từ tiếng Việt phổ biến.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    if VIETNAMESE_DIACRITIC_PATTERN.search(lowered):
+        return True
+    if any(word in lowered for word in COMMON_VI_WORDS):
+        return True
+    # Nếu không có dấu, yêu cầu tối thiểu số chữ cái tiếng Việt không dấu
+    letters = sum(ch.isalpha() for ch in lowered)
+    spaces = lowered.count(" ")
+    return letters >= 20 and spaces >= 3
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -67,6 +93,11 @@ def clean_csv(path: Path) -> None:
     filtered_df["review-text"] = trimmed[valid_mask]
     removed_empty = original_rows - len(filtered_df)
 
+    # Lọc các review không phải tiếng Việt
+    vn_mask = filtered_df["review-text"].apply(is_vietnamese_text)
+    removed_non_vi = len(filtered_df) - vn_mask.sum()
+    filtered_df = filtered_df[vn_mask].copy()
+
     # Đếm số reviews theo placeID và lọc các POI có số reviews >= 80
     rows_before_poi_filter = len(filtered_df)
     poi_review_counts = filtered_df["placeID"].value_counts()
@@ -78,8 +109,8 @@ def clean_csv(path: Path) -> None:
     removed_pois_count = original_pois - remaining_pois
 
     # Kiểm tra xem có thay đổi gì không
-    if removed_empty == 0 and removed_pois_count == 0:
-        print("   ✅ Không có dòng rỗng và tất cả POI đều có >= 80 reviews. Không cần thay đổi.")
+    if removed_empty == 0 and removed_non_vi == 0 and removed_pois_count == 0:
+        print("   ✅ Không có dòng rỗng, review ngoại ngữ, và tất cả POI đều có >= 80 reviews. Không cần thay đổi.")
         return
 
     try:
@@ -91,6 +122,8 @@ def clean_csv(path: Path) -> None:
     print(f"   ✅ Hoàn tất:")
     if removed_empty > 0:
         print(f"      - Xoá {removed_empty} dòng review rỗng")
+    if removed_non_vi > 0:
+        print(f"      - Xoá {removed_non_vi} dòng không phải tiếng Việt")
     if removed_pois_count > 0:
         print(f"      - Xoá {removed_pois_count} POI có < 80 reviews (giữ lại {remaining_pois}/{original_pois} POI)")
         print(f"      - Xoá {removed_by_poi_filter} dòng review từ các POI bị loại")
