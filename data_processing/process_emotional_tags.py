@@ -9,6 +9,7 @@ import requests
 from dotenv import load_dotenv
 from glob import glob
 import numpy as np
+from pathlib import Path
 
 # Load biến môi trường từ file .env
 load_dotenv()
@@ -177,7 +178,7 @@ else:
 
 # ---- 2. TẢI MÔ HÌNH PHOBERT ĐÃ FINE-TUNE ----
 # Tải mô hình PhoBERT đã được fine-tune cho emotional tag classification
-MODEL_PATH = "./final_few_shot_phobert_model"
+MODEL_PATH = "./final_model_weighted"
 
 print(f"Đang tải mô hình PhoBERT đã fine-tune từ: {MODEL_PATH}...")
 try:
@@ -221,18 +222,19 @@ except Exception as e:
 # Lưu ý: Tags sẽ được load từ model config, không cần định nghĩa ở đây nữa
 # Nhưng giữ lại để tương thích với code cũ (nếu cần)
 EMOTIONAL_TAGS = [
-    'quiet', 'peaceful', 'relaxing',  # Nhóm Yên tĩnh
-    'crowded', 'lively', 'vibrant',     # Nhóm Náo nhiệt
-    'romantic', 'good for couples',          # Nhóm Lãng mạn
-    'expensive', 'luxury', 'high-end',          # Nhóm Đắt đỏ
-    'good value', 'cheap', 'affordable', # Nhóm Đáng tiền
-    'touristy', 'tourist-friendly',                      # Nhiều khách du lịch
-    'local_gem', 'authentic', 'genuine',       # Địa phương, đích thực (lưu ý: local_gem không có dấu cách)
-    'adventurous', 'exciting', 'thrilling',        # Mạo hiểm
-    'family-friendly', 'cozy', 'comfortable', # Nhóm Gia đình, thoải mái
-    'modern', 'artistic', 'creative', 
-    'historical', 'cultural', 'traditional',
-    'spiritual', 'religious', 'faith',
+    'peaceful',          # Nhóm Yên tĩnh
+    'lively',            # Náo nhiệt & xã hội
+    'romantic',          # Lãng mạn & riêng tư
+    'touristy',          # Thu hút khách du lịch
+    'local_gem',         # Địa phương & đích thực
+    'adventurous',       # Mạo hiểm & thú vị
+    'family-friendly',   # Gia đình & thoải mái
+    'modern',            # Hiện đại & sáng tạo
+    'historical',        # Lịch sử & truyền thống
+    'spiritual',         # Tâm linh & tôn giáo
+    'scenic',            # Cảnh quan thiên nhiên
+    'festive',           # Sôi động lễ hội
+    'seaside',           # Gần biển/ven biển
 ]
 
 # ---- 4. TẢI DỮ LIỆU ĐÁNH GIÁ ----
@@ -257,8 +259,21 @@ try:
         print(f"  → Đọc được {len(df)} dòng")
         
         # Kiểm tra các cột bắt buộc
+        # Chuẩn hoá tên cột để tương thích với nhiều định dạng file (ví dụ: reviews_Ha_Noi.csv)
+        column_mapping = {
+            'placeId': 'placeID',
+            'place_id': 'placeID',
+            'PlaceID': 'placeID',
+            'PlaceId': 'placeID',
+            'text': 'review-text',
+            'review_text': 'review-text',
+            'review': 'review-text',
+            'Review': 'review-text'
+        }
+        df = df.rename(columns=column_mapping)
+        
         if 'placeID' not in df.columns or 'review-text' not in df.columns:
-            print(f"  ⚠️  Cảnh báo: File '{csv_file}' thiếu cột 'placeID' hoặc 'review-text'. Bỏ qua file này.")
+            print(f"  ⚠️  Cảnh báo: File '{csv_file}' thiếu cột 'placeID' hoặc 'review-text' sau khi chuẩn hoá. Bỏ qua file này.")
             continue
         
         df_list.append(df)
@@ -387,47 +402,52 @@ for placeID, group in grouped:
     for pred in predictions:
         for label, score in zip(pred['labels'], pred['scores']):
             if label in tag_scores_sum:
-            tag_scores_sum[label] += score
-            tag_counts[label] += 1
+                tag_scores_sum[label] += score
+                tag_counts[label] += 1
             
     # Tính trung bình cộng (chỉ tính cho các tags có xuất hiện ít nhất 1 lần)
     num_reviews = len(reviews_list)
     avg_scores = {}
     for tag in all_tags:
         if tag_counts[tag] > 0:
-            avg_scores[tag] = tag_scores_sum[tag] / num_reviews
+            # Điểm trung bình của tag dựa trên những review thực sự nhắc tới tag đó.
+            # Điều này giúp score phản ánh mức độ mạnh/yếu của cảm xúc trong các review liên quan,
+            # thay vì bị chia nhỏ bởi tổng số review.
+            avg_scores[tag] = tag_scores_sum[tag] / tag_counts[tag]
         else:
             avg_scores[tag] = 0.0
     
     # Lưu kết quả
     poi_final_scores[placeID] = avg_scores
-    print(f"POI {placeID} - Điểm số trung bình (ví dụ): quiet={avg_scores.get('quiet', 0):.2f}, crowded={avg_scores.get('crowded', 0):.2f}")
+    print(f"POI {placeID} - Điểm số trung bình (ví dụ): peaceful={avg_scores.get('peaceful', 0):.2f}, lively={avg_scores.get('lively', 0):.2f}")
 
 
 # ---- 7. LƯU KẾT QUẢ CUỐI CÙNG ----
 # 'poi_final_scores' là một dictionary lớn chứa điểm số cho tất cả POI
 print("\nHoàn tất xử lý! Đang lưu kết quả (kèm thông tin Place Details)...")
 try:
-    # Append theo dạng JSON Lines: mỗi POI là một dòng JSON đầy đủ thông tin
-    written = 0
+    output_file = Path('poi_location_details.json')
+    records = []
     with_details = 0
     without_details = 0
-    with open('poi_location_details.json', 'a', encoding='utf-8') as f:
-        for place_id, tags in poi_final_scores.items():
-            details = fetch_place_details(place_id)
-            has_details = any(v is not None for v in details.values())
-            if has_details:
-                with_details += 1
-            else:
-                without_details += 1
-            record = {
-                'placeID': place_id,
-                'emotional_tags': tags,
-                **({k: v for k, v in details.items() if v is not None})
-            }
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            written += 1
-    print(f"Đã append {written} dòng vào 'poi_location_details.json' (JSON Lines).")
+    for place_id, tags in poi_final_scores.items():
+        details = fetch_place_details(place_id)
+        has_details = any(v is not None for v in details.values())
+        if has_details:
+            with_details += 1
+        else:
+            without_details += 1
+        record = {
+            'placeID': place_id,
+            'emotional_tags': tags,
+            **({k: v for k, v in details.items() if v is not None})
+        }
+        records.append(record)
+
+    with output_file.open('w', encoding='utf-8') as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+
+    print(f"Đã lưu {len(records)} POI vào '{output_file}'.")
     print(f"   - Có place details: {with_details} POI")
     print(f"   - Không có place details: {without_details} POI")
     if without_details > 0:

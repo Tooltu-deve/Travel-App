@@ -1,119 +1,146 @@
+import os
 import pandas as pd
-from datasets import Dataset, load_dataset
+from datasets import Dataset
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
 import torch
+from torch import nn
 import numpy as np
-import evaluate
-import os
+from sklearn.metrics import f1_score, accuracy_score
+import subprocess
 
 # ----------------------------------------------------------------------
-# 1. CHUẨN BỊ DỮ LIỆU - ĐỌC TỪ FILE CSV SUPPORT SET
+# 0. CHUẨN BỊ TÁCH TỪ (Dùng underthesea)
 # ----------------------------------------------------------------------
+try:
+    from underthesea import word_tokenize
+except ImportError:
+    print("⚠️ underthesea chưa được cài. Đang cài đặt...")
+    subprocess.check_call(["pip", "install", "underthesea"])
+    from underthesea import word_tokenize
 
-# Đọc dữ liệu từ file CSV support_set.csv (4-shot cho mỗi emotional tag)
+def segment_text(text: str) -> str:
+    text = str(text).strip()
+    if not text:
+        return ""
+    try:
+        tokens = word_tokenize(text)
+        return " ".join(tokens)
+    except Exception as e:
+        # Fallback an toàn
+        return text
+
+# ----------------------------------------------------------------------
+# 1. ĐỌC DỮ LIỆU VÀ MAPPING
+# ----------------------------------------------------------------------
 support_set_path = "support_set.csv"
-
 if not os.path.exists(support_set_path):
-    raise FileNotFoundError(
-        f"Không tìm thấy file {support_set_path}. "
-        "Vui lòng đảm bảo file CSV đã được tạo với cấu trúc: review_text, tag_label"
-    )
+    raise FileNotFoundError(f"Thiếu file {support_set_path}")
 
-# Đọc CSV
 df = pd.read_csv(support_set_path)
+df['tag_label'] = df['tag_label'].apply(lambda x: str(x).strip())
 
-# Kiểm tra cấu trúc file
-required_columns = ['review_text', 'tag_label']
-if not all(col in df.columns for col in required_columns):
-    raise ValueError(
-        f"File CSV phải có các cột: {required_columns}. "
-        f"Các cột hiện tại: {list(df.columns)}"
-    )
+print("⏳ Đang tách từ tiếng Việt...")
+df['review_text_segmented'] = df['review_text'].apply(segment_text)
 
-print(f"✅ Đã đọc {len(df)} reviews từ {support_set_path}")
-print(f"📊 Số lượng tags duy nhất: {df['tag_label'].nunique()}")
-print(f"📋 Các tags: {sorted(df['tag_label'].unique())}")
-
-# Chuyển đổi DataFrame thành đối tượng Dataset của Hugging Face
-raw_datasets = Dataset.from_pandas(df)
-
-# ----------------------------------------------------------------------
-# 2. KHỞI TẠO MÔ HÌNH VÀ TOKENIZER
-# ----------------------------------------------------------------------
-
-# Tạo mapping từ tên tag (string) sang ID số (integer)
+# Tạo mapping labels
 unique_labels = sorted(list(set(df['tag_label'])))
 label_to_id = {label: i for i, label in enumerate(unique_labels)}
 id_to_label = {i: label for label, i in label_to_id.items()}
 NUM_TAGS = len(unique_labels)
-print(f"Tags đang được huấn luyện: {unique_labels}. Số lượng: {NUM_TAGS}")
+print(f"Training với {NUM_TAGS} tags.")
 
+raw_datasets = Dataset.from_pandas(df)
+
+# ----------------------------------------------------------------------
+# 2. MODEL & TOKENIZER
+# ----------------------------------------------------------------------
 MODEL_NAME = "vinai/phobert-base"
-# Sử dụng 'use_fast=False' là bắt buộc đối với PhoBERT Tokenizer
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False) 
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)
 
-# Tải mô hình cơ sở và cấu hình lại đầu phân loại (num_labels)
 model = AutoModelForSequenceClassification.from_pretrained(
     MODEL_NAME,
     num_labels=NUM_TAGS,
     id2label=id_to_label,
-    label2id=label_to_id
+    label2id=label_to_id,
+    problem_type="multi_label_classification"
 )
-print("Đã tải mô hình PhoBERT base.")
 
 # ----------------------------------------------------------------------
-# 3. TIỀN XỬ LÝ VÀ CHIA TẬP DỮ LIỆU
+# 3. ENCODE & SPLIT
 # ----------------------------------------------------------------------
-
 def tokenize_and_encode(examples):
-    """Tokenize văn bản và chuyển nhãn (tag string) thành ID số."""
-    # max_length và padding rất quan trọng, đảm bảo input đồng nhất
-    tokenized = tokenizer(examples['review_text'], truncation=True, padding='max_length', max_length=128)
-    # Ánh xạ nhãn string sang nhãn số (ID)
-    tokenized['labels'] = [label_to_id[label] for label in examples['tag_label']]
+    tokenized = tokenizer(examples['review_text_segmented'], truncation=True, padding='max_length', max_length=128)
+    multi_hot_labels = []
+    for label in examples['tag_label']:
+        vec = [0.0] * NUM_TAGS
+        if label in label_to_id:
+            vec[label_to_id[label]] = 1.0
+        multi_hot_labels.append(vec)
+        
+    tokenized['labels'] = multi_hot_labels
     return tokenized
 
-# Áp dụng Tokenizer cho toàn bộ dataset
-tokenized_few_shot = raw_datasets.map(tokenize_and_encode, batched=True)
+tokenized_datasets = raw_datasets.map(tokenize_and_encode, batched=True)
+cols_to_keep = ['input_ids', 'attention_mask', 'labels']
+if 'token_type_ids' in tokenized_datasets.column_names: cols_to_keep.append('token_type_ids')
+tokenized_datasets = tokenized_datasets.remove_columns([c for c in tokenized_datasets.column_names if c not in cols_to_keep])
+tokenized_datasets.set_format("torch")
 
-# Loại bỏ các cột không cần thiết cho training
-# Lưu ý: '__index_level_0__' chỉ có khi tạo từ pandas DataFrame, có thể không có khi đọc từ CSV
-columns_to_remove = ['review_text', 'tag_label']
-if '__index_level_0__' in tokenized_few_shot.column_names:
-    columns_to_remove.append('__index_level_0__')
-tokenized_few_shot = tokenized_few_shot.remove_columns(columns_to_remove)
-
-# Chia tập dữ liệu Few-Shot thành train và test (validation)
-split_dataset = tokenized_few_shot.train_test_split(test_size=0.2, seed=42) 
+if len(tokenized_datasets) > 5:
+    split_dataset = tokenized_datasets.train_test_split(test_size=0.2, seed=42)
+else:
+    split_dataset = {"train": tokenized_datasets, "test": tokenized_datasets}
 
 # ----------------------------------------------------------------------
-# 4. CẤU HÌNH VÀ CHẠY TRAINER (FEW-SHOT SFT)
+# 4. CUSTOM TRAINER (SỬ DỤNG POS_WEIGHT)
 # ----------------------------------------------------------------------
+class WeightedTrainer(Trainer):
+    """Trainer tùy chỉnh để thêm pos_weight vào hàm loss."""
+    
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        labels = inputs.get("labels")
+        outputs = model(**inputs)
+        logits = outputs.get("logits")
+        
+        # ⚠️ Tùy chỉnh POS_WEIGHT tại đây ⚠️
+        # Đặt 10.0 (hoặc 15.0) nghĩa là nhãn Positive (1) quan trọng gấp 10 lần Negative (0).
+        # Điều này sẽ giúp model tự tin hơn khi dự đoán 1.
+        
+        # Đảm bảo tensor có cùng device với model
+        pos_weight_tensor = torch.ones(NUM_TAGS).to(model.device) * 10.0 
+        
+        loss_fct = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+        loss = loss_fct(logits, labels.float()) # Labels phải là float
+        
+        return (loss, outputs) if return_outputs else loss
 
-metric = evaluate.load("accuracy")
-
+# ----------------------------------------------------------------------
+# 5. METRIC & TRAINING
+# ----------------------------------------------------------------------
 def compute_metrics(eval_pred):
-    """Tính toán độ chính xác (accuracy) trong quá trình đánh giá."""
     logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    return metric.compute(predictions=predictions, references=labels)
+    probs = 1 / (1 + np.exp(-logits))
+    preds = (probs >= 0.5).astype(int)
+    f1 = f1_score(labels, preds, average='micro')
+    acc = accuracy_score(labels, preds)
+    return {"f1_micro": f1, "accuracy": acc}
 
-# Tham số Huấn luyện Few-Shot: CHỈ CẦN THAY ĐỔI ÍT, CÓ TÍNH MỤC TIÊU
 training_args = TrainingArguments(
-    output_dir="./phobert_few_shot_tags_classifier",
-    learning_rate=1e-5, # Tốc độ học tập RẤT NHỎ (Giúp tinh chỉnh nhẹ, tránh làm hỏng kiến thức gốc)
-    per_device_train_batch_size=8,
-    per_device_eval_batch_size=8,
-    num_train_epochs=3, # SỐ EPOCH THẤP (QUAN TRỌNG cho Few-Shot, tránh overfitting vào dữ liệu nhỏ)
+    output_dir="./phobert_underthesea_weighted",
+    learning_rate=3e-5, # Tăng nhẹ Learning Rate lên 3e-5
+    per_device_train_batch_size=4,
+    num_train_epochs=15, # Tăng lên 15 epoch để học hết dữ liệu Few-shot
     weight_decay=0.01,
-    eval_strategy="epoch", # Đánh giá sau mỗi epoch (đổi tên từ evaluation_strategy trong transformers mới)
-    save_strategy="epoch", # Lưu model sau mỗi epoch (phải khớp với eval_strategy khi dùng load_best_model_at_end)
+    eval_strategy="epoch",
+    save_strategy="epoch",
     load_best_model_at_end=True,
-    logging_dir='./logs',
-    dataloader_pin_memory=False, # Tắt pin_memory để tránh cảnh báo trên MPS (Apple Silicon GPU)
+    metric_for_best_model="f1_micro",
+    save_total_limit=1,
+    logging_steps=5
 )
 
-trainer = Trainer(
+# SỬ DỤNG WEIGHTED TRAINER
+trainer = WeightedTrainer( 
     model=model,
     args=training_args,
     train_dataset=split_dataset["train"],
@@ -122,18 +149,9 @@ trainer = Trainer(
     compute_metrics=compute_metrics,
 )
 
-print("\nBắt đầu tinh chỉnh Few-Shot (PhoBERT)...")
+print("🚀 Bắt đầu training với POS_WEIGHT...")
 trainer.train()
 
-# ----------------------------------------------------------------------
-# 5. LƯU VÀ SỬ DỤNG
-# ----------------------------------------------------------------------
-
-# Lưu mô hình đã fine-tuned và tokenizer vào thư mục Microservice AI của bạn
-output_dir = "./final_few_shot_phobert_model"
-os.makedirs(output_dir, exist_ok=True)
-
-trainer.save_model(output_dir)
-tokenizer.save_pretrained(output_dir)
-
-print(f"\n✅ Hoàn tất. Mô hình và tokenizer đã được lưu vào: {output_dir}")
+trainer.save_model("./final_model_weighted")
+tokenizer.save_pretrained("./final_model_weighted")
+print("✅ Xong! Model đã được train với trọng số.")
