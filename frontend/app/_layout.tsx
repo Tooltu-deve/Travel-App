@@ -18,11 +18,11 @@ function NavigationHandler() {
     const inAuthGroup = segments[0] === '(auth)';
 
     if (
-      // Nếu user đã đăng nhập nhưng đang ở trang auth
-      !isLoading && isAuthenticated && inAuthGroup
+      // Nếu user đã đăng nhập nhưng đang ở trang login/register
+      !isLoading && isAuthenticated && inAuthGroup && (segments[1] === 'login' || segments[1] === 'register')
     ) {
-      console.log('🔄 [RootLayout] User authenticated, redirecting to tabs');
-      router.replace('/(tabs)');
+      console.log('🔄 [RootLayout] User authenticated, redirecting to mood selection');
+      router.replace('/(auth)/mood');
     } else if (
       // Nếu user chưa đăng nhập nhưng không ở trang auth
       !isLoading && !isAuthenticated && !inAuthGroup

@@ -24,6 +24,12 @@ export default function AuthLayout() {
           title: 'Đăng ký',
         }}
       />
+      <Stack.Screen
+        name="mood"
+        options={{
+          title: 'Chọn tâm trạng',
+        }}
+      />
     </Stack>
   );
 }
