@@ -4,6 +4,8 @@ import { UserService } from './user.service';
 import { Body, Patch } from '@nestjs/common';
 import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
 
+import { Post } from '@nestjs/common';
+
 @Controller('users')
 export class UserController {
   constructor(private userService: UserService) { }
@@ -30,5 +32,26 @@ export class UserController {
     const userId = req.user.userId;
     // req.user.userId được lấy từ JWT token
     return this.userService.updatePreferences(userId, dto);
+  }
+
+  /**
+   * Like or unlike a place for the current user
+   * @param req - Request object (contains user info)
+   * @param body - { placeId: string }
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('like-place')
+  async likePlace(@Request() req, @Body('placeId') placeId: string) {
+    return this.userService.likePlace(req.user.userId, placeId);
+  }
+
+  /**
+   * Get all places liked by the current user
+   * @param req - Request object (contains user info)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('liked-places')
+  async getLikedPlaces(@Request() req) {
+    return this.userService.getLikedPlaces(req.user.userId);
   }
 }
