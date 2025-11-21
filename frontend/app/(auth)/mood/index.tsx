@@ -1,8 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import React, { useCallback, useEffect, useState } from 'react';
 import axios from "axios";
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Dimensions,
   ImageBackground,
@@ -112,17 +112,17 @@ const MOOD_OPTIONS: readonly MoodOption[] = [
     colors: ['#FFFFFF', '#F5F5F5'],
   },
   {
-    id: 'luxury_premium',
-    label: 'Đắt đỏ & Sang trọng',
+    id: 'coastal_resort',
+    label: 'Ven biển & Nghỉ dưỡng',
     description: '',
-    image: require('../../../assets/images/moods/luxury_premium.jpg'),
+    image: require('../../../assets/images/moods/coastal_resort.jpg'),
     colors: ['#FFFFFF', '#F5F5F5'],
   },
   {
-    id: 'budget_value',
-    label: 'Đáng tiền & Giá rẻ',
+    id: 'festive_vibrant',
+    label: 'Lễ hội & Sôi động',
     description: '',
-    image: require('../../../assets/images/moods/budget_value.jpg'),
+    image: require('../../../assets/images/moods/festive_vibrant.png'),
     colors: ['#FFFFFF', '#F5F5F5'],
   },
   {
@@ -167,22 +167,33 @@ const MOOD_OPTIONS: readonly MoodOption[] = [
     image: require('../../../assets/images/moods/local_authentic.jpg'),
     colors: ['#FFFFFF', '#F5F5F5'],
   },
+  {
+    id: 'nature',
+    label: 'Cảnh quan thiên nhiên',
+    description: '',
+    image: require('../../../assets/images/moods/nature.jpg'),
+    colors: ['#FFFFFF', '#F5F5F5'],
+  }
 ] as const;
 
 // -------------------- COMPONENT: MoodCard --------------------
 const MoodCard: React.FC<{
   mood: MoodOption;
   isSelected: boolean;
+  isDisabled: boolean;
   onPress: (moodId: string) => void;
-}> = ({ mood, isSelected, onPress }) => {
+}> = ({ mood, isSelected, isDisabled, onPress }) => {
   const handlePress = useCallback(() => {
-    onPress(mood.id);
-  }, [mood.id, onPress]);
+    if (!isDisabled) {
+      onPress(mood.id);
+    }
+  }, [mood.id, onPress, isDisabled]);
 
   const contentView = (
     <>
       {isSelected && <View style={styles.selectedOverlay} />}
       {mood.image && <View style={styles.imageOverlay} />}
+      {isDisabled && <View style={styles.disabledOverlay} />}
 
       <View style={styles.iconTopRight}>
         {isSelected ? (
@@ -206,8 +217,9 @@ const MoodCard: React.FC<{
 
   return (
     <TouchableOpacity
-      activeOpacity={0.95}
+      activeOpacity={isDisabled ? 1 : 0.95}
       onPress={handlePress}
+      disabled={isDisabled}
       style={[styles.moodCard, isSelected && styles.selectedCard]}
     >
       {mood.image ? (
@@ -266,11 +278,18 @@ export default function MoodSelectionScreen() {
   }, []);
 
   const handleMoodSelect = useCallback((moodId: string) => {
-    setSelectedMoods((prev) =>
-      prev.includes(moodId)
-        ? prev.filter((id) => id !== moodId)
-        : [...prev, moodId]
-    );
+    setSelectedMoods((prev) => {
+      // Nếu mood đã được chọn → bỏ chọn
+      if (prev.includes(moodId)) {
+        return prev.filter((id) => id !== moodId);
+      }
+      // Nếu đã chọn đủ 3 mood → không cho chọn thêm
+      if (prev.length >= 3) {
+        return prev;
+      }
+      // Chọn mood mới
+      return [...prev, moodId];
+    });
   }, []);
 
   const handleSkip = useCallback(() => {
@@ -322,14 +341,19 @@ export default function MoodSelectionScreen() {
         </View>
 
         <View style={styles.moodGrid}>
-          {MOOD_OPTIONS.map((mood) => (
-            <MoodCard
-              key={`mood-${mood.id}`}
-              mood={mood}
-              isSelected={selectedMoods.includes(mood.id)}
-              onPress={handleMoodSelect}
-            />
-          ))}
+          {MOOD_OPTIONS.map((mood) => {
+            const isSelected = selectedMoods.includes(mood.id);
+            const isDisabled = !isSelected && selectedMoods.length >= 3;
+            return (
+              <MoodCard
+                key={`mood-${mood.id}`}
+                mood={mood}
+                isSelected={isSelected}
+                isDisabled={isDisabled}
+                onPress={handleMoodSelect}
+              />
+            );
+          })}
         </View>
       </ScrollView>
 
@@ -433,6 +457,10 @@ const styles = StyleSheet.create({
   imageOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.12)',
+  },
+  disabledOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
   },
   iconTopRight: {
     position: 'absolute',
