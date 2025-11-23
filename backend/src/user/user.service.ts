@@ -1,17 +1,3 @@
-// ...existing code...
-// ...existing code...
-
-  /**
-   * Xóa toàn bộ địa điểm đã like của user (làm rỗng likedPlaces)
-   */
-  async clearLikedPlaces(userId: string): Promise<UserDocument> {
-    const user = await this.userModel.findById(userId);
-    if (!user) throw new NotFoundException('User not found');
-    user.likedPlaces = [];
-    return user.save();
-  }
-import { Place, PlaceDocument } from '../place/schemas/place.schema';
-import { enqueuePlaceFetch } from '../place/place-fetcher';
 import { Injectable, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -209,15 +195,6 @@ export class UserService {
       emotionalTags: place.emotionalTags || {},
       isStub: place.isStub || false,
     }));
-  }
-  /**
-   * Xóa toàn bộ địa điểm đã like của user (làm rỗng likedPlaces)
-   */
-  async clearLikedPlaces(userId: string): Promise<UserDocument> {
-    const user = await this.userModel.findById(userId);
-    if (!user) throw new NotFoundException('User not found');
-    user.likedPlaces = [];
-    return user.save();
   }
 }
 
