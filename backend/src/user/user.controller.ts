@@ -37,12 +37,12 @@ export class UserController {
   /**
    * Like or unlike a place for the current user
    * @param req - Request object (contains user info)
-   * @param body - { googlePlaceId: string }
+   * @param body - { google_place_id: string }
    */
   @UseGuards(JwtAuthGuard)
   @Post('like-place')
-  async likePlace(@Request() req, @Body('googlePlaceId') googlePlaceId: string) {
-    return this.userService.likePlace(req.user.userId, googlePlaceId);
+  async likePlace(@Request() req, @Body('google_place_id') google_place_id: string) {
+    return this.userService.likePlace(req.user.userId, google_place_id);
   }
 
   /**
