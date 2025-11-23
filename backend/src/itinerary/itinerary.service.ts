@@ -20,7 +20,7 @@ export class ItineraryService {
    * Lọc POI theo thành phố (destination)
    * Tìm kiếm trong address và name
    */
-  private filterByCity(
+  filterByCity(
     pois: PlaceDocument[],
     destination?: string,
   ): PlaceDocument[] {
@@ -63,7 +63,7 @@ export class ItineraryService {
   /**
    * Lọc POI theo budget range
    */
-  private filterByBudget(
+  filterByBudget(
     pois: PlaceDocument[],
     budgetRange?: string,
   ): PlaceDocument[] {
@@ -79,9 +79,62 @@ export class ItineraryService {
 
 
   /**
+   * Lọc POI theo budget và destination từ database
+   * @param budget - Budget range
+   * @param destination - Tên thành phố
+   * @returns Danh sách POI đã được lọc
+   */
+  async filterPoisByBudgetAndDestination(
+    budget: string,
+    destination: string,
+  ): Promise<PlaceDocument[]> {
+    // Lấy tất cả POI từ MongoDB
+    let pois: PlaceDocument[] = await this.placeModel.find().exec();
+
+    console.log(`📊 Tổng số POI trong DB: ${pois.length}`);
+
+    // Lọc theo thành phố (destination)
+    if (destination) {
+      pois = this.filterByCity(pois, destination);
+      console.log(`📍 Sau khi lọc theo thành phố "${destination}": ${pois.length} POI`);
+    }
+
+    // Lọc theo budget range
+    if (budget) {
+      const beforeCount = pois.length;
+      const availableBudgets = new Set(
+        pois.map((p) => p.budgetRange?.toLowerCase()).filter(Boolean),
+      );
+      console.log(
+        `💰 Lọc theo budget "${budget}". Các budget có sẵn: ${Array.from(availableBudgets).join(', ') || 'không có'}`,
+      );
+
+      pois = this.filterByBudget(pois, budget);
+      console.log(
+        `💰 Sau khi lọc theo budget "${budget}": ${pois.length} POI (từ ${beforeCount} POI)`,
+      );
+
+      if (pois.length === 0 && beforeCount > 0) {
+        console.warn(
+          `⚠️  Không tìm thấy POI nào với budget "${budget}". Các budget có sẵn: ${Array.from(availableBudgets).join(', ')}`,
+        );
+      }
+    }
+
+    if (pois.length === 0) {
+      throw new HttpException(
+        `Không tìm thấy POI nào phù hợp với budget "${budget}" và destination "${destination}".`,
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    return pois;
+  }
+
+  /**
    * Chuyển đổi PlaceDocument sang format cho AI Optimizer
    */
-  private convertPlaceToOptimizerFormat(poi: PlaceDocument): any {
+  convertPlaceToOptimizerFormat(poi: PlaceDocument): any {
     const [lng, lat] = poi.location.coordinates;
 
     // Chuyển đổi emotionalTags từ Map sang Object

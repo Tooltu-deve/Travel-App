@@ -12,6 +12,7 @@ import { Place, PlaceSchema } from '../place/schemas/place.schema';
   ],
   controllers: [ItineraryController],
   providers: [ItineraryService],
+  exports: [ItineraryService], // Export để TravelRouteModule có thể dùng
 })
 export class ItineraryModule {}
 
