@@ -7,7 +7,6 @@ import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
 
 import { Types } from 'mongoose';
 import { Place, PlaceDocument } from '../place/schemas/place.schema';
-import { enqueuePlaceFetch } from '../place/place-fetcher';
 
 @Injectable()
 export class UserService {
@@ -152,14 +151,6 @@ export class UserService {
         throw new InternalServerErrorException('Failed to create or load place stub');
       }
       // Enqueue background fetch only if USE_GOOGLE=true and we just inserted (best effort)
-      if (place.isStub && (process.env.USE_GOOGLE || '').toLowerCase() === 'true') {
-        try {
-          enqueuePlaceFetch(place.googlePlaceId);
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.error('enqueuePlaceFetch failed', err?.message || err);
-        }
-      }
     }
 
     // Like/unlike logic
