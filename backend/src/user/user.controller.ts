@@ -1,3 +1,12 @@
+import { Delete } from '@nestjs/common';
+  /**
+   * Xóa toàn bộ địa điểm đã like của user hiện tại
+   */
+  @UseGuards(JwtAuthGuard)
+  @Delete('liked-places')
+  async clearLikedPlaces(@Request() req) {
+    return this.userService.clearLikedPlaces(req.user.userId);
+  }
 import { Controller, Get, Request, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { UserService } from './user.service';
@@ -37,12 +46,12 @@ export class UserController {
   /**
    * Like or unlike a place for the current user
    * @param req - Request object (contains user info)
-   * @param body - { placeId: string }
+   * @param body - { googlePlaceId: string }
    */
   @UseGuards(JwtAuthGuard)
   @Post('like-place')
-  async likePlace(@Request() req, @Body('placeId') placeId: string) {
-    return this.userService.likePlace(req.user.userId, placeId);
+  async likePlace(@Request() req, @Body('googlePlaceId') googlePlaceId: string) {
+    return this.userService.likePlace(req.user.userId, googlePlaceId);
   }
 
   /**
@@ -53,5 +62,13 @@ export class UserController {
   @Get('liked-places')
   async getLikedPlaces(@Request() req) {
     return this.userService.getLikedPlaces(req.user.userId);
+  }
+  /**
+   * Xóa toàn bộ địa điểm đã like của user hiện tại
+   */
+  @UseGuards(JwtAuthGuard)
+  @Delete('liked-places')
+  async clearLikedPlaces(@Request() req) {
+    return this.userService.clearLikedPlaces(req.user.userId);
   }
 }
