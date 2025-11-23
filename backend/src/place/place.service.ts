@@ -162,7 +162,7 @@ export class PlaceService {
         // 4. Thực thi truy vấn
         return this.placeModel.find(query).sort(sort).limit(20).exec(); // Giới hạn 20 kết quả
     }
-      getAvailableMoods(): string[] {
+  getAvailableMoods(): string[] {
     // Tạm thời chúng ta sẽ trả về một danh sách TĨNH (hardcoded)
     // Đây là cách làm nhanh và hiệu quả.
     // (Cách nâng cao là quét toàn bộ CSDL để tự động tìm, nhưng sẽ chậm)
