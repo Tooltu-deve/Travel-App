@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import math
 from datetime import datetime, timedelta
 from copy import deepcopy
+import time
 
 # --- 1. KHỞI TẠO VÀ CẤU HÌNH ---
 load_dotenv()
@@ -97,6 +98,8 @@ class OptimizerRequest(BaseModel):
     eta_matrix: Optional[Dict[str, Dict[str, float]]] = None
     # ETA từ vị trí hiện tại đến từng POI, ví dụ: { "poiA": 8, "poiB": 15 }
     eta_from_current: Optional[Dict[str, float]] = None
+
+
 
 
 # --- Helpers: Google APIs ---
@@ -290,6 +293,8 @@ def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime) -> bool:
 @app.post("/optimize-route")
 async def optimize_route_endpoint(request: OptimizerRequest):
     """
+    Tối ưu lộ trình dựa trên ECS score và user mood.
+    
     Nhận: 
       - poi_list: danh sách POI đã được Backend lọc (theo thành phố, budget, bán kính)
       - user_mood: mood để tính ECS
@@ -299,13 +304,16 @@ async def optimize_route_endpoint(request: OptimizerRequest):
       - ecs_score_threshold: ngưỡng ECS tối thiểu (mặc định: 0.0)
       - eta_matrix: ma trận thời gian di chuyển (phút) giữa các POIs (optional)
       - eta_from_current: thời gian di chuyển (phút) từ vị trí hiện tại đến từng POI (optional)
+    
     Quy trình:
       1) Lọc POI đang mở cửa tại thời điểm khởi hành (TỐI ƯU: lọc TRƯỚC khi tính ECS)
       2) Tính ECS cho các POI đã lọc
       3) Lọc POI có ecs_score > threshold
-      4) Sắp xếp theo ECS và phân bổ POI theo ngày (TRƯỚC)
+      4) Sắp xếp theo ECS và phân bổ POI theo ngày
       5) Tối ưu thứ tự thăm cho từng ngày bằng heuristic nearest-neighbor dựa trên ETA
-    Trả về: Lộ trình dailyPlan
+    
+    Trả về: Lộ trình đã được tối ưu (chưa có encoded_polyline và travel_duration_minutes)
+            Backend sẽ enrich với Directions API sau khi nhận kết quả này.
     """
     print(f"Nhận yêu cầu tối ưu cho {request.duration_days} ngày với threshold ECS = {request.ecs_score_threshold}")
     print(f"  → Nhận được {len(request.poi_list)} POI đã được Backend lọc (thành phố, budget, bán kính)")
@@ -503,7 +511,11 @@ async def optimize_route_endpoint(request: OptimizerRequest):
 
     total_pois = sum(len(day.get('activities', [])) for day in daily_plan)
     print(f"✅ Hoàn tất! Tạo lộ trình {len(daily_plan)} ngày với tổng {total_pois} POI")
+    print(f"  → Backend sẽ enrich với Directions API sau khi nhận kết quả này")
+    
     return {"optimized_route": daily_plan}
+
+
 
 # --- 5. LỆNH CHẠY SERVER ---
 if __name__ == "__main__":

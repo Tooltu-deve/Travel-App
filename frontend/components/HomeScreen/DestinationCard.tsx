@@ -1,8 +1,9 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useRef, useState } from 'react';
-import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { COLORS, SPACING } from '../../constants';
+import LikeButton from './LikeButton';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
@@ -28,53 +29,9 @@ interface DestinationCardProps {
 
 export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, onInteraction }) => {
   const [isFavorite, setIsFavorite] = useState(false);
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-
-  const handleFavoritePress = () => {
-    // Tắt auto-scroll khi người dùng bấm nút tim
-    if (onInteraction) {
-      onInteraction();
-    }
-
-    // Animation bounce chỉ khi thêm tim (không phải bỏ tim)
-    if (!isFavorite) {
-      // Thêm tim: chạy animation bounce
-      Animated.sequence([
-        Animated.spring(scaleAnim, {
-          toValue: 1.3,
-          friction: 3,
-          tension: 100,
-          useNativeDriver: true,
-        }),
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          friction: 3,
-          tension: 100,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } else {
-      // Bỏ tim: scale nhỏ nhanh
-      Animated.spring(scaleAnim, {
-        toValue: 0.85,
-        friction: 3,
-        tension: 100,
-        useNativeDriver: true,
-      }).start(() => {
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          friction: 3,
-          tension: 100,
-          useNativeDriver: true,
-        }).start();
-      });
-    }
-
-    setIsFavorite(!isFavorite);
-  };
 
   return (
-    <TouchableOpacity style={styles.destinationCard} activeOpacity={0.9}>
+    <View style={styles.destinationCard}>
       <Image source={destination.image} style={styles.image} resizeMode="cover" />
       
       <LinearGradient
@@ -108,22 +65,19 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
               ))}
             </View>
 
-            <TouchableOpacity 
-              style={[
-                styles.favoriteButton,
-                isFavorite && styles.favoriteButtonActive
-              ]}
-              onPress={handleFavoritePress}
-              activeOpacity={0.8}
-            >
-              <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-                <FontAwesome 
-                  name={isFavorite ? "heart" : "heart-o"} 
-                  size={20} 
-                  color={isFavorite ? COLORS.favoriteActive : COLORS.textWhite} 
-                />
-              </Animated.View>
-            </TouchableOpacity>
+            <View>
+              <LikeButton
+                isFavorite={isFavorite}
+                placeId={destination.id}
+                onToggle={(next) => {
+                  // stop any auto-scroll etc.
+                  onInteraction?.();
+                  console.log('[DestinationCard] onToggle', destination.id, next);
+                  setIsFavorite(next);
+                }}
+                size={48}
+              />
+            </View>
           </View>
 
           <View style={styles.bottomRow}>
@@ -140,7 +94,7 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
           </View>
         </View>
       </LinearGradient>
-    </TouchableOpacity>
+    </View>
   );
 };
 

@@ -1,0 +1,35 @@
+{
+  "title": "Mẫu lộ trình 1 ngày - Đà Nẵng",
+  "summary": "Lộ trình gợi ý cho 2 người, ngân sách ~10 triệu",
+  "days": [
+    {
+      "day": 1,
+      "date": "2025-11-24",
+      "activities": [
+        {
+          "time": "08:00",
+          "name": "Bãi biển Mỹ Khê",
+          "description": "Tắm biển và ngắm bình minh, thích hợp chụp ảnh.",
+          "location": { "lat": 16.0544, "lng": 108.2022 }
+        },
+        {
+          "time": "11:00",
+          "name": "Nhà hàng hải sản Hương Biển",
+          "description": "Thưởng thức hải sản tươi sống gần bờ biển.",
+          "location": { "lat": 16.0602, "lng": 108.2233 }
+        },
+        {
+          "time": "14:00",
+          "name": "Cầu Rồng",
+          "description": "Tham quan cầu Rồng, chụp ảnh và dạo bộ dọc sông Hàn.",
+          "location": { "lat": 16.0543, "lng": 108.2230 }
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "people": 2,
+    "budget": "~10 triệu",
+    "note": "Dữ liệu mẫu dùng để phát triển giao diện khi AI service đang offline."
+  }
+}

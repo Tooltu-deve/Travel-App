@@ -6,7 +6,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { featuredDestinations, reviews } from '../mockData';
+import { featuredDestinations, reviews } from '../../utils/mockData';
 import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
 import { CategorySection } from '../../components/HomeScreen/CategorySection';
 import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
