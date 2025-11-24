@@ -82,33 +82,33 @@ export class UserService {
    * @param google_place_id - The Google Places id (preferred). If a MongoDB _id is provided
    *                         and a Place with that _id exists, it will be used instead.
    */
-  async likePlace(userId: string, google_place_id: string): Promise<UserDocument> {
+  async likePlace(userId: string, googlePlaceId: string): Promise<UserDocument> {
     const user = await this.userModel.findById(userId);
     if (!user) throw new NotFoundException('User not found');
-    if (!google_place_id || typeof google_place_id !== 'string' || !google_place_id.trim()) {
-      throw new InternalServerErrorException('google_place_id is required and must be a non-empty string');
+    if (!googlePlaceId || typeof googlePlaceId !== 'string' || !googlePlaceId.trim()) {
+      throw new InternalServerErrorException('googlePlaceId is required and must be a non-empty string');
     }
     const PlaceModel = this.userModel.db.model<PlaceDocument>('Place');
     let place: PlaceDocument | null = null;
 
     // If the client accidentally sent a MongoDB _id (24 hex chars) and that document exists, prefer that
-    if (Types.ObjectId.isValid(google_place_id)) {
+    if (Types.ObjectId.isValid(googlePlaceId)) {
       try {
-        const byId = await PlaceModel.findById(google_place_id).exec();
+        const byId = await PlaceModel.findById(googlePlaceId).exec();
         if (byId) {
           place = byId;
         }
       } catch (err) {
-        // ignore and continue treating input as google_place_id
+        // ignore and continue treating input as googlePlaceId
       }
     }
 
-    // If not found by _id, upsert by google_place_id
+    // If not found by _id, upsert by googlePlaceId (camelCase)
     if (!place) {
       const mock = {
-        name: `Placeholder ${google_place_id.substring(0, 8)}`,
+        name: `Placeholder ${googlePlaceId.substring(0, 8)}`,
         address: '',
-        google_place_id: google_place_id,
+        googlePlaceId: googlePlaceId,
         location: { type: 'Point', coordinates: [0, 0] },
         type: 'other',
         isStub: true,
@@ -117,7 +117,7 @@ export class UserService {
       try {
         // Try upsert (atomic)
         const upserted = await PlaceModel.findOneAndUpdate(
-          { google_place_id: google_place_id },
+          { googlePlaceId: googlePlaceId },
           { $setOnInsert: mock },
           {
             upsert: true,
@@ -129,7 +129,7 @@ export class UserService {
       } catch (err: any) {
         // Duplicate key: try to find existing
         if (err && (err.code === 11000 || err.code === 11001)) {
-          place = await PlaceModel.findOne({ google_place_id: google_place_id }).exec();
+          place = await PlaceModel.findOne({ googlePlaceId: googlePlaceId }).exec();
         } else {
           throw new InternalServerErrorException('Failed to create place stub: ' + (err?.message || err));
         }
@@ -141,7 +141,7 @@ export class UserService {
         } catch (err: any) {
           // If duplicate again, try to find
           if (err && (err.code === 11000 || err.code === 11001)) {
-            place = await PlaceModel.findOne({ google_place_id: google_place_id }).exec();
+            place = await PlaceModel.findOne({ googlePlaceId: googlePlaceId }).exec();
           } else {
             throw new InternalServerErrorException('Failed to create place stub: ' + (err?.message || err));
           }
@@ -175,9 +175,10 @@ export class UserService {
     const userPop = await this.userModel.findById(userId).populate({ path: 'likedPlaces' });
     if (!userPop || !userPop.likedPlaces) return [];
     const populatedPlaces = (userPop.likedPlaces as any[]).filter((p) => !!p);
+    // Trả về client: convert googlePlaceId -> google_place_id
     return populatedPlaces.map((place) => ({
       placeId: place._id?.toString() || '',
-      google_place_id: place.google_place_id,
+      google_place_id: place.googlePlaceId,
       name: place.name,
       address: place.address,
       location: place.location,

@@ -42,6 +42,7 @@ export class UserController {
   @UseGuards(JwtAuthGuard)
   @Post('like-place')
   async likePlace(@Request() req, @Body('google_place_id') google_place_id: string) {
+    // Chuyển đổi snake_case -> camelCase cho đầu vào
     return this.userService.likePlace(req.user.userId, google_place_id);
   }
 
