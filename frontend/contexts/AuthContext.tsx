@@ -78,19 +78,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (token) {
           console.log('✅ Token found, validating...');
           
-          // Validate token với backend
-          const response = await validateTokenAPI(token);
-          
-          if (response.success && response.user) {
-            // Token hợp lệ → Đăng nhập user
-            console.log('✅ Token valid, user authenticated');
-            setUserData(response.user);
+          try {
+            // Validate token với backend
+            const response = await validateTokenAPI(token);
+            console.log('🔍 Validate response:', response);
+            
+            if (response.success && response.user) {
+              // Token hợp lệ → Đăng nhập user
+              console.log('✅ Token valid, user authenticated');
+              setUserData(response.user);
+              setIsAuthenticated(true);
+            } else {
+              // Token không hợp lệ → Clear storage
+              console.log('❌ Token invalid, clearing storage');
+              await AsyncStorage.removeItem('userToken');
+              await AsyncStorage.removeItem('userData');
+            }
+          } catch (validateError) {
+            console.error('❌ Validate token failed:', validateError);
+            // Nếu validate thất bại, vẫn giữ token (để tránh loop xóa token)
+            // await AsyncStorage.removeItem('userToken');
+            // await AsyncStorage.removeItem('userData');
+            // Thay vào đó, set authenticated nếu có token (assume valid)
+            console.log('⚠️ Validate failed, but keeping token for now');
             setIsAuthenticated(true);
-          } else {
-            // Token không hợp lệ → Clear storage
-            console.log('❌ Token invalid, clearing storage');
-            await AsyncStorage.removeItem('userToken');
-            await AsyncStorage.removeItem('userData');
           }
         } else {
           console.log('ℹ️ No token found');

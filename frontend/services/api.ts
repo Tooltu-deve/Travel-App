@@ -21,7 +21,8 @@
  * Production:
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
-const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
+export const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ============================================
 // TYPES
@@ -187,16 +188,16 @@ export const registerAPI = async (
  * Dùng để check xem token còn hợp lệ không khi app khởi động
  * 
  * @param token - JWT token
- * @returns ValidateTokenResponse
+ * @returns ValidateTokenResponse (hoặc profile object)
  * 
- * Endpoint: GET /api/auth/validate
- * Headers: Authorization: Bearer <token>
- * Response: { success, message, user? }
+ * NOTE: Backend hiện không có endpoint `/api/v1/auth/validate`.
+ * Thay vào đó ta gọi `GET /api/v1/users/profile` (route được bảo vệ bởi JwtAuthGuard)
+ * để kiểm tra token hợp lệ và lấy profile của user.
  */
 export const validateTokenAPI = async (
   token: string
 ): Promise<ValidateTokenResponse> => {
-  return makeRequest<ValidateTokenResponse>('/api/v1/auth/validate', {
+  return makeRequest<ValidateTokenResponse>('/api/v1/users/profile', {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -238,6 +239,68 @@ export const googleLoginAPI = async (
   return makeRequest<GoogleLoginResponse>('/api/v1/auth/google-login', {
     method: 'POST',
     body: JSON.stringify({ idToken }),
+  });
+};
+
+/**
+ * generateItineraryAPI: Gọi backend endpoint tạo lộ trình (AI)
+ * Endpoint: POST /api/v1/routes/generate
+ * Truyền body theo ItineraryRequestDto
+ */
+export const generateItineraryAPI = async (
+  body: any,
+  token?: string,
+) => {
+  // If token not provided, try to read from AsyncStorage (userToken)
+  let authToken = token;
+  try {
+    if (!authToken) {
+      // Try common storage keys used across the app
+      const keys = ['userToken', 'token', 'access_token', 'accessToken'];
+      for (const k of keys) {
+        const stored = await AsyncStorage.getItem(k);
+        if (stored) {
+          authToken = stored;
+          console.log(`🔐 Found auth token in AsyncStorage key: ${k}`);
+          break;
+        }
+      }
+    }
+  } catch (e) {
+    // ignore storage read errors
+  }
+
+  console.log('🌐 generateItineraryAPI authToken present:', !!authToken);
+
+  return makeRequest<any>('/api/v1/routes/generate', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+  });
+};
+
+/**
+ * getLikedPlaces: Lấy danh sách địa điểm user đã like
+ * @param token - optional JWT token
+ * @returns array of places or { places: [...] }
+ */
+export const getLikedPlaces = async (token?: string) => {
+  return makeRequest<any>('/api/v1/users/liked-places', {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+};
+
+/**
+ * likePlaceAPI: toggle like/unlike cho place
+ * @param placeId - id của place
+ * @param token - optional JWT token
+ */
+export const likePlaceAPI = async (placeId: string, token?: string) => {
+  return makeRequest<any>('/api/v1/users/like-place', {
+    method: 'POST',
+    body: JSON.stringify({ placeId }),
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
 };
 
