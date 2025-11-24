@@ -57,7 +57,7 @@ export default function NewItineraryScreen() {
         <View style={styles.infoSection}>
           <Text style={styles.infoTitle}>Tạo lộ trình nhanh & thông minh</Text>
           <Text style={styles.infoText}>
-            Bạn có thể chọn 'Tạo với AI' để nhận một đề xuất lộ trình tối ưu dựa trên thời gian, địa điểm ưa thích và mức chi phí mong muốn. Hoặc chọn 'Tạo thủ công' nếu muốn toàn quyền tùy chỉnh từng điểm đến.
+            Bạn có thể chọn ‘Tạo với AI’ để nhận một đề xuất lộ trình tối ưu dựa trên thời gian, địa điểm ưa thích và mức chi phí mong muốn. Hoặc chọn ‘Tạo thủ công’ nếu muốn toàn quyền tùy chỉnh từng điểm đến.
           </Text>
 
           <View style={styles.benefitsRow}>
