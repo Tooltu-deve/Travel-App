@@ -168,13 +168,10 @@ export class UserService {
    * @param userId - The user's id
    */
   async getLikedPlaces(userId: string): Promise<any[]> {
-    const user = await this.userModel.findById(userId);
-    if (!user) throw new NotFoundException('User not found');
-
-    // Populate likedPlaces from DB and return stored details (no external calls)
-    const userPop = await this.userModel.findById(userId).populate({ path: 'likedPlaces' });
-    if (!userPop || !userPop.likedPlaces) return [];
-    const populatedPlaces = (userPop.likedPlaces as any[]).filter((p) => !!p);
+    // Lấy user và populate likedPlaces chỉ 1 lần
+    const user = await this.userModel.findById(userId).populate({ path: 'likedPlaces' });
+    if (!user || !user.likedPlaces) throw new NotFoundException('User not found');
+    const populatedPlaces = (user.likedPlaces as any[]).filter((p) => !!p);
     // Trả về client: convert googlePlaceId -> google_place_id
     return populatedPlaces.map((place) => ({
       placeId: place._id?.toString() || '',
