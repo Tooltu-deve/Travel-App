@@ -382,7 +382,7 @@ async def optimize_route_endpoint(request: OptimizerRequest):
 
     # BƯỚC 5: Phân bổ POI theo ngày (TRƯỚC khi tối ưu lộ trình)
     print(f"Bước 5: Phân bổ POI vào {request.duration_days} ngày (trước khi tối ưu lộ trình)...")
-    pois_per_day = 4
+    pois_per_day = 3
     num_pois_total = request.duration_days * pois_per_day
     selected_pois = candidates[:num_pois_total]  # Chọn POI có ECS cao nhất
     print(f"  → Chọn {len(selected_pois)} POI từ {len(candidates)} POI có sẵn")
