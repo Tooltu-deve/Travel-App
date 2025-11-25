@@ -1,4 +1,6 @@
+import { useAuth } from '@/contexts/AuthContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from "axios";
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -38,40 +40,102 @@ async function fetchAvailableMoods() {
   }
 }
 
-// Lưu preferences của user
-async function saveUserPreferences(moods: string[], token?: string) {
+// Lưu preferences của user lên backend
+async function saveUserPreferences(moods: string[], token: string) {
   try {
     const url = `${BASE_URL}/users/profile/preferences`;
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    console.log('🔄 PATCH:', url);
-    console.log('📦 Body:', { preferences: moods });
-    const res = await axios.patch(url, { preferences: moods }, { headers });
-    console.log('✅ Save preferences response:', res.data);
+    console.log('📦 [API] PATCH:', url);
+    console.log('📦 [API] Token:', token ? `${token.substring(0, 20)}...` : 'MISSING');
+    console.log('📦 [API] Body:', { preferences: moods });
+    
+    const res = await axios.patch(
+      url,
+      { preferences: moods },
+      { 
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000 // 10 seconds timeout
+      }
+    );
+    
+    console.log('✅ [API] Save preferences response:', res.data);
     return res.data;
   } catch (err: any) {
-    console.error("❌ saveUserPreferences error:", {
+    console.error("❌ [API] saveUserPreferences error:", {
       status: err?.response?.status,
-      url: err?.config?.url,
+      statusText: err?.response?.statusText,
       data: err?.response?.data,
-      message: err.message
+      message: err.message,
+      url: err?.config?.url
     });
     throw err;
   }
 }
 
+// -------------------- HELPER FUNCTIONS --------------------
+/**
+ * Lưu mood preferences lên backend
+ */
+async function saveMoodToBackend(
+  selectedMoods: string[],
+  setHasMoodPreferences: (value: boolean) => void
+) {
+  try {
+    const token = await AsyncStorage.getItem('userToken');
+    if (!token) {
+      console.error('❌ [MoodScreen] Không có token, không thể lưu preferences');
+      throw new Error('Không có token xác thực. Vui lòng đăng nhập lại.');
+    }
+
+    // Map mood IDs sang tags
+    const selectedTags = selectedMoods.flatMap(
+      (moodId) => MOOD_TO_TAGS[moodId] || []
+    );
+
+    // Validate tags
+    if (selectedTags.length === 0 && selectedMoods.length > 0) {
+      console.error('❌ [MoodScreen] Không map được tags từ moods:', selectedMoods);
+      throw new Error('Dữ liệu mood không hợp lệ');
+    }
+
+    console.log('📦 [MoodScreen] Mood IDs:', selectedMoods);
+    console.log('📦 [MoodScreen] Mapped tags:', selectedTags);
+    
+    const result = await saveUserPreferences(selectedTags, token);
+    
+    // Backend sẽ trả về user với hasMoodPreferences = true
+    setHasMoodPreferences(true);
+    
+    console.log(`✅ [MoodScreen] Đã lưu ${selectedMoods.length} moods (${selectedTags.length} tags) lên backend`);
+    return result;
+  } catch (error: any) {
+    console.error('❌ [MoodScreen] Lỗi khi lưu backend:', {
+      message: error.message,
+      response: error?.response?.data,
+      status: error?.response?.status
+    });
+    throw error;
+  }
+}
+
 // -------------------- MOOD MAPPING --------------------
+// Map mood IDs to backend tags (1-1 mapping với 13 moods)
 const MOOD_TO_TAGS: Record<string, string[]> = {
-  'calm_relax': ['quiet', 'peaceful', 'relaxing'],
-  'social_energy': ['crowded', 'lively', 'vibrant'],
-  'romantic_private': ['romantic', 'good for couples'],
-  'luxury_premium': ['expensive', 'luxury'],
-  'budget_value': ['good value', 'cheap', 'affordable'],
-  'tourist_hotspot': ['touristy'],
-  'adventure_fun': ['adventurous', 'exciting'],
-  'family_cozy': ['family friendly'],
-  'modern_creative': ['trendy', 'instagrammable'],
-  'spiritual_religious': ['spiritual', 'serene'],
-  'local_authentic': ['local gem', 'authentic'],
+  'calm_relax': ['peaceful'],           // Yên tĩnh & Thư giãn
+  'social_energy': ['lively'],          // Náo nhiệt & Xã hội
+  'romantic_private': ['romantic'],     // Lãng mạn & Riêng tư
+  'tourist_hotspot': ['touristy'],      // Thu hút khách du lịch
+  'local_authentic': ['local_gem'],     // Địa phương & Đích thực
+  'adventure_fun': ['adventurous'],     // Mạo hiểm & Thú vị
+  'family_cozy': ['family-friendly'],   // Gia đình & Thoải mái
+  'modern_creative': ['modern'],        // Hiện đại & Sáng tạo
+  'historic_tradition': ['historical'], // Lịch sử & Truyền thống
+  'spiritual_religious': ['spiritual'], // Tâm linh & Tôn giáo
+  'nature': ['scenic'],                 // Cảnh quan thiên nhiên
+  'festive_vibrant': ['festive'],       // Sôi động lễ hội
+  'coastal_resort': ['seaside'],        // Gần biển/ven biển
 };
 
 // -------------------- TYPES --------------------
@@ -173,6 +237,14 @@ const MOOD_OPTIONS: readonly MoodOption[] = [
     description: '',
     image: require('../../../assets/images/moods/nature.jpg'),
     colors: ['#FFFFFF', '#F5F5F5'],
+  },
+
+  {
+    id: 'historic_tradition',
+    label: 'Lịch sử & Truyền thống',
+    description: '',
+    image: require('../../../assets/images/moods/historic_tradition.jpg'),
+    colors: ['#FFFFFF', '#F5F5F5'],
   }
 ] as const;
 
@@ -262,6 +334,15 @@ export default function MoodSelectionScreen() {
   const [loading, setLoading] = useState(false);
   const [availableMoods, setAvailableMoods] = useState<string[]>([]);
   const router = useRouter();
+  const { userData, hasMoodPreferences, setHasMoodPreferences } = useAuth();
+
+  // Kiểm tra nếu user đã hoàn thành mood selection → redirect
+  useEffect(() => {
+    if (hasMoodPreferences) {
+      console.log('🔍 [MoodScreen] User đã chọn mood, redirect to tabs');
+      router.replace('/(tabs)');
+    }
+  }, [hasMoodPreferences, router]);
 
   // Load available moods từ backend khi mount
   useEffect(() => {
@@ -269,9 +350,7 @@ export default function MoodSelectionScreen() {
       const moods = await fetchAvailableMoods();
       if (moods.length > 0) {
         setAvailableMoods(moods);
-        console.log('Available moods từ backend:', moods);
-      } else {
-        console.log('Sử dụng moods mặc định');
+        console.log('🔍 [MoodScreen] Available moods từ backend:', moods.length, 'tags');
       }
     };
     loadMoods();
@@ -292,34 +371,51 @@ export default function MoodSelectionScreen() {
     });
   }, []);
 
-  const handleSkip = useCallback(() => {
-    console.log('⏭️ Bỏ qua chọn mood');
-    router.replace('/(tabs)');
-  }, [router]);
+  const handleSkip = useCallback(async () => {
+    console.log('⏭️ [MoodScreen] Bỏ qua chọn mood');
+    
+    try {
+      await saveMoodToBackend([], setHasMoodPreferences);
+      router.replace('/(tabs)');
+    } catch (error) {
+      // Vẫn cho user tiếp tục dù backend fail (UX tốt hơn)
+      setHasMoodPreferences(true);
+      router.replace('/(tabs)');
+    }
+  }, [router, setHasMoodPreferences]);
 
   const handleContinue = useCallback(async () => {
     if (selectedMoods.length === 0) {
-      console.log('Chưa chọn tâm trạng nào');
+      console.log('⚠️ [MoodScreen] Chưa chọn tâm trạng nào');
       return;
     }
 
     try {
       setLoading(true);
-
-      console.log('✅ Selected moods:', selectedMoods);
-
-      // TODO: Lưu preferences khi backend có endpoint
-      // await saveUserPreferences(selectedMoods);
-
-      // Chuyển sang main app
+      console.log('✅ [MoodScreen] Selected moods:', selectedMoods);
+      
+      await saveMoodToBackend(selectedMoods, setHasMoodPreferences);
+      
+      console.log('✅ [MoodScreen] Lưu thành công, chuyển đến tabs');
       router.replace('/(tabs)');
-
     } catch (error: any) {
-      console.error('❌ Lỗi:', error?.response?.data || error.message);
+      console.error('❌ [MoodScreen] Lỗi khi lưu backend:', error.message);
+      
+      // Nếu là lỗi 500 từ backend, vẫn cho user tiếp tục (backend issue)
+      if (error?.response?.status === 500) {
+        console.warn('⚠️ [MoodScreen] Backend error 500, cho user tiếp tục');
+        setHasMoodPreferences(true);
+        router.replace('/(tabs)');
+      } else {
+        // Các lỗi khác (401, 404, network) - cũng cho tiếp tục nhưng log rõ hơn
+        console.warn('⚠️ [MoodScreen] Lỗi khác, vẫn cho user tiếp tục:', error?.response?.status);
+        setHasMoodPreferences(true);
+        router.replace('/(tabs)');
+      }
     } finally {
       setLoading(false);
     }
-  }, [selectedMoods, router]);
+  }, [selectedMoods, router, setHasMoodPreferences]);
 
   return (
     <View style={styles.container}>

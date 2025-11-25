@@ -167,32 +167,20 @@ export class PlaceService {
     // Đây là cách làm nhanh và hiệu quả.
     // (Cách nâng cao là quét toàn bộ CSDL để tự động tìm, nhưng sẽ chậm)
     return [
-      'quiet',
-      'peaceful',
-      'relaxing',
-      'crowded',
-      'lively',
-      'vibrant',
-      'romantic',
-      'good for couples',
-      'expensive',
-      'luxury',
-      'good value',
-      'cheap',
-      'affordable',
-      'touristy',
-      'local gem',
-      'authentic',
-      'adventurous',
-      'exciting',
-      'family-friendly',
-      'cozy',
-      'comfortable',
-      'modern',
-      'artistic',
-      'historical',
-      'cultural',
-      'spiritual',
+        'peaceful',          // Nhóm Yên tĩnh
+        'lively',            // Náo nhiệt & xã hội
+        'romantic',          // Lãng mạn & riêng tư
+        'touristy',          // Thu hút khách du lịch
+        'local_gem',         // Địa phương & đích thực
+        'adventurous',       // Mạo hiểm & thú vị
+        'family-friendly',   // Gia đình & thoải mái
+        'modern',            // Hiện đại & sáng tạo
+        'historical',        // Lịch sử & truyền thống
+        'spiritual',         // Tâm linh & tôn giáo
+        'scenic',            // Cảnh quan thiên nhiên
+        'festive',           // Sôi động lễ hội
+        'seaside',           // Gần biển/ven biển
+
     ];
   }
 }
