@@ -54,6 +54,14 @@ export default function RootLayout() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen 
+          name="create-itinerary" 
+          options={{ 
+            headerShown: false,
+            presentation: 'card',
+            animation: 'slide_from_bottom'
+          }} 
+        />
       </Stack>
     </AuthProvider>
   );

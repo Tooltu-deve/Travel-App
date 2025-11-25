@@ -1,19 +1,107 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { randomUUID } from 'crypto';
+import { ConfigService } from '@nestjs/config';
 import { Place, PlaceDocument } from '../place/schemas/place.schema';
-import { ItineraryRequestDto } from './dto/itinerary-request.dto';
+import { Itinerary, ItineraryDocument } from './schemas/itinerary.schema';
+import { GenerateRouteDto } from './dto/generate-route.dto';
+import { CreateItineraryDto } from './dto/create-itinerary.dto';
 
 @Injectable()
 export class ItineraryService {
-  private readonly AI_OPTIMIZER_URL = process.env.AI_OPTIMIZER_URL || 'http://localhost:8000';
+  private readonly aiOptimizerServiceUrl: string;
+  private readonly googleDirectionsApiKey: string;
 
   constructor(
     @InjectModel(Place.name) private placeModel: Model<PlaceDocument>,
-    private httpService: HttpService,
-  ) {}
+    @InjectModel(Itinerary.name) private itineraryModel: Model<ItineraryDocument>,
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
+  ) {
+    this.aiOptimizerServiceUrl =
+      this.configService.get<string>('AI_OPTIMIZER_SERVICE_URL') ||
+      process.env.AI_OPTIMIZER_URL ||
+      'http://localhost:8000';
+
+    this.googleDirectionsApiKey =
+      this.configService.get<string>('GOOGLE_DIRECTIONS_API_KEY') ||
+      this.configService.get<string>('GOOGLE_DISTANCE_MATRIX_API_KEY') ||
+      process.env.GOOGLE_DIRECTIONS_API_KEY ||
+      process.env.GOOGLE_DISTANCE_MATRIX_API_KEY ||
+      '';
+  }
+
+  async saveItinerary(
+    userId: string,
+    createDto: CreateItineraryDto,
+  ): Promise<ItineraryDocument> {
+    const routeId = this.generateRouteId();
+
+    const itinerary = new this.itineraryModel({
+      route_id: routeId,
+      user_id: userId,
+      created_at: new Date(),
+      route_data_json: createDto.route_data_json,
+      status: createDto.status || 'DRAFT',
+    });
+
+    return await itinerary.save();
+  }
+
+  async findByRouteId(routeId: string): Promise<ItineraryDocument | null> {
+    return this.itineraryModel.findOne({ route_id: routeId }).exec();
+  }
+
+  async findByUserId(
+    userId: string,
+    status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+  ): Promise<ItineraryDocument[]> {
+    const userObjectId = Types.ObjectId.isValid(userId)
+      ? new Types.ObjectId(userId)
+      : userId;
+
+    const query: any = { user_id: userObjectId };
+    if (status) {
+      query.status = status;
+    }
+
+    return this.itineraryModel
+      .find(query)
+      .sort({ created_at: -1 })
+      .exec();
+  }
+
+  async updateStatus(
+    routeId: string,
+    userId: string,
+    status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+    extra?: { title?: string },
+  ): Promise<ItineraryDocument | null> {
+    const userObjectId = Types.ObjectId.isValid(userId)
+      ? new Types.ObjectId(userId)
+      : userId;
+
+    const updatePayload: any = { status };
+    if (extra?.title !== undefined) {
+      updatePayload.title = extra.title;
+      updatePayload['route_data_json.metadata.title'] = extra.title;
+    }
+
+    return this.itineraryModel
+      .findOneAndUpdate(
+        { route_id: routeId, user_id: userObjectId },
+        updatePayload,
+        { new: true },
+      )
+      .exec();
+  }
+
+  private generateRouteId(): string {
+    return `route_${randomUUID()}`;
+  }
 
 
   /**
@@ -175,120 +263,210 @@ export class ItineraryService {
     };
   }
 
-  /**
-   * Tạo lộ trình tối ưu
-   */
-  async generateOptimizedRoute(request: ItineraryRequestDto): Promise<any> {
+  private async fetchDirectionsInfo(
+    origin: { lat: number; lng: number },
+    destination: { lat: number; lng: number },
+  ): Promise<{ encoded_polyline: string | null; travel_duration_minutes: number | null }> {
+    if (!this.googleDirectionsApiKey) {
+      return { encoded_polyline: null, travel_duration_minutes: null };
+    }
+
+    const originStr = `${origin.lat},${origin.lng}`;
+    const destStr = `${destination.lat},${destination.lng}`;
+    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=driving&key=${this.googleDirectionsApiKey}`;
+
     try {
-      // Bước 1: Lấy tất cả POI từ MongoDB
-      let pois: PlaceDocument[] = await this.placeModel.find().exec();
+      const response = await firstValueFrom(
+        this.httpService.get(url, { timeout: 30000 }),
+      );
+      const data = response.data;
 
-      console.log(`📊 Tổng số POI trong DB: ${pois.length}`);
+      if (data.status === 'OK' && data.routes && data.routes.length > 0) {
+        const route = data.routes[0];
+        const leg = route.legs[0];
+        const overviewPolyline = route.overview_polyline;
+        const encodedPolyline = overviewPolyline?.points || null;
+        const durationSeconds = leg?.duration?.value || 0;
+        const travelDurationMinutes =
+          durationSeconds > 0 ? durationSeconds / 60.0 : null;
 
-      // Bước 2: Lọc theo thành phố (destination)
-      if (request.destination) {
-        pois = this.filterByCity(pois, request.destination);
-        console.log(`📍 Sau khi lọc theo thành phố "${request.destination}": ${pois.length} POI`);
+        return {
+          encoded_polyline: encodedPolyline,
+          travel_duration_minutes: travelDurationMinutes,
+        };
       }
 
-      // Bước 3: Lọc theo budget range
-      if (request.budgetRange) {
-        const beforeCount = pois.length;
-        // Log các budget range có sẵn trước khi lọc
-        const availableBudgets = new Set(
-          pois.map((p) => p.budgetRange?.toLowerCase()).filter(Boolean),
-        );
-        console.log(
-          `💰 Lọc theo budget "${request.budgetRange}". Các budget có sẵn: ${Array.from(availableBudgets).join(', ') || 'không có'}`,
-        );
+      return { encoded_polyline: null, travel_duration_minutes: null };
+    } catch (error) {
+      console.error('Directions API error:', error);
+      return { encoded_polyline: null, travel_duration_minutes: null };
+    }
+  }
 
-        pois = this.filterByBudget(pois, request.budgetRange);
-        console.log(
-          `💰 Sau khi lọc theo budget "${request.budgetRange}": ${pois.length} POI (từ ${beforeCount} POI)`,
-        );
+  private async enrichRouteWithDirections(
+    optimizedRoute: any,
+    currentLocation: { lat: number; lng: number },
+  ): Promise<any> {
+    const enrichedRoute: any[] = [];
 
-        // Cảnh báo nếu không tìm thấy POI với budget này
-        if (pois.length === 0 && beforeCount > 0) {
-          console.warn(
-            `⚠️  Không tìm thấy POI nào với budget "${request.budgetRange}". Các budget có sẵn: ${Array.from(availableBudgets).join(', ')}`,
-          );
+    for (const dayData of optimizedRoute.optimized_route || []) {
+      const enrichedActivities: any[] = [];
+      let previousLocation = currentLocation;
+
+      for (const poi of dayData.activities || []) {
+        const poiLocation = poi.location;
+        if (!poiLocation || !poiLocation.lat || !poiLocation.lng) {
+          enrichedActivities.push(poi);
+          continue;
         }
+
+        const directionsInfo = await this.fetchDirectionsInfo(
+          previousLocation,
+          { lat: poiLocation.lat, lng: poiLocation.lng },
+        );
+
+        const enrichedPoi = {
+          ...poi,
+          encoded_polyline: directionsInfo.encoded_polyline,
+          travel_duration_minutes: directionsInfo.travel_duration_minutes,
+        };
+
+        enrichedActivities.push(enrichedPoi);
+        previousLocation = { lat: poiLocation.lat, lng: poiLocation.lng };
       }
 
-      if (pois.length === 0) {
-        // Tạo thông báo lỗi chi tiết hơn
-        let errorMessage = 'Không tìm thấy POI nào phù hợp với tiêu chí lọc.';
-        const details: string[] = [];
+      enrichedRoute.push({
+        ...dayData,
+        activities: enrichedActivities,
+      });
+    }
 
-        if (request.destination) {
-          details.push(`Thành phố: "${request.destination}"`);
-        }
-        if (request.budgetRange) {
-          // Lấy lại danh sách budget có sẵn từ DB
-          const allPois = await this.placeModel.find().exec();
-          const availableBudgets = new Set(
-            allPois.map((p) => p.budgetRange?.toLowerCase()).filter(Boolean),
-          );
-          details.push(
-            `Budget range "${request.budgetRange}" không có trong dữ liệu. Các budget có sẵn: ${Array.from(availableBudgets).join(', ') || 'không có'}`,
-          );
-        }
+    return { optimized_route: enrichedRoute };
+  }
 
-        if (details.length > 0) {
-          errorMessage += `\nChi tiết: ${details.join('; ')}`;
-        }
-
-        throw new HttpException(errorMessage, HttpStatus.NOT_FOUND);
-      }
-
-      // Bước 4: Chuyển đổi format cho AI Optimizer
-      const poiList = pois.map((poi) => this.convertPlaceToOptimizerFormat(poi));
-
-      // Bước 5: Gọi AI Optimizer Service
-      const optimizerRequest = {
-        poi_list: poiList,
-        user_mood: request.user_mood,
-        duration_days: request.duration_days,
-        current_location: request.current_location,
-        start_datetime: request.start_datetime,
-        ecs_score_threshold: request.ecs_score_threshold || 0.0,
-      };
-
-      console.log(`🚀 Gửi ${poiList.length} POI đến AI Optimizer Service...`);
-
+  private async callAiOptimizer(
+    poiList: any[],
+    generateDto: GenerateRouteDto,
+  ): Promise<any> {
+    try {
       const response = await firstValueFrom(
         this.httpService.post(
-          `${this.AI_OPTIMIZER_URL}/optimize-route`,
-          optimizerRequest,
+          `${this.aiOptimizerServiceUrl}/optimize-route`,
           {
-            timeout: 60000, // 60 giây
+            poi_list: poiList,
+            user_mood: generateDto.user_mood,
+            duration_days: generateDto.duration_days,
+            current_location: generateDto.current_location,
+            start_datetime: generateDto.start_datetime,
+            ecs_score_threshold: generateDto.ecs_score_threshold || 0.0,
+          },
+          {
+            timeout: 120000,
           },
         ),
       );
 
       return response.data;
     } catch (error: any) {
-      console.error('❌ Lỗi khi tạo lộ trình:', error);
-
       if (error.response) {
-        // Lỗi từ AI Optimizer Service
-        const status = error.response.status || HttpStatus.INTERNAL_SERVER_ERROR;
-        const message = error.response.data?.detail || error.response.data?.message || 'Lỗi từ AI Optimizer Service';
-        throw new HttpException(message, status);
-      } else if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-        // Không thể kết nối đến AI Optimizer Service
         throw new HttpException(
-          'Không thể kết nối đến AI Optimizer Service. Vui lòng kiểm tra service có đang chạy không.',
+          `AI Optimizer Service error: ${error.response.data?.message || error.response.statusText}`,
+          error.response.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      } else if (error.request) {
+        throw new HttpException(
+          'Không thể kết nối đến AI Optimizer Service. Vui lòng thử lại sau.',
           HttpStatus.SERVICE_UNAVAILABLE,
         );
       } else {
-        // Lỗi khác
         throw new HttpException(
-          error.message || 'Lỗi không xác định khi tạo lộ trình',
+          `Lỗi khi gọi AI Optimizer Service: ${error.message}`,
           HttpStatus.INTERNAL_SERVER_ERROR,
         );
       }
     }
+  }
+
+  async generateAndSaveRoute(
+    userId: string,
+    generateDto: GenerateRouteDto,
+  ): Promise<ItineraryDocument> {
+    const places = await this.filterPoisByBudgetAndDestination(
+      generateDto.budget,
+      generateDto.destination,
+    );
+
+    const poiList = places.map((place) =>
+      this.convertPlaceToOptimizerFormat(place as any),
+    );
+
+    const optimizedRoute = await this.callAiOptimizer(poiList, generateDto);
+    const enrichedRoute = await this.enrichRouteWithDirections(
+      optimizedRoute,
+      generateDto.current_location,
+    );
+
+    const routeId = this.generateRouteId();
+    const userObjectId = Types.ObjectId.isValid(userId)
+      ? new Types.ObjectId(userId)
+      : userId;
+
+    const defaultTitle = generateDto.destination
+      ? `Lộ trình ${generateDto.destination}`
+      : 'Lộ trình mới';
+
+    const metadata = {
+      title: defaultTitle,
+      destination: generateDto.destination,
+      duration_days: generateDto.duration_days,
+      start_datetime: generateDto.start_datetime || null,
+      budget: generateDto.budget,
+      user_mood: generateDto.user_mood,
+      created_at: new Date().toISOString(),
+    };
+
+    const routeDataJson = {
+      ...enrichedRoute,
+      destination: metadata.destination,
+      duration_days: metadata.duration_days,
+      start_datetime: metadata.start_datetime,
+      metadata: {
+        ...(enrichedRoute?.metadata || {}),
+        ...metadata,
+      },
+    };
+
+    const itinerary = new this.itineraryModel({
+      route_id: routeId,
+      user_id: userObjectId,
+      created_at: new Date(),
+      route_data_json: routeDataJson,
+      status: 'DRAFT',
+      title: metadata.title,
+      destination: metadata.destination,
+      duration_days: metadata.duration_days,
+      start_datetime: metadata.start_datetime
+        ? new Date(metadata.start_datetime)
+        : null,
+    });
+
+    return itinerary.save();
+  }
+
+  async deleteDraftRoute(routeId: string, userId: string): Promise<boolean> {
+    const userObjectId = Types.ObjectId.isValid(userId)
+      ? new Types.ObjectId(userId)
+      : userId;
+
+    const result = await this.itineraryModel
+      .deleteOne({
+        route_id: routeId,
+        user_id: userObjectId,
+        status: 'DRAFT',
+      })
+      .exec();
+
+    return result.deletedCount > 0;
   }
 }
 
