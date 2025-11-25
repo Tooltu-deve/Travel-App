@@ -4,8 +4,6 @@ import { UserService } from './user.service';
 import { Body, Patch } from '@nestjs/common';
 import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
 
-import { Post } from '@nestjs/common';
-
 @Controller('users')
 export class UserController {
   constructor(private userService: UserService) { }
@@ -34,25 +32,4 @@ export class UserController {
     return this.userService.updatePreferences(userId, dto);
   }
 
-  /**
-   * Like or unlike a place for the current user
-   * @param req - Request object (contains user info)
-   * @param body - { google_place_id: string }
-   */
-  @UseGuards(JwtAuthGuard)
-  @Post('like-place')
-  async likePlace(@Request() req, @Body('google_place_id') google_place_id: string) {
-    // Chuyển đổi snake_case -> camelCase cho đầu vào
-    return this.userService.likePlace(req.user.userId, google_place_id);
-  }
-
-  /**
-   * Get all places liked by the current user
-   * @param req - Request object (contains user info)
-   */
-  @UseGuards(JwtAuthGuard)
-  @Get('liked-places')
-  async getLikedPlaces(@Request() req) {
-    return this.userService.getLikedPlaces(req.user.userId);
-  }
 }
