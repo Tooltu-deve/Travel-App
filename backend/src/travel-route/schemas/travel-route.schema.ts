@@ -6,6 +6,10 @@ export type TravelRouteDocument = Document & {
   route_id: string;
   user_id: Types.ObjectId;
   created_at: Date;
+  title?: string;
+  destination?: string;
+  duration_days?: number;
+  start_datetime?: Date;
   route_data_json: any; // Lưu toàn bộ JSON enriched route
   status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
   id: string;
@@ -41,6 +45,34 @@ export class TravelRoute {
     default: Date.now 
   })
   created_at: Date;
+
+  @Prop({
+    type: String,
+    required: false,
+    default: null,
+  })
+  title?: string;
+
+  @Prop({
+    type: String,
+    required: false,
+    default: null,
+  })
+  destination?: string;
+
+  @Prop({
+    type: Number,
+    required: false,
+    default: null,
+  })
+  duration_days?: number;
+
+  @Prop({
+    type: Date,
+    required: false,
+    default: null,
+  })
+  start_datetime?: Date;
 
   @Prop({ 
     type: Object, 

@@ -51,21 +51,9 @@ export class TravelRouteController {
       generateDto,
     );
 
-    // Convert to plain object
-    const routeObject = savedRoute.toObject
-      ? savedRoute.toObject()
-      : { ...savedRoute };
-
     return {
       message: 'Lộ trình đã được tạo và lưu với trạng thái DRAFT. Vui lòng xác nhận để lưu chính thức.',
-      route: {
-        route_id: routeObject.route_id,
-        user_id: routeObject.user_id.toString(),
-        created_at: routeObject.created_at,
-        status: routeObject.status,
-        route_data_json: routeObject.route_data_json,
-        id: routeObject._id.toString(),
-      },
+      route: this.mapToResponse(savedRoute),
     };
   }
 
@@ -89,6 +77,7 @@ export class TravelRouteController {
       routeId,
       userId,
       updateDto.status,
+      { title: updateDto.title },
     );
 
     if (!updatedRoute) {
@@ -97,21 +86,9 @@ export class TravelRouteController {
       );
     }
 
-    // Convert to plain object
-    const routeObject = updatedRoute.toObject
-      ? updatedRoute.toObject()
-      : { ...updatedRoute };
-
     return {
       message: `Lộ trình đã được cập nhật trạng thái thành ${updateDto.status}.`,
-      route: {
-        route_id: routeObject.route_id,
-        user_id: routeObject.user_id.toString(),
-        created_at: routeObject.created_at,
-        status: routeObject.status,
-        route_data_json: routeObject.route_data_json,
-        id: routeObject._id.toString(),
-      },
+      route: this.mapToResponse(updatedRoute),
     };
   }
 
@@ -133,17 +110,7 @@ export class TravelRouteController {
 
     const routes = await this.travelRouteService.findByUserId(userId, status);
 
-    const routesResponse = routes.map((route) => {
-      const routeObject = route.toObject ? route.toObject() : { ...route };
-      return {
-        route_id: routeObject.route_id,
-        user_id: routeObject.user_id.toString(),
-        created_at: routeObject.created_at,
-        status: routeObject.status,
-        route_data_json: routeObject.route_data_json,
-        id: routeObject._id.toString(),
-      };
-    });
+    const routesResponse = routes.map((route) => this.mapToResponse(route));
 
     return {
       message: `Đã tìm thấy ${routesResponse.length} lộ trình${status ? ` với status ${status}` : ''}.`,
@@ -178,18 +145,9 @@ export class TravelRouteController {
       throw new NotFoundException('Bạn không có quyền truy cập lộ trình này.');
     }
 
-    const routeObject = route.toObject ? route.toObject() : { ...route };
-
     return {
       message: 'Đã tìm thấy lộ trình.',
-      route: {
-        route_id: routeObject.route_id,
-        user_id: routeObject.user_id.toString(),
-        created_at: routeObject.created_at,
-        status: routeObject.status,
-        route_data_json: routeObject.route_data_json,
-        id: routeObject._id.toString(),
-      },
+      route: this.mapToResponse(route),
     };
   }
 
@@ -220,6 +178,22 @@ export class TravelRouteController {
 
     return {
       message: 'Lộ trình DRAFT đã được xóa thành công.',
+    };
+  }
+
+  private mapToResponse(route: any): TravelRouteResponseDto {
+    const routeObject = route?.toObject ? route.toObject() : { ...route };
+    return {
+      route_id: routeObject.route_id,
+      user_id: routeObject.user_id.toString(),
+      created_at: routeObject.created_at,
+      title: routeObject.title,
+      destination: routeObject.destination,
+      duration_days: routeObject.duration_days,
+      start_datetime: routeObject.start_datetime || null,
+      status: routeObject.status,
+      route_data_json: routeObject.route_data_json,
+      id: routeObject._id.toString(),
     };
   }
 }

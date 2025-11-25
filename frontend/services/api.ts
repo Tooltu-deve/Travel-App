@@ -21,7 +21,8 @@
  * Production:
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
-const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
+// const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Render Cloud URL
 
 // ============================================
 // TYPES
@@ -85,6 +86,37 @@ interface GoogleLoginResponse {
     email: string;
     fullName: string;
   };
+}
+
+interface GenerateRouteRequest {
+  budget: string;
+  destination: string;
+  user_mood: string;
+  duration_days: number;
+  current_location: {
+    lat: number;
+    lng: number;
+  };
+  start_datetime?: string;
+  ecs_score_threshold?: number;
+}
+
+export interface TravelRoute {
+  route_id: string;
+  user_id: string;
+  created_at: string;
+  title?: string;
+  destination?: string;
+  duration_days?: number;
+  start_datetime?: string | null;
+  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  route_data_json: any;
+  id: string;
+}
+
+interface GenerateRouteResponse {
+  message: string;
+  route: TravelRoute;
 }
 
 // ============================================
@@ -241,6 +273,106 @@ export const googleLoginAPI = async (
   });
 };
 
+/**
+ * generateRouteAPI: Tạo lộ trình với SmartAgent
+ * 
+ * @param token - JWT token
+ * @param requestBody - Thông tin để tạo lộ trình
+ * @returns GenerateRouteResponse với thông tin lộ trình đã tạo
+ * 
+ * Endpoint: POST /api/v1/routes/generate
+ * Headers: Authorization: Bearer <token>
+ * Request: { budget, destination, user_mood, duration_days, current_location, start_datetime?, ecs_score_threshold? }
+ * Response: { message, route }
+ */
+export const generateRouteAPI = async (
+  token: string,
+  requestBody: GenerateRouteRequest
+): Promise<GenerateRouteResponse> => {
+  return makeRequest<GenerateRouteResponse>('/api/v1/routes/generate', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
+};
+
+/**
+ * updateRouteStatusAPI: Cập nhật trạng thái lộ trình
+ * 
+ * @param token - JWT token
+ * @param routeId - ID của lộ trình
+ * @param status - Trạng thái mới: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'
+ * @returns Response với thông tin lộ trình đã cập nhật
+ * 
+ * Endpoint: PATCH /api/v1/routes/:routeId/status
+ * Headers: Authorization: Bearer <token>
+ * Request: { status }
+ * Response: { message, route }
+ */
+interface UpdateRouteStatusPayload {
+  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  title?: string;
+}
+
+export const updateRouteStatusAPI = async (
+  token: string,
+  routeId: string,
+  payload: UpdateRouteStatusPayload,
+): Promise<{ message: string; route: TravelRoute }> => {
+  return makeRequest<{ message: string; route: TravelRoute }>(`/api/v1/routes/${routeId}/status`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+};
+
+/**
+ * deleteRouteAPI: Xóa lộ trình (chỉ DRAFT)
+ *
+ * @param token - JWT token
+ * @param routeId - ID của lộ trình
+ * @returns Message từ backend
+ *
+ * Endpoint: DELETE /api/v1/routes/:routeId
+ */
+export const deleteRouteAPI = async (
+  token: string,
+  routeId: string,
+): Promise<{ message: string }> => {
+  return makeRequest<{ message: string }>(`/api/v1/routes/${routeId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * getRoutesAPI: Lấy danh sách lộ trình của user
+ *
+ * @param token JWT token
+ * @param status Optional status filter
+ */
+export const getRoutesAPI = async (
+  token: string,
+  status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+): Promise<{ message: string; routes: TravelRoute[]; total: number }> => {
+  const query = status ? `?status=${status}` : '';
+  return makeRequest<{ message: string; routes: TravelRoute[]; total: number }>(
+    `/api/v1/routes${query}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
 // ============================================
 // EXPORT
 // ============================================
@@ -250,4 +382,8 @@ export default {
   validateTokenAPI,
   logoutAPI,
   googleLoginAPI,
+  generateRouteAPI,
+  updateRouteStatusAPI,
+  deleteRouteAPI,
+  getRoutesAPI,
 };
