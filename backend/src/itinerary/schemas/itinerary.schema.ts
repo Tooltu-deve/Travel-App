@@ -1,7 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type TravelRouteDocument = Document & {
+export type ItineraryDocument = Document & {
   _id: Types.ObjectId;
   route_id: string;
   user_id: Types.ObjectId;
@@ -9,40 +9,41 @@ export type TravelRouteDocument = Document & {
   title?: string;
   destination?: string;
   duration_days?: number;
-  start_datetime?: Date;
-  route_data_json: any; // Lưu toàn bộ JSON enriched route
+  start_datetime?: Date | null;
+  route_data_json: any;
   status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
   id: string;
 };
 
 @Schema({
-  timestamps: false, // Tắt timestamps tự động vì chúng ta dùng created_at riêng
+  collection: 'itineraries',
+  timestamps: false,
   toJSON: { virtuals: true },
-  toObject: { virtuals: true }
+  toObject: { virtuals: true },
 })
-export class TravelRoute {
+export class Itinerary {
   _id: Types.ObjectId;
 
-  @Prop({ 
-    type: String, 
-    required: true, 
-    unique: true, 
-    index: true 
+  @Prop({
+    type: String,
+    required: true,
+    unique: true,
+    index: true,
   })
   route_id: string;
 
-  @Prop({ 
-    type: Types.ObjectId, 
-    ref: 'User', 
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'User',
     required: true,
-    index: true 
+    index: true,
   })
   user_id: Types.ObjectId;
 
-  @Prop({ 
-    type: Date, 
-    required: true, 
-    default: Date.now 
+  @Prop({
+    type: Date,
+    required: true,
+    default: Date.now,
   })
   created_at: Date;
 
@@ -72,31 +73,30 @@ export class TravelRoute {
     required: false,
     default: null,
   })
-  start_datetime?: Date;
+  start_datetime?: Date | null;
 
-  @Prop({ 
-    type: Object, 
-    required: true 
+  @Prop({
+    type: Object,
+    required: true,
   })
   route_data_json: any;
 
-  @Prop({ 
-    type: String, 
+  @Prop({
+    type: String,
     enum: ['DRAFT', 'CONFIRMED', 'ARCHIVED'],
     required: true,
     default: 'DRAFT',
-    index: true
+    index: true,
   })
   status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
 }
 
-export const TravelRouteSchema = SchemaFactory.createForClass(TravelRoute);
+export const ItinerarySchema = SchemaFactory.createForClass(Itinerary);
 
-TravelRouteSchema.virtual('id').get(function () {
+ItinerarySchema.virtual('id').get(function () {
   return this._id.toHexString();
 });
 
-// Tạo index cho user_id và status để query nhanh hơn
-TravelRouteSchema.index({ user_id: 1, status: 1 });
-TravelRouteSchema.index({ created_at: -1 }); // Để sort theo thời gian tạo mới nhất
+ItinerarySchema.index({ user_id: 1, status: 1 });
+ItinerarySchema.index({ created_at: -1 });
 

@@ -6,7 +6,6 @@ import { DatabaseModule } from './database/database.module';
 import { ConfigModule } from '@nestjs/config';
 import { PlaceModule } from './place/place.module';
 import { ItineraryModule } from './itinerary/itinerary.module';
-import { TravelRouteModule } from './travel-route/travel-route.module';
 import { AiModule } from './ai/ai.module';
 
 @Module({
@@ -18,7 +17,6 @@ import { AiModule } from './ai/ai.module';
     PlaceModule,
     ItineraryModule,
     ProfileModule,
-    TravelRouteModule,
     AiModule,
   ],
   controllers: [],
