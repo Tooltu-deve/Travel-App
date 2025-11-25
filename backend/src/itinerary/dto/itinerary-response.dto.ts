@@ -1,4 +1,4 @@
-export class TravelRouteResponseDto {
+export class ItineraryResponseDto {
   route_id: string;
   user_id: string;
   created_at: Date;

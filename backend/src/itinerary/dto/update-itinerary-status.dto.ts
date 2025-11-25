@@ -1,6 +1,6 @@
 import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 
-export class UpdateRouteStatusDto {
+export class UpdateItineraryStatusDto {
   @IsEnum(['DRAFT', 'CONFIRMED', 'ARCHIVED'], {
     message: 'status phải là DRAFT, CONFIRMED hoặc ARCHIVED',
   })

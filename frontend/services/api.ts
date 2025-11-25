@@ -289,7 +289,7 @@ export const generateRouteAPI = async (
   token: string,
   requestBody: GenerateRouteRequest
 ): Promise<GenerateRouteResponse> => {
-  return makeRequest<GenerateRouteResponse>('/api/v1/routes/generate', {
+  return makeRequest<GenerateRouteResponse>('/api/v1/itineraries/generate', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -321,7 +321,7 @@ export const updateRouteStatusAPI = async (
   routeId: string,
   payload: UpdateRouteStatusPayload,
 ): Promise<{ message: string; route: TravelRoute }> => {
-  return makeRequest<{ message: string; route: TravelRoute }>(`/api/v1/routes/${routeId}/status`, {
+  return makeRequest<{ message: string; route: TravelRoute }>(`/api/v1/itineraries/${routeId}/status`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -343,7 +343,7 @@ export const deleteRouteAPI = async (
   token: string,
   routeId: string,
 ): Promise<{ message: string }> => {
-  return makeRequest<{ message: string }>(`/api/v1/routes/${routeId}`, {
+  return makeRequest<{ message: string }>(`/api/v1/itineraries/${routeId}`, {
     method: 'DELETE',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -363,7 +363,7 @@ export const getRoutesAPI = async (
 ): Promise<{ message: string; routes: TravelRoute[]; total: number }> => {
   const query = status ? `?status=${status}` : '';
   return makeRequest<{ message: string; routes: TravelRoute[]; total: number }>(
-    `/api/v1/routes${query}`,
+    `/api/v1/itineraries${query}`,
     {
       method: 'GET',
       headers: {
