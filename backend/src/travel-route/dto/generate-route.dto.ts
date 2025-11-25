@@ -3,7 +3,7 @@ import { IsNotEmpty, IsString, IsNumber, IsObject, IsOptional, Min } from 'class
 export class GenerateRouteDto {
   @IsNotEmpty({ message: 'budget không được để trống' })
   @IsString({ message: 'budget phải là chuỗi' })
-  budget: string; // Budget range để lọc POI (ví dụ: "low", "medium", "high")
+  budget: string; // Budget range để lọc POI: "free", "cheap", "affordable", "expensive"
 
   @IsNotEmpty({ message: 'destination không được để trống' })
   @IsString({ message: 'destination phải là chuỗi' })

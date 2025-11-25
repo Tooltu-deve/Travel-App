@@ -101,16 +101,23 @@ export class TravelRouteService {
     routeId: string,
     userId: string,
     status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+    extra?: { title?: string },
   ): Promise<TravelRouteDocument | null> {
     // Convert userId string thành ObjectId
     const userObjectId = Types.ObjectId.isValid(userId) 
       ? new Types.ObjectId(userId) 
       : userId;
     
+    const updatePayload: any = { status };
+    if (extra?.title !== undefined) {
+      updatePayload.title = extra.title;
+      updatePayload['route_data_json.metadata.title'] = extra.title;
+    }
+
     return await this.travelRouteModel
       .findOneAndUpdate(
         { route_id: routeId, user_id: userObjectId },
-        { status },
+        updatePayload,
         { new: true },
       )
       .exec();
@@ -292,12 +299,43 @@ export class TravelRouteService {
       ? new Types.ObjectId(userId) 
       : userId;
 
+    const defaultTitle = generateDto.destination
+      ? `Lộ trình ${generateDto.destination}`
+      : 'Lộ trình mới';
+
+    const metadata = {
+      title: defaultTitle,
+      destination: generateDto.destination,
+      duration_days: generateDto.duration_days,
+      start_datetime: generateDto.start_datetime || null,
+      budget: generateDto.budget,
+      user_mood: generateDto.user_mood,
+      created_at: new Date().toISOString(),
+    };
+
+    const routeDataJson = {
+      ...enrichedRoute,
+      destination: metadata.destination,
+      duration_days: metadata.duration_days,
+      start_datetime: metadata.start_datetime,
+      metadata: {
+        ...(enrichedRoute?.metadata || {}),
+        ...metadata,
+      },
+    };
+
     const travelRoute = new this.travelRouteModel({
       route_id: routeId,
       user_id: userObjectId,
       created_at: new Date(),
-      route_data_json: enrichedRoute, // Lưu route đã được enrich
+      route_data_json: routeDataJson, // Lưu route đã được enrich kèm metadata
       status: 'DRAFT',
+      title: metadata.title,
+      destination: metadata.destination,
+      duration_days: metadata.duration_days,
+      start_datetime: metadata.start_datetime
+        ? new Date(metadata.start_datetime)
+        : null,
     });
 
     return await travelRoute.save();
