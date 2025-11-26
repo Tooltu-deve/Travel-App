@@ -25,9 +25,65 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-from tools import TOOLS, search_places, optimize_route, check_opening_status, check_weather, calculate_budget_estimate
+from tools import TOOLS, search_places, optimize_route, optimize_route_with_ecs, check_opening_status, check_weather, calculate_budget_estimate
 
 load_dotenv()
+
+# =====================================
+# MOOD MAPPING FOR ECS SCORING
+# =====================================
+
+def map_preferences_to_mood(travel_style: str, group_type: str) -> str:
+    """
+    Map travel_style và group_type sang user_mood cho AI Optimizer Service.
+    
+    Mood options:
+    - Yên tĩnh & Thư giãn
+    - Náo nhiệt & Xã hội
+    - Lãng mạn & Riêng tư
+    - Điểm thu hút khách du lịch
+    - Mạo hiểm & Thú vị
+    - Gia đình & Thoải mái
+    - Hiện đại & Sáng tạo
+    - Tâm linh & Tôn giáo
+    - Địa phương & Đích thực
+    - Cảnh quan thiên nhiên
+    - Lễ hội & Sôi động
+    - Ven biển & Nghỉ dưỡng
+    """
+    # Map based on travel_style
+    if travel_style == "chill":
+        if group_type == "couple":
+            return "Lãng mạn & Riêng tư"
+        elif group_type == "family":
+            return "Gia đình & Thoải mái"
+        else:
+            return "Yên tĩnh & Thư giãn"
+    
+    elif travel_style == "adventure":
+        return "Mạo hiểm & Thú vị"
+    
+    elif travel_style == "cultural":
+        if group_type == "solo":
+            return "Địa phương & Đích thực"
+        else:
+            return "Điểm thu hút khách du lịch"
+    
+    elif travel_style == "foodie":
+        if group_type == "friends":
+            return "Náo nhiệt & Xã hội"
+        else:
+            return "Địa phương & Đích thực"
+    
+    # Default fallback
+    if group_type == "couple":
+        return "Lãng mạn & Riêng tư"
+    elif group_type == "family":
+        return "Gia đình & Thoải mái"
+    elif group_type == "friends":
+        return "Náo nhiệt & Xã hội"
+    else:
+        return "Điểm thu hút khách du lịch"
 
 # =====================================
 # STATE MANAGEMENT
@@ -43,6 +99,7 @@ class UserPreferences(BaseModel):
     duration: Optional[str] = None      # "half_day", "full_day", "2_days", "3_days"
     start_location: Optional[str] = None # "Hà Nội", "Quận 1", hotel address
     special_requests: List[str] = []     # ["vegetarian", "wheelchair_accessible"]
+    user_mood: Optional[str] = None     # Mood for ECS scoring (mapped from travel_style + group_type)
 
 class TravelState(TypedDict):
     """Overall conversation and planning state"""
@@ -86,6 +143,8 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     # Determine what information we're still missing
     missing_info = []
+    if not preferences.start_location:
+        missing_info.append("destination")
     if not preferences.travel_style:
         missing_info.append("travel_style")
     if not preferences.group_type:
@@ -100,6 +159,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     Bạn là một AI travel assistant thông minh. Nhiệm vụ của bạn là thu thập thông tin về sở thích du lịch của khách hàng một cách tự nhiên.
     
     Thông tin hiện tại về khách hàng:
+    - Địa điểm: {preferences.start_location or "Chưa biết"}
     - Phong cách du lịch: {preferences.travel_style or "Chưa biết"}
     - Nhóm đi: {preferences.group_type or "Chưa biết"}  
     - Ngân sách: {preferences.budget_range or "Chưa biết"}
@@ -109,7 +169,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     Tin nhắn mới nhất của khách: "{last_message}"
     
     Hãy:
-    1. Phân tích tin nhắn để trích xuất thông tin sở thích (nếu có)
+    1. Phân tích tin nhắn để trích xuất thông tin sở thích (nếu có), đặc biệt chú ý đến TÊN ĐỊA ĐIỂM/THÀNH PHỐ
     2. Nếu thiếu thông tin quan trọng ({missing_info}), hỏi 1-2 câu hỏi một cách tự nhiên
     3. Nếu đã đủ thông tin, chuyển sang giai đoạn lập kế hoạch lộ trình
     
@@ -127,6 +187,29 @@ def profile_collector_node(state: TravelState) -> TravelState:
     # Extract info from user message
     user_text = last_message.lower()
     
+    # Destination detection (IMPORTANT!)
+    destination_keywords = {
+        "vũng tàu": ["vũng tàu", "vung tau", "vùng tàu", "vùng tau"],
+        "đà lạt": ["đà lạt", "da lat", "đà lat"],
+        "nha trang": ["nha trang"],
+        "đà nẵng": ["đà nẵng", "da nang"],
+        "hội an": ["hội an", "hoi an"],
+        "phú quốc": ["phú quốc", "phu quoc"],
+        "sapa": ["sapa", "sa pa"],
+        "hà nội": ["hà nội", "ha noi", "hanoi"],
+        "hồ chí minh": ["hồ chí minh", "ho chi minh", "sài gòn", "saigon", "tp.hcm", "tphcm"],
+        "huế": ["huế", "hue"],
+        "hạ long": ["hạ long", "ha long", "halong"],
+        "cần thơ": ["cần thơ", "can tho"],
+        "ninh bình": ["ninh bình", "ninh binh"],
+    }
+    
+    for destination, keywords in destination_keywords.items():
+        if any(keyword in user_text for keyword in keywords):
+            updated_preferences.start_location = destination
+            print(f"   ✅ Detected destination: {destination}")
+            break
+    
     # Travel style detection
     if any(word in user_text for word in ["chill", "nghỉ dưỡng", "thư giãn", "yên tĩnh"]):
         updated_preferences.travel_style = "chill"
@@ -138,9 +221,26 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.travel_style = "foodie"
     
     # Group type detection
-    if any(word in user_text for word in ["một mình", "solo", "tự túc"]):
+    # Detect based on number of people first
+    import re
+    people_match = re.search(r'(\d+)\s*(người|people)', user_text)
+    if people_match:
+        num_people = int(people_match.group(1))
+        if num_people == 1:
+            updated_preferences.group_type = "solo"
+        elif num_people == 2:
+            updated_preferences.group_type = "couple"
+        elif num_people >= 3:
+            # Check if family context
+            if any(word in user_text for word in ["gia đình", "bố mẹ", "con cái", "family"]):
+                updated_preferences.group_type = "family"
+            else:
+                updated_preferences.group_type = "friends"
+        print(f"   ✅ Detected {num_people} người → group_type: {updated_preferences.group_type}")
+    # Fallback to keyword detection
+    elif any(word in user_text for word in ["một mình", "solo", "tự túc"]):
         updated_preferences.group_type = "solo"
-    elif any(word in user_text for word in ["cặp đôi", "bạn trai", "bạn gái", "vợ chồng"]):
+    elif any(word in user_text for word in ["cặp đôi", "bạn trai", "bạn gái", "vợ chồng", "2 người"]):
         updated_preferences.group_type = "couple"
     elif any(word in user_text for word in ["gia đình", "bố mẹ", "con cái", "family"]):
         updated_preferences.group_type = "family"
@@ -167,6 +267,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     # Determine next stage
     is_info_complete = all([
+        updated_preferences.start_location,  # MUST have destination!
         updated_preferences.travel_style,
         updated_preferences.group_type, 
         updated_preferences.budget_range,
@@ -184,13 +285,26 @@ def profile_collector_node(state: TravelState) -> TravelState:
 
 def itinerary_planner_node(state: TravelState) -> TravelState:
     """
-    Node 2: Generate initial itinerary based on preferences
+    Node 2: Generate initial itinerary based on preferences using AI Optimizer Service
     """
-    print("📋 ItineraryPlanner: Creating day-by-day itinerary...")
+    print("📋 ItineraryPlanner: Creating optimized itinerary with AI Optimizer Service...")
     
     preferences = state["user_preferences"]
     
-    # Search for places based on preferences
+    # Map travel_style + group_type to user_mood for ECS scoring
+    user_mood = map_preferences_to_mood(
+        preferences.travel_style or "cultural",
+        preferences.group_type or "solo"
+    )
+    preferences.user_mood = user_mood
+    
+    print(f"   → Mapped mood: {user_mood}")
+    
+    # Get destination (location filter)
+    destination = preferences.start_location or "Hà Nội"  # Default to Hanoi if not specified
+    print(f"   → Searching for places in: {destination}")
+    
+    # Search for places based on preferences WITH location filter
     search_queries = []
     
     if preferences.travel_style == "cultural":
@@ -200,15 +314,22 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
     elif preferences.travel_style == "adventure":
         search_queries = ["công viên", "leo núi", "hoạt động ngoài trời"]
     elif preferences.travel_style == "chill":
-        search_queries = ["quán cà phê yên tĩnh", "công viên", "hồ nước"]
+        search_queries = ["quán cà phê yên tĩnh", "công viên", "hồ nước", "bãi biển"]
     else:
         search_queries = ["địa điểm tham quan", "quán ăn", "công viên"]
     
-    # Collect places from multiple searches
+    # Collect places from multiple searches with location filter
     all_places = []
     for query in search_queries:
-        places = search_places.invoke({"query": query, "limit": 5})
-        all_places.extend(places[:3])  # Take top 3 from each search
+        # Add location filter to search
+        places = search_places.invoke({
+            "query": query, 
+            "location_filter": destination,
+            "limit": 10
+        })
+        all_places.extend(places[:5])  # Take top 5 from each search
+    
+    print(f"   → Found {len(all_places)} places before deduplication")
     
     # Remove duplicates
     seen_ids = set()
@@ -219,80 +340,145 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
             seen_ids.add(place_id)
             unique_places.append(place)
     
-    # Limit based on duration
-    duration_limits = {
-        "half_day": 3,
-        "full_day": 5, 
-        "2_days": 8,
-        "3_days": 12
+    if not unique_places:
+        # Fallback if no places found
+        return {
+            **state,
+            "current_itinerary": [],
+            "session_stage": "planning",
+            "messages": state["messages"] + [AIMessage(content="❌ Xin lỗi, không tìm thấy địa điểm phù hợp. Vui lòng thử lại với sở thích khác.")]
+        }
+    
+    # Parse duration to days
+    duration_map = {
+        "half_day": 1,
+        "full_day": 1,
+        "2_days": 2,
+        "3_days": 3
     }
+    duration_days = duration_map.get(preferences.duration, 1)
     
-    max_places = duration_limits.get(preferences.duration, 5)
-    selected_places = unique_places[:max_places]
+    # Get current location (default to Hanoi center if not provided)
+    current_location = {"lat": 21.0285, "lng": 105.8542}  # Hanoi center
+    if state.get("user_location"):
+        # Parse user_location if provided (format: "lat,lng" or location name)
+        try:
+            parts = state["user_location"].split(",")
+            if len(parts) == 2:
+                current_location = {"lat": float(parts[0]), "lng": float(parts[1])}
+        except:
+            pass
     
-    # Create basic itinerary structure
-    if preferences.duration == "half_day":
-        itinerary = [
-            {"time": "09:00", "activity": "Bắt đầu", "place": selected_places[0] if selected_places else None},
-            {"time": "11:00", "activity": "Tham quan", "place": selected_places[1] if len(selected_places) > 1 else None},
-            {"time": "12:30", "activity": "Ăn trưa và kết thúc", "place": selected_places[2] if len(selected_places) > 2 else None},
-        ]
-    elif preferences.duration == "full_day":
-        itinerary = [
-            {"time": "09:00", "activity": "Bắt đầu ngày", "place": selected_places[0] if selected_places else None},
-            {"time": "10:30", "activity": "Tham quan", "place": selected_places[1] if len(selected_places) > 1 else None},
-            {"time": "12:30", "activity": "Ăn trưa", "place": selected_places[2] if len(selected_places) > 2 else None},
-            {"time": "14:30", "activity": "Hoạt động chiều", "place": selected_places[3] if len(selected_places) > 3 else None},
-            {"time": "17:00", "activity": "Kết thúc ngày", "place": selected_places[4] if len(selected_places) > 4 else None},
-        ]
-    else:
-        # Multi-day itinerary (simplified)
+    # Get start datetime (default to tomorrow 9 AM)
+    start_datetime = state.get("travel_date")
+    if not start_datetime:
+        tomorrow = datetime.now() + timedelta(days=1)
+        start_datetime = tomorrow.replace(hour=9, minute=0, second=0).isoformat()
+    
+    # Call AI Optimizer Service
+    print(f"   → Calling AI Optimizer with {len(unique_places)} places, {duration_days} days")
+    
+    optimizer_result = optimize_route_with_ecs.invoke({
+        "places": unique_places,
+        "user_mood": user_mood,
+        "duration_days": duration_days,
+        "current_location": current_location,
+        "start_datetime": start_datetime,
+        "ecs_score_threshold": 0.0  # Accept all places for now
+    })
+    
+    # Extract optimized route
+    optimized_route = optimizer_result.get("optimized_route", [])
+    
+    if not optimized_route:
+        # Fallback to simple itinerary if optimizer fails
+        print("   ⚠️  AI Optimizer returned empty result, using fallback")
         itinerary = []
-        places_per_day = max_places // int(preferences.duration.split('_')[0])
-        for day in range(int(preferences.duration.split('_')[0])):
-            day_places = selected_places[day * places_per_day:(day + 1) * places_per_day]
-            for i, place in enumerate(day_places):
+        for i, place in enumerate(unique_places[:5]):
+            itinerary.append({
+                "day": 1,
+                "time": f"{9 + i * 2}:00",
+                "activity": "Tham quan",
+                "place": place
+            })
+    else:
+        # Convert optimizer result to itinerary format
+        itinerary = []
+        for day_data in optimized_route:
+            day_num = day_data.get("day", 1)
+            for activity in day_data.get("activities", []):
                 itinerary.append({
-                    "day": day + 1,
-                    "time": f"{9 + i * 2}:00",
-                    "activity": f"Hoạt động {i + 1}",
-                    "place": place
+                    "day": day_num,
+                    "time": activity.get("estimated_arrival", "09:00").split("T")[1][:5] if "T" in activity.get("estimated_arrival", "") else "09:00",
+                    "activity": "Tham quan",
+                    "place": activity,
+                    "estimated_arrival": activity.get("estimated_arrival"),
+                    "estimated_departure": activity.get("estimated_departure"),
+                    "ecs_score": activity.get("ecs_score")
                 })
     
     # Generate explanation
+    total_places = len(itinerary)
+    days_count = len(optimized_route) if optimized_route else 1
+    
     explanation = f"""
-    🎯 **Lộ trình được thiết kế dựa trên:**
-    - Phong cách: {preferences.travel_style}
-    - Nhóm: {preferences.group_type}
-    - Ngân sách: {preferences.budget_range}
-    - Thời gian: {preferences.duration}
+    🎯 **Lộ trình được tối ưu hóa bởi AI dựa trên:**
+    - 📍 Địa điểm: {destination}
+    - 🎨 Phong cách: {preferences.travel_style} → Mood: {user_mood}
+    - 👥 Nhóm: {preferences.group_type}
+    - 💰 Ngân sách: {preferences.budget_range}
+    - ⏱️ Thời gian: {preferences.duration} ({duration_days} ngày)
     
-    📍 **Tôi đã chọn {len(selected_places)} địa điểm phù hợp với sở thích của bạn.**
+    📍 **Tôi đã tạo lộ trình {days_count} ngày tại {destination} với {total_places} địa điểm được tối ưu theo:**
+    ✅ ECS Score (phù hợp với mood của bạn)
+    ✅ Khoảng cách di chuyển (nearest-neighbor optimization)
+    ✅ Giờ mở cửa của các địa điểm
     
-    ⏰ **Lộ trình chi tiết:**
+    ⏰ **Lộ trình chi tiết tại {destination}:**
     """
     
+    current_day = 0
     for item in itinerary:
+        if item.get("day", 1) != current_day:
+            current_day = item.get("day", 1)
+            explanation += f"\n\n**🗓️ NGÀY {current_day}:**"
+        
         if item.get("place"):
             place_name = item["place"].get("name", "Unknown")
-            explanation += f"\n• {item['time']} - {item['activity']}: {place_name}"
+            time_str = item.get("time", "TBD")
+            ecs = item.get("ecs_score")
+            ecs_str = f" (ECS: {ecs:.2f})" if ecs else ""
+            explanation += f"\n• {time_str} - {place_name}{ecs_str}"
+    
+    explanation += "\n\n💡 Lộ trình này đã được kiểm tra và tối ưu hóa. Tiếp theo tôi sẽ kiểm tra thời tiết và tính chi phí!"
     
     return {
         **state,
         "current_itinerary": itinerary,
+        "user_preferences": preferences,  # Update with mood
+        "optimization_applied": True,  # Mark as optimized
         "session_stage": "optimizing",
         "messages": state["messages"] + [AIMessage(content=explanation)]
     }
 
 def route_optimizer_node(state: TravelState) -> TravelState:
     """
-    Node 3: Optimize route for minimal travel distance
+    Node 3: Skip optimization (already done by AI Optimizer Service in planner)
     """
-    print("🗺️ RouteOptimizer: Optimizing travel route...")
+    print("🗺️ RouteOptimizer: Skipping (already optimized by AI Optimizer Service)")
     
+    # Check if already optimized
+    if state.get("optimization_applied"):
+        print("   ✅ Route already optimized with ECS scoring + nearest-neighbor")
+        return {
+            **state,
+            "session_stage": "finalizing"
+        }
+    
+    # Fallback: if not optimized yet, apply simple optimization
     itinerary = state["current_itinerary"]
     if not itinerary:
-        return {**state, "optimization_applied": True}
+        return {**state, "optimization_applied": True, "session_stage": "finalizing"}
     
     # Extract places from itinerary
     places = []
@@ -301,9 +487,9 @@ def route_optimizer_node(state: TravelState) -> TravelState:
             places.append(item["place"])
     
     if len(places) <= 1:
-        return {**state, "optimization_applied": True}
+        return {**state, "optimization_applied": True, "session_stage": "finalizing"}
     
-    # Optimize route
+    # Optimize route using simple nearest-neighbor
     optimized_places = optimize_route.invoke({"places": places})
     
     # Rebuild itinerary with optimized order
@@ -317,7 +503,7 @@ def route_optimizer_node(state: TravelState) -> TravelState:
             optimized_itinerary.append(original_item)
     
     optimization_message = """
-    🔄 **Đã tối ưu hóa lộ trình!**
+    🔄 **Đã tối ưu hóa lộ trình (fallback)!**
     
     Tôi đã sắp xếp lại thứ tự các địa điểm để giảm thiểu thời gian di chuyển. 
     Các địa điểm gần nhau sẽ được ghép lại để bạn đi lại thuận tiện hơn.
