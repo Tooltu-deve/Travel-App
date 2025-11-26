@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Render Cloud URL
+const API_BASE_URL = 'http://192.168.2.92:3000'; // ⬅️ Render Cloud URL
 
 // ============================================
 // TYPES
@@ -373,6 +373,132 @@ export const getRoutesAPI = async (
   );
 };
 
+/**
+ * getMoodsAPI: Lấy danh sách tất cả moods từ places
+ *
+ * @param token JWT token
+ * @returns Danh sách moods
+ *
+ * Endpoint: GET /api/v1/favorites/moods
+ * Headers: Authorization: Bearer <token>
+ * Response: { moods: string[] }
+ */
+export const getMoodsAPI = async (
+  token: string,
+): Promise<{ moods: string[] }> => {
+  return makeRequest<{ moods: string[] }>(
+    '/api/v1/favorites/moods',
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
+ * getFavoritesByMoodAPI: Lấy danh sách places đã like theo mood
+ *
+ * @param token JWT token
+ * @param mood Mood để filter
+ * @returns Danh sách places
+ *
+ * Endpoint: GET /api/v1/favorites?mood=<mood>
+ * Headers: Authorization: Bearer <token>
+ * Response: Array of { id, name, address, mood, rating }
+ */
+export const getFavoritesByMoodAPI = async (
+  token: string,
+  mood: string,
+): Promise<Array<{
+  id: string;
+  name: string;
+  address: string;
+  mood: string;
+  rating: number | null;
+}>> => {
+  return makeRequest<Array<{
+    id: string;
+    name: string;
+    address: string;
+    mood: string;
+    rating: number | null;
+  }>>(
+    `/api/v1/favorites?mood=${encodeURIComponent(mood)}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
+ * likePlaceAPI: Like hoặc Unlike một place
+ *
+ * @param token JWT token
+ * @param googlePlaceId Google Place ID của place
+ * @returns Response từ backend
+ *
+ * Endpoint: POST /api/v1/favorites/like-place
+ * Headers: Authorization: Bearer <token>
+ * Request: { google_place_id: <googlePlaceId> }
+ * Response: { message, ... }
+ */
+export const likePlaceAPI = async (
+  token: string,
+  googlePlaceId: string,
+): Promise<{ message: string }> => {
+  return makeRequest<{ message: string }>(
+    '/api/v1/favorites/like-place',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ google_place_id: googlePlaceId }),
+    },
+  );
+};
+
+/**
+ * getLikedPlacesAPI: Lấy tất cả places đã like
+ *
+ * @param token JWT token
+ * @returns Danh sách places đã like
+ *
+ * Endpoint: GET /api/v1/favorites/liked-places
+ * Headers: Authorization: Bearer <token>
+ * Response: Array of places
+ */
+export const getLikedPlacesAPI = async (
+  token: string,
+): Promise<Array<{
+  id: string;
+  name: string;
+  address: string;
+  mood: string;
+  rating: number | null;
+}>> => {
+  return makeRequest<Array<{
+    id: string;
+    name: string;
+    address: string;
+    mood: string;
+    rating: number | null;
+  }>>(
+    '/api/v1/favorites/liked-places',
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
 // ============================================
 // EXPORT
 // ============================================
@@ -386,4 +512,8 @@ export default {
   updateRouteStatusAPI,
   deleteRouteAPI,
   getRoutesAPI,
+  getMoodsAPI,
+  getFavoritesByMoodAPI,
+  likePlaceAPI,
+  getLikedPlacesAPI,
 };
