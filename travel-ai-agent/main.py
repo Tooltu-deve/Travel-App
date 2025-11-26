@@ -297,7 +297,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",  # Import string format để enable reload
         host="0.0.0.0",
-        port=8000,
+        port=8001,  # Changed from 8000 to avoid conflict
         reload=True,  # For development
         log_level="info"
     )
