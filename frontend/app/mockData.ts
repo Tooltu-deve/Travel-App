@@ -286,3 +286,5 @@ export const getMockMoods = (): string[] => {
   const allMoods = mockFavoritePlaces.flatMap(place => place.moods);
   return [...new Set(allMoods)];
 };
+
+export default {}; // Add default export to satisfy expo-router

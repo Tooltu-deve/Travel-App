@@ -88,7 +88,18 @@ export const ReviewCard: React.FC = () => {
  
 
   const renderStars = (rating: number | null) => {
-    if (rating == null) return null;
+    if (rating === null || rating === undefined) {
+      return (
+        <View style={styles.ratingRow}>
+          <Text style={styles.ratingText}>0.0</Text>
+          <View style={styles.starsRow}>
+            {[...Array(5)].map((_, i) => (
+              <FontAwesome key={i} name="star-o" size={14} color={COLORS.textSecondary} />
+            ))}
+          </View>
+        </View>
+      );
+    }
     const stars = [];
     const full = Math.floor(rating);
     const hasHalf = rating % 1 >= 0.5;
@@ -130,7 +141,12 @@ export const ReviewCard: React.FC = () => {
         />,
       );
     }
-    return <View style={styles.ratingRow}>{stars}</View>;
+    return (
+      <View style={styles.ratingRow}>
+        <Text style={styles.ratingText}>{rating.toFixed(1)}</Text>
+        <View style={styles.starsRow}>{stars}</View>
+      </View>
+    );
   };
 
   const placesToShow = allPlaces.slice(0, visibleCount);
@@ -176,7 +192,6 @@ export const ReviewCard: React.FC = () => {
             <View style={styles.placeFooter}>
               <View style={styles.leftCol}>
                 {renderStars(place.rating)}
-                {place.rating != null && <Text style={styles.ratingText}>{place.rating.toFixed(1)}</Text>}
               </View>
               <View style={styles.moodTags}>
                 {place.moods.slice(0, 3).map((m: string, i: number) => (
@@ -281,7 +296,10 @@ const styles = StyleSheet.create({
   ratingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+  },
+  starsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   ratingText: {
     color: COLORS.ratingAlt,
