@@ -156,3 +156,98 @@ export const categories = [
   { id: '8', name: 'Sự kiện', icon: 'calendar' },
   { id: '9', name: 'Đặc sản', icon: 'gift' },
 ];
+
+// --- Favorites mock data (moved here so all mocks live in one file) ---
+export interface MockFavoritePlace {
+  id: string;
+  name: string;
+  address: string;
+  moods: string[];
+  rating: number | null;
+}
+
+export const mockFavoritePlaces: MockFavoritePlace[] = [
+  {
+    id: '1',
+    name: 'Bãi biển Nha Trang',
+    address: 'Nha Trang, Khánh Hòa',
+    moods: ['seaside', 'relaxing', 'scenic', 'peaceful'],
+    rating: 4.5
+  },
+  {
+    id: '2',
+    name: 'Chùa Một Cột',
+    address: 'Hà Nội',
+    moods: ['historical', 'spiritual', 'cultural', 'peaceful'],
+    rating: 4.2
+  },
+  {
+    id: '3',
+    name: 'Phố cổ Hội An',
+    address: 'Hội An, Quảng Nam',
+    moods: ['historical', 'cultural', 'romantic', 'traditional'],
+    rating: 4.8
+  },
+  {
+    id: '4',
+    name: 'Vịnh Hạ Long',
+    address: 'Quảng Ninh',
+    moods: ['scenic', 'adventurous', 'peaceful', 'thrilling'],
+    rating: 4.9
+  },
+  {
+    id: '5',
+    name: 'Cầu Vàng Bà Nà Hills',
+    address: 'Đà Nẵng',
+    moods: ['modern', 'scenic', 'exciting', 'family-friendly'],
+    rating: 4.6
+  },
+  {
+    id: '6',
+    name: 'Chợ Bến Thành',
+    address: 'Quận 1, TP.HCM',
+    moods: ['lively', 'cultural', 'crowded', 'local_gem'],
+    rating: 4.1
+  },
+  {
+    id: '7',
+    name: 'Đền Hùng',
+    address: 'Phú Thọ',
+    moods: ['historical', 'spiritual', 'cultural', 'traditional'],
+    rating: 4.4
+  },
+  {
+    id: '8',
+    name: 'Suối Tiên',
+    address: 'TP.HCM',
+    moods: ['scenic', 'relaxing', 'family-friendly', 'peaceful'],
+    rating: 4.3
+  },
+  {
+    id: '9',
+    name: 'Lăng Chủ tịch Hồ Chí Minh',
+    address: 'Hà Nội',
+    moods: ['historical', 'spiritual', 'cultural', 'solemn'],
+    rating: 4.7
+  },
+  {
+    id: '10',
+    name: 'Tháp Eiffel Việt Nam',
+    address: 'Đà Lạt',
+    moods: ['romantic', 'scenic', 'touristy', 'modern'],
+    rating: 4.0
+  }
+];
+
+// Function to get places by mood
+export const getMockPlacesByMood = (mood: string): MockFavoritePlace[] => {
+  return mockFavoritePlaces.filter(place =>
+    place.moods.includes(mood)
+  );
+};
+
+// Function to get all unique moods from mock data
+export const getMockMoods = (): string[] => {
+  const allMoods = mockFavoritePlaces.flatMap(place => place.moods);
+  return [...new Set(allMoods)];
+};
