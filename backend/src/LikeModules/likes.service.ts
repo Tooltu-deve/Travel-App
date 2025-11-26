@@ -13,18 +13,16 @@ export class FavoritesService {
     @InjectModel(Place.name) private placeModel: Model<PlaceDocument>,
   ) {}
 
-  // Lấy tất cả mood (key của emotionalTags) trong toàn bộ Place
+  // Lấy tất cả type trong toàn bộ Place
   async getAllMoods(): Promise<string[]> {
-    const places = await this.placeModel.find({}, { emotionalTags: 1 }).lean();
-    const moodSet = new Set<string>();
+    const places = await this.placeModel.find({}, { type: 1 }).lean();
+    const typeSet = new Set<string>();
     for (const place of places) {
-      if (place.emotionalTags) {
-        for (const key of Object.keys(place.emotionalTags)) {
-          if (key) moodSet.add(key);
-        }
+      if (place.type) {
+        typeSet.add(place.type);
       }
     }
-    return Array.from(moodSet).sort();
+    return Array.from(typeSet).sort();
   }
 
   // Lấy danh sách place user đã like theo mood
@@ -32,18 +30,18 @@ export class FavoritesService {
     const user = await this.userModel.findById(userId).select('likedPlaces').lean();
     if (!user || !user.likedPlaces || user.likedPlaces.length === 0) return [];
 
-    // Tìm các place user đã like có chứa mood này
+    // Tìm các place user đã like có type đúng với mood (thực chất là type)
     const places = await this.placeModel.find({
       _id: { $in: user.likedPlaces },
-      [`emotionalTags.${mood}`]: { $exists: true },
-    }).select('name address rating emotionalTags').lean();
+      type: mood,
+    }).select('name address rating type').lean();
 
     // Map ra DTO card
     return places.map((p) => ({
       id: p._id.toString(),
       name: p.name,
       address: p.address,
-      mood,
+      mood: p.type,
       rating: p.rating ?? null,
     }));
   }
@@ -103,9 +101,8 @@ export class FavoritesService {
       name: place.name,
       address: place.address,
       location: place.location,
-      type: place.type,
+      type: place.type || '',
       openingHours: place.openingHours || {},
-      emotionalTags: place.emotionalTags || {},
       isStub: place.isStub || false,
     }));
   }

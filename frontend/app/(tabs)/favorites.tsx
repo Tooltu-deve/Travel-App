@@ -19,6 +19,8 @@ import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
 import { getMoodsAPI, getFavoritesByMoodAPI, likePlaceAPI } from '@/services/api';
 import { mockFavoritePlaces, getMockPlacesByMood, getMockMoods, MockFavoritePlace } from '../mockData';
+import likedStore, { initLikedPlaces, getLikedPlaces, subscribeLikedPlaces, removeLikedPlace, setLikedPlaces } from '../utils/likedPlacesStore';
+import { getLikedPlacesAPI } from '@/services/api';
 
 // Mood translation mapping
 const MOOD_TRANSLATIONS: { [key: string]: string } = {
@@ -90,6 +92,7 @@ const MOOD_TRANSLATIONS: { [key: string]: string } = {
   'Lit': 'Sôi động',
   'Vibe': 'Không khí',
   'Mood': 'Tâm trạng',
+  'all': 'Tất cả',
 };
 
 // Function to translate mood
@@ -122,17 +125,35 @@ const FavoritesScreen: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
 
+    // initialize liked places store so favorites can read persisted likes
+    initLikedPlaces().catch(() => {});
+
     const fetchMoods = async () => {
       try {
         setIsLoadingMoods(true);
         setMoodsError(null);
 
-        // Use mock data instead of API
+        // Use mock data instead of API; include an "all" option
         const mockMoods = getMockMoods();
+        const moodsWithAll = ['all', ...mockMoods];
         if (isMounted) {
-          setMoods(mockMoods);
-          if (mockMoods.length > 0) {
-            setSelectedMood(mockMoods[0]);
+          setMoods(moodsWithAll);
+          if (moodsWithAll.length > 0) {
+            setSelectedMood(moodsWithAll[0]);
+          }
+
+          // Try to sync liked places from backend to local store (non-blocking)
+          try {
+            const token = await AsyncStorage.getItem('userToken');
+            if (token) {
+              const remote = await getLikedPlacesAPI(token);
+              // Map backend shape to LikedPlace and set store
+              const mapped = remote.map(r => ({ id: r.id, name: r.name, address: r.address, moods: r.mood ? [r.mood] : [], rating: r.rating, googlePlaceId: (r as any).google_place_id || (r as any).googlePlaceId }));
+              await setLikedPlaces(mapped);
+            }
+          } catch (e) {
+            // ignore sync errors — local AsyncStorage will be used
+            console.warn('Failed to sync liked places from backend', e);
           }
         }
       } catch (error: any) {
@@ -156,33 +177,97 @@ const FavoritesScreen: React.FC = () => {
 
   useEffect(() => {
     if (!selectedMood) return;
-
+    // subscribe to liked places so UI updates whenever ReviewCard changes likes
     let isMounted = true;
+
+    // We'll try to use server-side filtering when a token is available.
+    // Subscribe to local changes so we can refresh server-filtered results after optimistic updates.
+    const unsub = subscribeLikedPlaces((places) => {
+      (async () => {
+        try {
+          const token = await AsyncStorage.getItem('userToken');
+          if (token && selectedMood && selectedMood !== 'all') {
+            // If server filtering is used, re-fetch filtered favorites from backend
+            try {
+              const remote = await getFavoritesByMoodAPI(token, selectedMood);
+              const mapped = remote.map(r => ({ id: r.id, name: r.name, address: r.address, mood: r.mood, rating: r.rating }));
+              if (isMounted) setFavorites(mapped);
+            } catch (e) {
+              // fallback to local filter on error
+              const formattedLocal: FavoritePlace[] = places.map(p => ({ id: p.id, name: p.name, address: p.address, mood: selectedMood || 'all', moods: p.moods, rating: p.rating }));
+              const filteredLocal = selectedMood === 'all' ? formattedLocal : formattedLocal.filter(p => p.moods?.includes(selectedMood));
+              if (isMounted) setFavorites(filteredLocal);
+            }
+          } else {
+            // No token or 'all' selected: use local store filtering
+            const formattedLocal: FavoritePlace[] = places.map(p => ({ id: p.id, name: p.name, address: p.address, mood: selectedMood || 'all', moods: p.moods, rating: p.rating }));
+            const filteredLocal = selectedMood === 'all' ? formattedLocal : formattedLocal.filter(p => p.moods?.includes(selectedMood));
+            if (isMounted) setFavorites(filteredLocal);
+          }
+        } catch (err) {
+          // ignore subscription errors
+        }
+      })();
+    });
 
     const fetchFavorites = async () => {
       try {
         setIsLoadingFavorites(true);
         setFavoritesError(null);
 
-        // Use mock data instead of API
-        const mockPlaces = getMockPlacesByMood(selectedMood);
-        // Convert to expected format
-        const formattedPlaces: FavoritePlace[] = mockPlaces.map(place => ({
-          id: place.id,
-          name: place.name,
-          address: place.address,
-          mood: selectedMood, // Set to selected mood for compatibility
-          moods: place.moods,
-          rating: place.rating
-        }));
+        const token = await AsyncStorage.getItem('userToken');
 
-        if (isMounted) {
-          // Initialize animated values before rendering the list so Animated.Views are bound
-          animValues.current = formattedPlaces.map(() => new Animated.Value(0));
+        if (token && selectedMood && selectedMood !== 'all') {
+          // Use backend to filter favorites by mood
+          try {
+            const remote = await getFavoritesByMoodAPI(token, selectedMood);
+            const mapped = remote.map(r => ({ id: r.id, name: r.name, address: r.address, mood: r.mood, rating: r.rating }));
 
-          setFavorites(formattedPlaces);
+            // initialize animation values
+            animValues.current = mapped.map(() => new Animated.Value(0));
+            if (isMounted) setFavorites(mapped);
 
-          // Start staggered entrance shortly after render begins
+            setTimeout(() => {
+              const animations = animValues.current.map(av =>
+                Animated.timing(av, {
+                  toValue: 1,
+                  duration: 360,
+                  useNativeDriver: true,
+                  easing: Easing.out(Easing.cubic),
+                })
+              );
+              Animated.stagger(80, animations).start();
+            }, 50);
+          } catch (err: any) {
+            console.warn('Failed to fetch favorites from server, falling back to local store', err);
+            // fallback to local store filtering
+            const liked = getLikedPlaces();
+            const formattedPlaces: FavoritePlace[] = liked.map(place => ({ id: place.id, name: place.name, address: place.address, mood: selectedMood || 'all', moods: place.moods, rating: place.rating }));
+            const filtered = selectedMood === 'all' ? formattedPlaces : formattedPlaces.filter(p => p.moods?.includes(selectedMood));
+
+            animValues.current = filtered.map(() => new Animated.Value(0));
+            if (isMounted) setFavorites(filtered);
+            setTimeout(() => {
+              const animations = animValues.current.map(av =>
+                Animated.timing(av, {
+                  toValue: 1,
+                  duration: 360,
+                  useNativeDriver: true,
+                  easing: Easing.out(Easing.cubic),
+                })
+              );
+              Animated.stagger(80, animations).start();
+            }, 50);
+          }
+        } else {
+          // No token or 'all' selected: use local store filtering
+          const liked = getLikedPlaces();
+          const formattedPlaces: FavoritePlace[] = liked.map(place => ({ id: place.id, name: place.name, address: place.address, mood: selectedMood || 'all', moods: place.moods, rating: place.rating }));
+          const filtered = selectedMood === 'all' ? formattedPlaces : formattedPlaces.filter(p => p.moods?.includes(selectedMood));
+
+          animValues.current = filtered.map(() => new Animated.Value(0));
+          if (isMounted) setFavorites(filtered);
+
           setTimeout(() => {
             const animations = animValues.current.map(av =>
               Animated.timing(av, {
@@ -192,7 +277,6 @@ const FavoritesScreen: React.FC = () => {
                 easing: Easing.out(Easing.cubic),
               })
             );
-
             Animated.stagger(80, animations).start();
           }, 50);
         }
@@ -212,6 +296,7 @@ const FavoritesScreen: React.FC = () => {
 
     return () => {
       isMounted = false;
+      unsub();
     };
   }, [selectedMood]);
 
@@ -253,19 +338,8 @@ const FavoritesScreen: React.FC = () => {
       // Simulate API call delay
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // For mock data, just refetch the favorites for the current mood
-      if (selectedMood) {
-        const mockPlaces = getMockPlacesByMood(selectedMood);
-        const formattedPlaces: FavoritePlace[] = mockPlaces.map(place => ({
-          id: place.id,
-          name: place.name,
-          address: place.address,
-          mood: selectedMood,
-          moods: place.moods,
-          rating: place.rating
-        }));
-        setFavorites(formattedPlaces);
-      }
+      // In favorites screen, this toggles off (remove from liked list)
+      await removeLikedPlace(placeId);
     } catch (error: any) {
       console.error('❌ Like place error:', error);
       // Handle error, maybe show alert

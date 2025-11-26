@@ -163,6 +163,7 @@ export interface MockFavoritePlace {
   name: string;
   address: string;
   moods: string[];
+  googlePlaceId?: string;
   rating: number | null;
 }
 
@@ -172,6 +173,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Bãi biển Nha Trang',
     address: 'Nha Trang, Khánh Hòa',
     moods: ['seaside', 'relaxing', 'scenic', 'peaceful'],
+    googlePlaceId: 'ChIJbYsiVpFgcDER8jMDvlyUFYI',
     rating: 4.5
   },
   {
@@ -179,6 +181,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Chùa Một Cột',
     address: 'Hà Nội',
     moods: ['historical', 'spiritual', 'cultural', 'peaceful'],
+    googlePlaceId: 'ChIJlclXM5WrNTERDqL5tGu_ugE',
     rating: 4.2
   },
   {
@@ -186,6 +189,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Phố cổ Hội An',
     address: 'Hội An, Quảng Nam',
     moods: ['historical', 'cultural', 'romantic', 'traditional'],
+    googlePlaceId: 'ChIJq5ZTbfkNQjER77EyOpeeDe0',
     rating: 4.8
   },
   {
@@ -193,6 +197,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Vịnh Hạ Long',
     address: 'Quảng Ninh',
     moods: ['scenic', 'adventurous', 'peaceful', 'thrilling'],
+    googlePlaceId: 'ChIJQ6BVP0YdNTERMxronuGXeQo',
     rating: 4.9
   },
   {
@@ -200,6 +205,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Cầu Vàng Bà Nà Hills',
     address: 'Đà Nẵng',
     moods: ['modern', 'scenic', 'exciting', 'family-friendly'],
+    googlePlaceId: 'ChIJ78thjjYYQjERkiy-c9ebVPE',
     rating: 4.6
   },
   {
@@ -207,6 +213,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Chợ Bến Thành',
     address: 'Quận 1, TP.HCM',
     moods: ['lively', 'cultural', 'crowded', 'local_gem'],
+    googlePlaceId: 'ChIJKVR0XXGhQTERVhtU37SXkhA',
     rating: 4.1
   },
   {
@@ -214,6 +221,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Đền Hùng',
     address: 'Phú Thọ',
     moods: ['historical', 'spiritual', 'cultural', 'traditional'],
+    googlePlaceId: 'ChIJfR0xdisdNTER3TugKXpONtw',
     rating: 4.4
   },
   {
@@ -221,6 +229,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Suối Tiên',
     address: 'TP.HCM',
     moods: ['scenic', 'relaxing', 'family-friendly', 'peaceful'],
+    googlePlaceId: 'ChIJm-0iYiapmDERJPfeu1tbLfs',
     rating: 4.3
   },
   {
@@ -228,6 +237,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Lăng Chủ tịch Hồ Chí Minh',
     address: 'Hà Nội',
     moods: ['historical', 'spiritual', 'cultural', 'solemn'],
+    googlePlaceId: 'ChIJSXwdOKOrNTERNylYj9mnIbU',
     rating: 4.7
   },
   {
@@ -235,6 +245,7 @@ export const mockFavoritePlaces: MockFavoritePlace[] = [
     name: 'Tháp Eiffel Việt Nam',
     address: 'Đà Lạt',
     moods: ['romantic', 'scenic', 'touristy', 'modern'],
+    googlePlaceId: 'ChIJQ2NAxw1hcDERKJziQ0sTbFI',
     rating: 4.0
   }
 ];
