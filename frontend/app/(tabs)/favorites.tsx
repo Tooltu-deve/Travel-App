@@ -153,7 +153,9 @@ const FavoritesScreen: React.FC = () => {
         const res = await getMoodsAPI(token);
         const raw = Array.isArray(res?.moods) ? res.moods : [];
         // translate mood/type keys to Vietnamese labels for UI and keep original keys
-        const translated = raw.map((m: string) => ({ key: String(m), label: translatePlaceType(m) }));
+        let translated = raw.map((m: string) => ({ key: String(m), label: translatePlaceType(m) }));
+        // Sort alphabetically by translated label (Vietnamese collation). Keep the 'all' chip first.
+        translated.sort((a, b) => a.label.localeCompare(b.label, 'vi'));
         const list = [{ key: 'all', label: 'Tất cả' }, ...translated];
         setMoods(list);
       } catch (e: any) {
@@ -259,16 +261,13 @@ const FavoritesScreen: React.FC = () => {
   return (
     <LinearGradient colors={[COLORS.gradientStart, COLORS.gradientBlue1]} style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.topHeader}>
+        {/* Header */}
+        <View style={[styles.headerContainer, { paddingTop: insets.top - SPACING.sm }]}>
           <View style={styles.headerRow}>
-            <View style={styles.titleIcon}>
-              <FontAwesome name="heart" size={18} color={COLORS.favorite} />
+            <View style={styles.headerTextContainer}>
+              <Text style={styles.headerTitle}>Yêu thích của tôi</Text>
+              <Text style={styles.headerSubtitle}>Các địa điểm yêu thích theo tâm trạng</Text>
             </View>
-            <View style={{ marginLeft: 8 }}>
-              <Text style={styles.titleMain}>Yêu thích của tôi</Text>
-              <Text style={styles.titleSub}>Các địa điểm yêu thích theo tâm trạng</Text>
-            </View>
-            <View style={{ flex: 1 }} />
             <TouchableOpacity
               style={styles.toggleButton}
               onPress={() => setMoodsExpanded((s) => !s)}
@@ -381,7 +380,7 @@ const styles = StyleSheet.create({
   placeRating: { color: COLORS.ratingAlt, marginLeft: 8, fontWeight: '700' },
   heartFloat: { width: 38, height: 38, borderRadius: 20, backgroundColor: COLORS.textWhite, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 4, marginLeft: 12 },
   topHeader: { paddingTop: (Constants.statusBarHeight || 0) + SPACING.lg, paddingBottom: SPACING.lg },
-  headerRow: { flexDirection: 'row', alignItems: 'center' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   titleIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,99,99,0.12)', justifyContent: 'center', alignItems: 'center' },
   titleMain: { fontSize: 24, fontWeight: '900', color: COLORS.textDark },
   titleSub: { fontSize: 14, color: COLORS.primary, marginTop: 6 },
@@ -392,6 +391,29 @@ const styles = StyleSheet.create({
   emptySubtitle: { fontSize: 13, color: COLORS.textSecondary, marginBottom: SPACING.md, textAlign: 'center' },
   emptyButton: { backgroundColor: COLORS.primary, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderRadius: 8 },
   emptyButtonText: { color: '#fff', fontWeight: '700' },
+  headerContainer: {
+    paddingHorizontal: 0,
+    paddingBottom: SPACING.md,
+  },
+  headerTextContainer: {
+    gap: SPACING.xs / 2,
+  },
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    letterSpacing: 0.5,
+    textShadowColor: 'rgba(0, 163, 255, 0.15)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: COLORS.primary,
+    fontStyle: 'italic',
+    letterSpacing: 0.5,
+  },
 });
 
 export default FavoritesScreen;
