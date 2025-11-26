@@ -5,7 +5,7 @@ import { ProfileModule } from './profile/profile.module';
 import { DatabaseModule } from './database/database.module';
 import { ConfigModule } from '@nestjs/config';
 import { PlaceModule } from './place/place.module';
-import { FavoritesModule } from './LikeModules/likes.module';
+import { FavoritesModule } from './likemodules/likes.module';
 import { ItineraryModule } from './itinerary/itinerary.module';
 import { AiModule } from './ai/ai.module';
 
