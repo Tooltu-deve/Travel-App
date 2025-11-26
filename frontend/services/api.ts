@@ -499,6 +499,28 @@ export const getLikedPlacesAPI = async (
   );
 };
 
+/**
+ * getPlaceByIdAPI: Lấy chi tiết place theo internal DB id (`placeId` / `_id`)
+ * Public endpoint: GET /api/v1/places/:id
+ */
+export const getPlaceByIdAPI = async (
+  id: string,
+): Promise<any> => {
+  return makeRequest<any>(`/api/v1/places/${id}`, {
+    method: 'GET',
+  });
+};
+
+/**
+ * getPlacesAPI: Lấy danh sách địa điểm từ server
+ * Public endpoint: GET /api/v1/places
+ */
+export const getPlacesAPI = async (): Promise<any[]> => {
+  return makeRequest<any[]>('/api/v1/places', {
+    method: 'GET',
+  });
+};
+
 // ============================================
 // EXPORT
 // ============================================

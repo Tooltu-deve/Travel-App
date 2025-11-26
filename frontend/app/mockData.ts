@@ -164,88 +164,112 @@ export interface MockFavoritePlace {
   address: string;
   moods: string[];
   googlePlaceId?: string;
+  // match backend naming as well
+  google_place_id?: string;
+  // internal DB id used by backend responses
+  placeId?: string;
   rating: number | null;
 }
 
 export const mockFavoritePlaces: MockFavoritePlace[] = [
   {
     id: '1',
+    placeId: '69268cbf60a673da94c74c6c',
     name: 'Bãi biển Nha Trang',
     address: 'Nha Trang, Khánh Hòa',
     moods: ['seaside', 'relaxing', 'scenic', 'peaceful'],
     googlePlaceId: 'ChIJbYsiVpFgcDER8jMDvlyUFYI',
+    google_place_id: 'ChIJbYsiVpFgcDER8jMDvlyUFYI',
     rating: 4.5
   },
   {
     id: '2',
+    placeId: '691fba1d55292d01ebd9d86a',
     name: 'Chùa Một Cột',
     address: 'Hà Nội',
     moods: ['historical', 'spiritual', 'cultural', 'peaceful'],
     googlePlaceId: 'ChIJlclXM5WrNTERDqL5tGu_ugE',
+    google_place_id: 'ChIJlclXM5WrNTERDqL5tGu_ugE',
     rating: 4.2
   },
   {
     id: '3',
+    placeId: '691a6d2f55292d01ebd9d111',
     name: 'Phố cổ Hội An',
     address: 'Hội An, Quảng Nam',
     moods: ['historical', 'cultural', 'romantic', 'traditional'],
     googlePlaceId: 'ChIJq5ZTbfkNQjER77EyOpeeDe0',
+    google_place_id: 'ChIJq5ZTbfkNQjER77EyOpeeDe0',
     rating: 4.8
   },
   {
     id: '4',
+    placeId: '691a6d2f55292d01ebd9d222',
     name: 'Vịnh Hạ Long',
     address: 'Quảng Ninh',
     moods: ['scenic', 'adventurous', 'peaceful', 'thrilling'],
     googlePlaceId: 'ChIJQ6BVP0YdNTERMxronuGXeQo',
+    google_place_id: 'ChIJQ6BVP0YdNTERMxronuGXeQo',
     rating: 4.9
   },
   {
     id: '5',
+    placeId: '691a6d2f55292d01ebd9d333',
     name: 'Cầu Vàng Bà Nà Hills',
     address: 'Đà Nẵng',
     moods: ['modern', 'scenic', 'exciting', 'family-friendly'],
     googlePlaceId: 'ChIJ78thjjYYQjERkiy-c9ebVPE',
+    google_place_id: 'ChIJ78thjjYYQjERkiy-c9ebVPE',
     rating: 4.6
   },
   {
     id: '6',
+    placeId: '691a6d2f55292d01ebd9d444',
     name: 'Chợ Bến Thành',
     address: 'Quận 1, TP.HCM',
     moods: ['lively', 'cultural', 'crowded', 'local_gem'],
     googlePlaceId: 'ChIJKVR0XXGhQTERVhtU37SXkhA',
+    google_place_id: 'ChIJKVR0XXGhQTERVhtU37SXkhA',
     rating: 4.1
   },
   {
     id: '7',
+    placeId: '691a6d2f55292d01ebd9d555',
     name: 'Đền Hùng',
     address: 'Phú Thọ',
     moods: ['historical', 'spiritual', 'cultural', 'traditional'],
     googlePlaceId: 'ChIJfR0xdisdNTER3TugKXpONtw',
+    google_place_id: 'ChIJfR0xdisdNTER3TugKXpONtw',
     rating: 4.4
   },
   {
     id: '8',
+    placeId: '691a6d2f55292d01ebd9d666',
     name: 'Suối Tiên',
     address: 'TP.HCM',
     moods: ['scenic', 'relaxing', 'family-friendly', 'peaceful'],
     googlePlaceId: 'ChIJm-0iYiapmDERJPfeu1tbLfs',
+    google_place_id: 'ChIJm-0iYiapmDERJPfeu1tbLfs',
     rating: 4.3
   },
   {
     id: '9',
+    placeId: '691a6d2f55292d01ebd9d777',
     name: 'Lăng Chủ tịch Hồ Chí Minh',
     address: 'Hà Nội',
     moods: ['historical', 'spiritual', 'cultural', 'solemn'],
     googlePlaceId: 'ChIJSXwdOKOrNTERNylYj9mnIbU',
+    google_place_id: 'ChIJSXwdOKOrNTERNylYj9mnIbU',
     rating: 4.7
   },
   {
     id: '10',
+    placeId: '691a6d2f55292d01ebd9d888',
     name: 'Tháp Eiffel Việt Nam',
     address: 'Đà Lạt',
     moods: ['romantic', 'scenic', 'touristy', 'modern'],
     googlePlaceId: 'ChIJQ2NAxw1hcDERKJziQ0sTbFI',
+    google_place_id: 'ChIJQ2NAxw1hcDERKJziQ0sTbFI',
     rating: 4.0
   }
 ];

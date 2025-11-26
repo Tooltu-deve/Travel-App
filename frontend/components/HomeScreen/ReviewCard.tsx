@@ -2,46 +2,143 @@ import { FontAwesome } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { COLORS, SPACING } from '../../constants';
-import { mockFavoritePlaces } from '../../app/mockData';
-import likedStore, { addLikedPlace, removeLikedPlace, getLikedPlaces, subscribeLikedPlaces, LikedPlace } from '../../app/utils/likedPlacesStore';
-import { likePlaceAPI } from '@/services/api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFavorites } from '@/contexts/FavoritesContext';
+import { getPlacesAPI } from '@/services/api';
 
 // Render a list of mock favorite places using a card UI similar to Favorites
 export const ReviewCard: React.FC = () => {
-  const places = mockFavoritePlaces;
-  const [likedIds, setLikedIds] = useState<string[]>([]);
+  const [allPlaces, setAllPlaces] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [visibleCount, setVisibleCount] = useState<number>(5);
+  
+  const { isLiked, toggleLike } = useFavorites();
+
+  // helper: derive moods array from place object
+  const deriveMoods = (p: any): string[] => {
+    if (!p) return [];
+    if (Array.isArray(p.moods) && p.moods.length) return p.moods;
+    if (p.mood) return [p.mood];
+    if (p.type) return [p.type];
+    // emotionalTags could be Map or object
+    const tags = p.emotionalTags instanceof Map ? Object.fromEntries(p.emotionalTags) : p.emotionalTags;
+    if (tags && typeof tags === 'object') {
+      const entries = Object.entries(tags) as [string, number][];
+      entries.sort((a, b) => (b[1] || 0) - (a[1] || 0));
+      return entries.slice(0, 3).map(e => e[0]);
+    }
+    return [];
+  };
 
   useEffect(() => {
-    // Ensure store loaded and subscribe for updates
-    likedStore.initLikedPlaces().catch(() => {});
-    const unsub = subscribeLikedPlaces((places) => setLikedIds(places.map(p => p.id)));
-    // initialize current
-    setLikedIds(getLikedPlaces().map(p => p.id));
-    return () => unsub();
+    let mounted = true;
+    (async () => {
+      setIsLoading(true);
+      try {
+        const remote = await getPlacesAPI();
+        if (!mounted) return;
+        if (Array.isArray(remote) && remote.length) {
+          // normalize shape minimally to match mock
+          const normalized = remote.map((p: any, i: number) => {
+            const addr = typeof p.address === 'string' && p.address
+              ? p.address
+              : (typeof p.location === 'string' ? p.location : '');
+            // coerce rating to number if backend returns string
+            let ratingVal: number | null = null;
+            if (typeof p.rating === 'number') ratingVal = p.rating;
+            else if (typeof p.rating === 'string' && p.rating.trim() !== '') {
+              const parsed = parseFloat(p.rating);
+              if (!Number.isNaN(parsed)) ratingVal = parsed;
+            }
+            return ({
+              id: p._id?.toString?.() || p.placeId || String(i),
+              placeId: p._id?.toString() || p.placeId,
+              name: p.name || p.title || 'Không rõ',
+              address: addr,
+              moods: deriveMoods(p),
+              googlePlaceId: p.googlePlaceId || p.google_place_id || '',
+              rating: ratingVal,
+            });
+          });
+          // keep full list but only display limited items
+          setAllPlaces(normalized);
+          setIsLoading(false);
+          return;
+        }
+      } catch (err) {
+        // keep empty or fallback
+        console.warn('getPlacesAPI failed', err);
+      }
+      // fallback: keep places empty
+      setIsLoading(false);
+    })();
+    return () => { mounted = false; };
   }, []);
 
+  // ensure loading flag cleared when places result arrives or on error
+  useEffect(() => {
+    if (allPlaces.length > 0) setIsLoading(false);
+  }, [allPlaces]);
+ 
+
   const renderStars = (rating: number | null) => {
-    if (!rating) return null;
+    if (rating == null) return null;
     const stars = [];
     const full = Math.floor(rating);
     const hasHalf = rating % 1 >= 0.5;
+    const total = 5;
+    // full stars
     for (let i = 0; i < full; i++) {
-      stars.push(<FontAwesome key={`s-${i}`} name="star" size={14} color={COLORS.accent} />);
+      stars.push(
+        <FontAwesome
+          key={`s-${i}`}
+          name="star"
+          size={14}
+          color={COLORS.ratingAlt}
+          style={{ marginRight: i === total - 1 ? 0 : 4 }}
+        />,
+      );
     }
+    // half star
     if (hasHalf) {
-      stars.push(<FontAwesome key="half" name="star-half-o" size={14} color={COLORS.accent} />);
+      stars.push(
+        <FontAwesome
+          key="half"
+          name="star-half-full"
+          size={14}
+          color={COLORS.ratingAlt}
+          style={{ marginRight: (full === total - 1) ? 0 : 4 }}
+        />,
+      );
     }
-    const empty = 5 - Math.ceil(rating);
-    for (let i = 0; i < empty; i++) {
-      stars.push(<FontAwesome key={`e-${i}`} name="star-o" size={14} color={COLORS.textSecondary} />);
+    // empty stars to reach total
+    const current = stars.length;
+    for (let i = current; i < total; i++) {
+      stars.push(
+        <FontAwesome
+          key={`e-${i}`}
+          name="star-o"
+          size={14}
+          color={COLORS.textSecondary}
+          style={{ marginRight: i === total - 1 ? 0 : 4 }}
+        />,
+      );
     }
     return <View style={styles.ratingRow}>{stars}</View>;
   };
 
+  const placesToShow = allPlaces.slice(0, visibleCount);
+
   return (
     <View>
-      {places.map((place) => (
+      {isLoading && allPlaces.length === 0 && (
+        <View style={{ padding: SPACING.md }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bgLightBlue, padding: SPACING.sm, borderRadius: 10 }}>
+            <FontAwesome name="info-circle" size={14} color={COLORS.textSecondary} />
+            <Text style={{ marginLeft: 8, color: COLORS.textSecondary }}>Đang tải...</Text>
+          </View>
+        </View>
+      )}
+      {placesToShow.map((place) => (
         <View key={place.id} style={styles.placeCard}>
           <View style={styles.placeContent}>
             <View style={styles.placeHeader}>
@@ -57,37 +154,15 @@ export const ReviewCard: React.FC = () => {
                 style={styles.likeButton}
                 activeOpacity={0.85}
                 onPress={async () => {
-                  const isLiked = likedIds.includes(place.id);
-
-                  // optimistic update
-                  if (isLiked) {
-                    await removeLikedPlace(place.id);
-                    try {
-                      const token = await AsyncStorage.getItem('userToken');
-                      const gid = (place as any).googlePlaceId || place.id;
-                      if (token) await likePlaceAPI(token, gid);
-                    } catch (e) {
-                      // revert
-                      const p: LikedPlace = { id: place.id, name: place.name, address: place.address, moods: place.moods, rating: place.rating, googlePlaceId: (place as any).googlePlaceId };
-                      await addLikedPlace(p);
-                      console.error('Failed to unlike on backend, reverted locally', e);
-                    }
-                  } else {
-                    const p: LikedPlace = { id: place.id, name: place.name, address: place.address, moods: place.moods, rating: place.rating, googlePlaceId: (place as any).googlePlaceId };
-                    await addLikedPlace(p);
-                    try {
-                      const token = await AsyncStorage.getItem('userToken');
-                      const gid = (place as any).googlePlaceId || place.id;
-                      if (token) await likePlaceAPI(token, gid);
-                    } catch (e) {
-                      // revert
-                      await removeLikedPlace(place.id);
-                      console.error('Failed to like on backend, reverted locally', e);
-                    }
+                  try {
+                    const id = (place as any).googlePlaceId || place.placeId || place.id;
+                    await toggleLike(id);
+                  } catch (e) {
+                    console.error('Failed to toggle like', e);
                   }
                 }}
               >
-                <FontAwesome name="heart" size={22} color={likedIds.includes(place.id) ? '#E53E3E' : COLORS.textSecondary} />
+                <FontAwesome name="heart" size={22} color={isLiked((place as any).googlePlaceId || place.placeId || place.id) ? '#E53E3E' : COLORS.textSecondary} />
               </TouchableOpacity>
             </View>
 
@@ -97,7 +172,7 @@ export const ReviewCard: React.FC = () => {
                 {place.rating != null && <Text style={styles.ratingText}>{place.rating.toFixed(1)}</Text>}
               </View>
               <View style={styles.moodTags}>
-                {place.moods.slice(0, 3).map((m, i) => (
+                {place.moods.slice(0, 3).map((m: string, i: number) => (
                   <View key={i} style={styles.moodTag}>
                     <Text style={styles.moodTagText}>{m}</Text>
                   </View>
@@ -108,6 +183,34 @@ export const ReviewCard: React.FC = () => {
           </View>
         </View>
       ))}
+
+      {allPlaces.length > visibleCount && (
+        <View style={{ padding: SPACING.md }}>
+          <TouchableOpacity
+            onPress={() => {
+              // each click loads 5 more
+              setVisibleCount((v) => Math.min(allPlaces.length, v + 5));
+            }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingVertical: SPACING.md,
+              paddingHorizontal: SPACING.md,
+              borderRadius: 12,
+              backgroundColor: COLORS.bgLightBlue,
+              borderWidth: 1,
+              borderColor: COLORS.borderLight,
+              marginTop: SPACING.sm,
+              width: '100%'
+            }}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.primary }}>
+              {'Tải thêm 5 địa điểm'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 };
@@ -128,12 +231,12 @@ const styles = StyleSheet.create({
   },
   placeContent: {
     padding: SPACING.lg,
-    gap: SPACING.md,
+    // avoid using `gap` (not supported broadly); use explicit margins in children
   },
   placeHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: SPACING.sm,
+    // small horizontal spacing handled by child margins
   },
   placeName: {
     fontSize: 16,
@@ -144,7 +247,7 @@ const styles = StyleSheet.create({
   placeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SPACING.sm,
+    // use margins on child elements instead of gap
   },
   placeAddress: {
     fontSize: 13,
@@ -166,7 +269,7 @@ const styles = StyleSheet.create({
   leftCol: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SPACING.xs,
+    // spacing handled by margin on ratingText and stars
   },
   ratingRow: {
     flexDirection: 'row',
@@ -174,14 +277,14 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   ratingText: {
-    color: COLORS.accent,
+    color: COLORS.ratingAlt,
     fontWeight: '600',
     marginLeft: 6,
   },
   moodTags: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SPACING.xs,
+    // use marginRight on each mood tag
   },
   moodTag: {
     backgroundColor: 'rgba(0,163,255,0.08)',
@@ -190,6 +293,7 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.xs,
     borderWidth: 1,
     borderColor: 'rgba(0,163,255,0.12)',
+    marginRight: SPACING.xs,
   },
   moodTagText: {
     fontSize: 11,
