@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { likePlaceAPI, getLikedPlacesAPI, getPlaceByIdAPI } from '@/services/api';
+import { translatePlaceType } from '../constants/placeTypes';
 import { useAuth } from './AuthContext';
 
 type PlaceDetail = any;
@@ -54,11 +55,19 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const remote = (await getLikedPlacesAPI(token)) || [];
       const enriched = await Promise.all(remote.map(async (p: any) => {
         const id = p.placeId || p._id || p.id;
+        let base = p;
         if (!p.name || !p.type) {
           const d = id ? await getPlaceDetails(id) : null;
-          return { ...p, ...(d || {}) };
+          base = { ...p, ...(d || {}) };
         }
-        return p;
+
+        // normalize/translate moods/type to Vietnamese labels for UI consistency
+        let moods: string[] = [];
+        if (Array.isArray(base.moods) && base.moods.length) moods = base.moods.map((m: string) => translatePlaceType(m));
+        else if (base.mood) moods = [translatePlaceType(base.mood)];
+        else if (base.type) moods = [translatePlaceType(base.type)];
+
+        return { ...base, moods };
       }));
       setFavorites(enriched);
       const ids = new Set<string>(enriched.map((p: any) => p.google_place_id || p.googlePlaceId || p.placeId || p.id || p._id).filter(Boolean) as string[]);

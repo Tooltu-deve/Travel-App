@@ -2,6 +2,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { COLORS, SPACING } from '../../constants';
+import { translatePlaceType } from '../../constants/placeTypes';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { getPlacesAPI } from '@/services/api';
 
@@ -29,6 +30,12 @@ export const ReviewCard: React.FC = () => {
     return [];
   };
 
+  // ensure derived moods are translated to Vietnamese labels where possible
+  const deriveAndTranslateMoods = (p: any): string[] => {
+    const m = deriveMoods(p) || [];
+    return m.map((x) => translatePlaceType(x));
+  };
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -54,7 +61,7 @@ export const ReviewCard: React.FC = () => {
               placeId: p._id?.toString() || p.placeId,
               name: p.name || p.title || 'Không rõ',
               address: addr,
-              moods: deriveMoods(p),
+              moods: deriveAndTranslateMoods(p),
               googlePlaceId: p.googlePlaceId || p.google_place_id || '',
               rating: ratingVal,
             });

@@ -6,8 +6,9 @@ import { FontAwesome } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { getMoodsAPI } from '../../services/api';
+import { getMoodsAPI, getFavoritesByMoodAPI } from '../../services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
+import { translatePlaceType } from '../../constants/placeTypes';
 
 // Small helper to render star icons for a rating (0-5) using gold color
 const renderStars = (rating?: number | null) => {
@@ -66,6 +67,11 @@ const normalizePlace = (p: any) => {
     }
   }
 
+  // translate known backend keys to Vietnamese labels
+  if (moods && moods.length) {
+    moods = moods.map((m) => translatePlaceType(m));
+  }
+
   const name = p.name || p.title || p.name_en || p.googlePlaceId || p.google_place_id || p.address || 'Không rõ';
 
   // Ensure we only use string values for address (location may be GeoJSON object)
@@ -92,7 +98,7 @@ const normalizePlace = (p: any) => {
 };
 
 const FavoritesScreen: React.FC = () => {
-  const [moods, setMoods] = useState<string[]>([]);
+  const [moods, setMoods] = useState<Array<{ key: string; label: string }>>([]);
   const [selectedMood, setSelectedMood] = useState<string>('all');
   const { favorites: ctxFavorites, toggleLike, refreshFavorites } = useFavorites();
   const [favorites, setFavorites] = useState<any[]>([]);
@@ -107,15 +113,18 @@ const FavoritesScreen: React.FC = () => {
       try {
         const token = await AsyncStorage.getItem('userToken');
         if (!token) {
-          setMoods(['all']);
+           setMoods([{ key: 'all', label: 'Tất cả' }]);
           return;
         }
         const res = await getMoodsAPI(token);
-        const list = Array.isArray(res?.moods) ? ['all', ...res.moods] : ['all'];
+        const raw = Array.isArray(res?.moods) ? res.moods : [];
+        // translate mood/type keys to Vietnamese labels for UI and keep original keys
+        const translated = raw.map((m: string) => ({ key: String(m), label: translatePlaceType(m) }));
+        const list = [{ key: 'all', label: 'Tất cả' }, ...translated];
         setMoods(list);
       } catch (e: any) {
         setError(e?.message || 'Không thể tải danh sách thể loại');
-        setMoods(['all']);
+          setMoods([{ key: 'all', label: 'Tất cả' }]);
       } finally {
         setIsLoading(false);
       }
@@ -125,18 +134,42 @@ const FavoritesScreen: React.FC = () => {
 
   // derive displayed favorites from context + selectedMood
   useEffect(() => {
-    setIsLoading(true);
-    try {
-      const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
-      const mapped = list.map(normalizePlace);
-      if (selectedMood === 'all') setFavorites(mapped);
-      else setFavorites(mapped.filter((p) => p.moods && p.moods.includes(selectedMood)));
-    } catch (e: any) {
-      setError(e?.message || 'Không thể tải địa điểm yêu thích');
-      setFavorites([]);
-    } finally {
-      setIsLoading(false);
-    }
+    let mounted = true;
+    (async () => {
+      setIsLoading(true);
+      try {
+        if (selectedMood === 'all') {
+          const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
+          const mapped = list.map(normalizePlace);
+          if (!mounted) return;
+          setFavorites(mapped);
+          return;
+        }
+
+        // call backend to get favorites filtered by mood key
+        const token = await AsyncStorage.getItem('userToken');
+        if (!token) {
+          setFavorites([]);
+          return;
+        }
+        const remote = await getFavoritesByMoodAPI(token, selectedMood);
+        if (!mounted) return;
+        if (Array.isArray(remote)) {
+          const mapped = remote.map((p: any) => normalizePlace(p));
+          setFavorites(mapped);
+        } else {
+          setFavorites([]);
+        }
+      } catch (e: any) {
+        setError(e?.message || 'Không thể tải địa điểm yêu thích');
+        setFavorites([]);
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, [ctxFavorites, selectedMood]);
 
   const handleLikePlace = async (placeId: string, googlePlaceId?: string) => {
@@ -210,15 +243,15 @@ const FavoritesScreen: React.FC = () => {
         {error && <Text style={styles.error}>{error}</Text>}
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: SPACING.sm, marginBottom: SPACING.md }} contentContainerStyle={{ paddingHorizontal: 4 }}>
-          {moods.map(mood => (
-            <TouchableOpacity
-              key={mood}
-              style={[styles.moodButton, selectedMood === mood && styles.moodButtonSelected]}
-              onPress={() => setSelectedMood(mood)}
-            >
-              <Text style={[styles.moodText, selectedMood === mood && { color: '#fff' }]}>{mood === 'all' ? 'Tất cả' : mood}</Text>
-            </TouchableOpacity>
-          ))}
+            {moods.map((mood) => (
+              <TouchableOpacity
+                key={mood.key}
+                style={[styles.moodButton, selectedMood === mood.key && styles.moodButtonSelected]}
+                onPress={() => setSelectedMood(mood.key)}
+              >
+                <Text style={[styles.moodText, selectedMood === mood.key && { color: '#fff' }]}>{mood.label}</Text>
+              </TouchableOpacity>
+            ))}
         </ScrollView>
 
         <Text style={styles.sectionTitle}>Địa điểm yêu thích - Tất cả</Text>
@@ -252,11 +285,11 @@ const styles = StyleSheet.create({
   moodPillText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
   placeRating: { color: COLORS.ratingAlt, marginLeft: 8, fontWeight: '700' },
   heartFloat: { width: 38, height: 38, borderRadius: 20, backgroundColor: COLORS.textWhite, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 4, marginLeft: 12 },
-  topHeader: { paddingTop: (Constants.statusBarHeight || 0) + SPACING.sm, paddingBottom: SPACING.md },
+  topHeader: { paddingTop: (Constants.statusBarHeight || 0) + SPACING.lg, paddingBottom: SPACING.lg },
   headerRow: { flexDirection: 'row', alignItems: 'center' },
-  titleIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,99,99,0.12)', justifyContent: 'center', alignItems: 'center' },
-  titleMain: { fontSize: 20, fontWeight: '800', color: COLORS.textDark },
-  titleSub: { fontSize: 13, color: COLORS.primary, marginTop: 4 },
+  titleIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,99,99,0.12)', justifyContent: 'center', alignItems: 'center' },
+  titleMain: { fontSize: 24, fontWeight: '900', color: COLORS.textDark },
+  titleSub: { fontSize: 14, color: COLORS.primary, marginTop: 6 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textDark, marginBottom: SPACING.sm, marginTop: SPACING.md },
 });
 
