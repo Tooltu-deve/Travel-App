@@ -156,3 +156,5 @@ export const categories = [
   { id: '8', name: 'Sự kiện', icon: 'calendar' },
   { id: '9', name: 'Đặc sản', icon: 'gift' },
 ];
+
+export default {}; // Add default export to satisfy expo-router

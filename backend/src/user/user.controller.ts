@@ -31,4 +31,5 @@ export class UserController {
     // req.user.userId được lấy từ JWT token
     return this.userService.updatePreferences(userId, dto);
   }
+
 }
