@@ -162,6 +162,7 @@ export class ItineraryController {
       start_datetime: routeObject.start_datetime || null,
       status: routeObject.status,
       route_data_json: routeObject.route_data_json,
+      alerts: routeObject.alerts || [],
       id: routeObject._id.toString(),
     };
   }

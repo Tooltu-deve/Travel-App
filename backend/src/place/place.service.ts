@@ -14,8 +14,14 @@ export class PlaceService {
     ) { }
 
     async upsertPlace(placeData: PlaceSeedDto): Promise<PlaceDocument> {
-        const { placeID, name, formatted_address, location, emotional_tags, ...restData } =
-            placeData;
+        const {
+            placeID,
+            name,
+            formatted_address,
+            location,
+            emotional_tags,
+            ...restData
+        } = placeData;
 
         const placePayload = {
             googlePlaceId: placeID,
@@ -29,6 +35,7 @@ export class PlaceService {
 
             // Đưa các dữ liệu còn lại vào
             type: restData.type,
+            types: restData.types,
             budgetRange: restData.budget_range,
             openingHours: restData.opening_hours
                 ? {

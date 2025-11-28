@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import os
 import requests
 from dotenv import load_dotenv
@@ -9,6 +9,8 @@ import math
 from datetime import datetime, timedelta
 from copy import deepcopy
 import time
+import numpy as np
+from sklearn.cluster import KMeans
 
 # --- 1. KHỞI TẠO VÀ CẤU HÌNH ---
 load_dotenv()
@@ -24,7 +26,7 @@ MOOD_WEIGHTS = {
     },
     "Náo nhiệt & Xã hội": {
         "lively": 1.0, "festive": 0.9, "touristy": 0.7,
-        "peaceful": -0.9, "scenic": -0.7, "spiritual": -0.6
+        "peaceful": -0.9, "spiritual": -0.6
     },
     "Lãng mạn & Riêng tư": {
         "romantic": 1.0, "scenic": 0.8, "peaceful": 0.7,
@@ -32,18 +34,18 @@ MOOD_WEIGHTS = {
     },
     "Điểm thu hút khách du lịch": {
         "touristy": 1.0, "lively": 0.8, "festive": 0.7,
-        "peaceful": -0.9, "local_gem": -0.8, "spiritual": -0.6
+        "local_gem": -0.8, "spiritual": -0.6
     },
     "Mạo hiểm & Thú vị": {
         "adventurous": 1.0, "scenic": 0.8, "seaside": 0.7,
-        "peaceful": -0.9, "spiritual": -0.7, "historical": -0.6
+        "peaceful": -0.9, "spiritual": -0.7
     },
     "Gia đình & Thoải mái": {
         "family-friendly": 1.0, "scenic": 0.8, "peaceful": 0.7,
-        "adventurous": -0.8, "romantic": -0.7, "festive": -0.6
+        "adventurous": -0.8, "festive": -0.6
     },
     "Hiện đại & Sáng tạo": {
-        "modern": 1.0, "lively": 0.7,
+        "modern": 1.0, "lively": 0.7, "adventurous": 0.5,
         "historical": -1.0, "spiritual": -0.8, "local_gem": -0.7
     },
     "Tâm linh & Tôn giáo": {
@@ -64,7 +66,7 @@ MOOD_WEIGHTS = {
     },
     "Ven biển & Nghỉ dưỡng": {
         "seaside": 1.0, "scenic": 0.9, "peaceful": 0.8,
-        "adventurous": -0.7, "historical": -0.6, "spiritual": -0.5
+        "historical": -0.6, "spiritual": -0.5
     },
 }
 
@@ -93,7 +95,7 @@ class OptimizerRequest(BaseModel):
     current_location: Dict[str, float]  # { lat, lng } - vị trí hiện tại của user
     start_datetime: Optional[str] = None  # ISO 8601 datetime bắt đầu chuyến đi
     # Ngưỡng ECS tối thiểu (chỉ giữ POI có ecs_score > threshold này)
-    ecs_score_threshold: float = 0.0
+    ecs_score_threshold: float = 0.2
     # Ma trận ETA (phút) giữa các POIs, ví dụ: { "poiA": { "poiB": 12, ... }, ... }
     eta_matrix: Optional[Dict[str, Dict[str, float]]] = None
     # ETA từ vị trí hiện tại đến từng POI, ví dụ: { "poiA": 8, "poiB": 15 }
@@ -334,6 +336,36 @@ async def optimize_route_endpoint(request: OptimizerRequest):
 
     def get_poi_id(p: Dict[str, Any]) -> str:
         return p.get('google_place_id') or p.get('id') or p.get('_id')
+
+    def get_poi_types(poi: Dict[str, Any]) -> List[str]:
+        result: List[str] = []
+        poi_type = poi.get('type')
+        if isinstance(poi_type, str):
+            result.append(poi_type.lower())
+        types_field = poi.get('types')
+        if isinstance(types_field, list):
+            result.extend([str(t).lower() for t in types_field])
+        elif isinstance(types_field, str):
+            result.append(types_field.lower())
+        return list({t for t in result if t})
+
+    def is_restaurant_poi(poi: Dict[str, Any]) -> bool:
+        types = get_poi_types(poi)
+        restaurant_keywords = {'restaurant', 'food', 'dining', 'cafe', 'coffee', 'bakery'}
+        return any(keyword in types for keyword in restaurant_keywords)
+
+    def within_start_radius(poi: Dict[str, Any], max_distance_km: float) -> bool:
+        location = poi.get('location', {}) or {}
+        lat = location.get('lat')
+        lng = location.get('lng')
+        if lat is None or lng is None:
+            return False
+        start_lat = request.current_location.get('lat')
+        start_lng = request.current_location.get('lng')
+        if start_lat is None or start_lng is None:
+            return False
+        distance = haversine_km(lat, lng, start_lat, start_lng)
+        return distance <= max_distance_km
     
     def calculate_ecs_score(poi: Dict[str, Any], mood: str) -> float:
         """Tính ECS score cho một POI dựa trên mood"""
@@ -380,20 +412,118 @@ async def optimize_route_endpoint(request: OptimizerRequest):
     candidates = sorted(high_score_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
     print(f"Bước 4: Sắp xếp {len(candidates)} POI theo ECS score...")
 
-    # BƯỚC 5: Phân bổ POI theo ngày (TRƯỚC khi tối ưu lộ trình)
-    print(f"Bước 5: Phân bổ POI vào {request.duration_days} ngày (trước khi tối ưu lộ trình)...")
+    # BƯỚC 5: Chọn toàn bộ POI và gom nhóm bằng K-means
+    print(f"Bước 5: Gom nhóm tất cả {len(candidates)} POI bằng K-means sau khi áp dụng ECS threshold...")
     pois_per_day = 3
-    num_pois_total = request.duration_days * pois_per_day
-    selected_pois = candidates[:num_pois_total]  # Chọn POI có ECS cao nhất
-    print(f"  → Chọn {len(selected_pois)} POI từ {len(candidates)} POI có sẵn")
-    
-    # Phân bổ POI vào các ngày
+    total_pois_needed = request.duration_days * pois_per_day
+    radius_limit_km = 10.0
+
+    # Lọc POI theo bán kính 10km từ vị trí bắt đầu
+    pois_within_radius: List[Dict[str, Any]] = []
+    for poi in candidates:
+        if within_start_radius(poi, radius_limit_km):
+            pois_within_radius.append(poi)
+    print(f"  → {len(pois_within_radius)} POI nằm trong bán kính {radius_limit_km}km từ vị trí bắt đầu.")
+
+    if not pois_within_radius:
+        print("❌ Không có POI nào trong bán kính yêu cầu. Không thể tạo lộ trình.")
+        return {"optimized_route": []}
+
+    selected_pois = pois_within_radius
+
+    poi_coordinates: List[List[float]] = []
+    poi_indices: List[int] = []
+    for idx, poi in enumerate(selected_pois):
+        location = poi.get('location', {})
+        lat = location.get('lat')
+        lng = location.get('lng')
+        if lat is not None and lng is not None:
+            poi_coordinates.append([lat, lng])
+            poi_indices.append(idx)
+
+    if not poi_coordinates:
+        print("❌ Không có POI nào có tọa độ hợp lệ sau khi lọc bán kính.")
+        return {"optimized_route": []}
+
+    num_clusters = min(max(request.duration_days, 1), len(poi_coordinates))
+    print(f"  → Thực hiện K-means với {num_clusters} cluster.")
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
+    cluster_labels = kmeans.fit_predict(np.array(poi_coordinates))
+
+    clusters: Dict[int, List[Dict[str, Any]]] = {}
+    for cluster_id, poi_idx in zip(cluster_labels, poi_indices):
+        clusters.setdefault(cluster_id, []).append(selected_pois[poi_idx])
+
+    sorted_clusters = sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)
+
+    cluster_sequences: List[Tuple[int, List[Dict[str, Any]]]] = []
+    for cluster_id, cluster_pois in sorted_clusters:
+        non_restaurant_pois = [p for p in cluster_pois if not is_restaurant_poi(p)]
+        if not non_restaurant_pois:
+            print(f"  ⚠️  Cluster {cluster_id} chỉ toàn nhà hàng. Bỏ qua.")
+            continue
+        sorted_list = sorted(non_restaurant_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
+        cluster_sequences.append((cluster_id, sorted_list))
+        print(f"  → Cluster {cluster_id} có {len(sorted_list)} POI (loại nhà hàng).")
+
+    global_pool = sorted(
+        [p for p in selected_pois if not is_restaurant_poi(p)],
+        key=lambda p: p.get('ecs_score', 0),
+        reverse=True,
+    )
+    global_pointer = 0
+    used_poi_ids: set = set()
+
+    def pick_from_global() -> Optional[Dict[str, Any]]:
+        nonlocal global_pointer
+        while global_pointer < len(global_pool):
+            poi = global_pool[global_pointer]
+            global_pointer += 1
+            pid = get_poi_id(poi)
+            if pid and pid not in used_poi_ids:
+                return poi
+        return None
+
+    cluster_pointers: Dict[int, int] = {cluster_id: 0 for cluster_id, _ in cluster_sequences}
     daily_poi_groups: List[List[Dict[str, Any]]] = []
-    for i in range(request.duration_days):
-        day_pois = selected_pois[i * pois_per_day : (i + 1) * pois_per_day]
+    cluster_count = len(cluster_sequences)
+
+    for day in range(request.duration_days):
+        day_pois: List[Dict[str, Any]] = []
+        if cluster_count > 0:
+            attempts = 0
+            start_idx = day % cluster_count
+            while len(day_pois) < pois_per_day and attempts < cluster_count * pois_per_day:
+                cluster_id, cluster_list = cluster_sequences[(start_idx + attempts) % cluster_count]
+                ptr = cluster_pointers[cluster_id]
+                while ptr < len(cluster_list):
+                    poi = cluster_list[ptr]
+                    ptr += 1
+                    pid = get_poi_id(poi)
+                    if pid and pid not in used_poi_ids:
+                        day_pois.append(poi)
+                        used_poi_ids.add(pid)
+                        break
+                cluster_pointers[cluster_id] = ptr
+                if len(day_pois) >= pois_per_day:
+                    break
+                attempts += 1
+
+        while len(day_pois) < pois_per_day:
+            fallback_poi = pick_from_global()
+            if not fallback_poi:
+                break
+            pid = get_poi_id(fallback_poi)
+            if pid and pid not in used_poi_ids:
+                day_pois.append(fallback_poi)
+                used_poi_ids.add(pid)
+
         if day_pois:
             daily_poi_groups.append(day_pois)
-            print(f"  → Ngày {i + 1}: {len(day_pois)} POI (chưa tối ưu)")
+            print(f"  → Ngày {day + 1}: {len(day_pois)} POI được chọn.")
+        else:
+            print(f"  ⚠️  Ngày {day + 1}: Không có POI nào được phân bổ.")
+            daily_poi_groups.append([])
 
     # Hàm helper để tính ETA giữa 2 POI
     def eta_between(a_id: str, b_id: str, fallback_list: Optional[List[Dict[str, Any]]] = None) -> float:
