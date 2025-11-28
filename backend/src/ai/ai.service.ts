@@ -372,4 +372,104 @@ export class AiService {
             );
         }
     }
+
+    /**
+     * Enrich itinerary với Google Directions API
+     * Thêm encoded_polyline và travel_duration_minutes cho mỗi leg
+     */
+    async enrichItineraryWithDirections(userId: string, itineraryId: string): Promise<AiItineraryDocument> {
+        try {
+            const itinerary = await this.aiItineraryModel.findOne({
+                _id: itineraryId,
+                userId,
+            }).exec();
+
+            if (!itinerary) {
+                throw new HttpException('Itinerary not found', HttpStatus.NOT_FOUND);
+            }
+
+            // Get Google Directions API key
+            const googleApiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY') ||
+                this.configService.get<string>('GOOGLE_DIRECTIONS_API_KEY');
+
+            if (!googleApiKey) {
+                this.logger.warn('Google API key not found, skipping enrichment');
+                return itinerary;
+            }
+
+            // Enrich each day's activities with directions
+            const enrichedItinerary = [...itinerary.itinerary];
+            let previousLocation: { lat: number; lng: number } | null = null;
+
+            for (let i = 0; i < enrichedItinerary.length; i++) {
+                const activity = enrichedItinerary[i];
+                const place = activity.place;
+
+                if (!place || !place.location || !place.location.coordinates) {
+                    continue;
+                }
+
+                const [lng, lat] = place.location.coordinates;
+                const currentLocation = { lat, lng };
+
+                // Get directions from previous location (if exists)
+                if (previousLocation) {
+                    try {
+                        const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?` +
+                            `origin=${previousLocation.lat},${previousLocation.lng}&` +
+                            `destination=${currentLocation.lat},${currentLocation.lng}&` +
+                            `mode=driving&key=${googleApiKey}`;
+
+                        const response = await firstValueFrom(
+                            this.httpService.get(directionsUrl, { timeout: 10000 })
+                        );
+
+                        const data = response.data;
+
+                        if (data.status === 'OK' && data.routes && data.routes.length > 0) {
+                            const route = data.routes[0];
+                            const leg = route.legs[0];
+                            const overviewPolyline = route.overview_polyline?.points;
+                            const durationSeconds = leg.duration?.value || 0;
+                            const travelDurationMinutes = durationSeconds > 0 ? durationSeconds / 60.0 : undefined;
+
+                            // Add directions info to activity
+                            enrichedItinerary[i] = {
+                                ...activity,
+                                encoded_polyline: overviewPolyline,
+                                travel_duration_minutes: travelDurationMinutes,
+                                distance_meters: leg.distance?.value || undefined,
+                                distance_text: leg.distance?.text || undefined,
+                            };
+                        }
+                    } catch (directionsError) {
+                        this.logger.warn(`Failed to get directions for activity ${i}: ${directionsError.message}`);
+                        // Continue without directions for this leg
+                    }
+                }
+
+                previousLocation = currentLocation;
+            }
+
+            // Update itinerary with enriched data
+            itinerary.itinerary = enrichedItinerary;
+            itinerary.metadata = {
+                ...itinerary.metadata,
+                directions_enriched: true,
+                enriched_at: new Date().toISOString(),
+            };
+
+            await itinerary.save();
+
+            this.logger.log(`Successfully enriched itinerary ${itineraryId} with directions`);
+            return itinerary;
+
+        } catch (error) {
+            this.logger.error(`Failed to enrich itinerary: ${error.message}`);
+            throw new HttpException(
+                'Failed to enrich itinerary with directions',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
 }

@@ -76,21 +76,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const token = await AsyncStorage.getItem('userToken');
         
         if (token) {
-          console.log('✅ Token found, validating...');
+          console.log('✅ Token found');
           
-          // Validate token với backend
-          const response = await validateTokenAPI(token);
-          
-          if (response.success && response.user) {
-            // Token hợp lệ → Đăng nhập user
-            console.log('✅ Token valid, user authenticated');
-            setUserData(response.user);
+          // Skip validation since backend doesn't have /validate endpoint
+          // Assume token is valid if exists
+          const userDataStr = await AsyncStorage.getItem('userData');
+          if (userDataStr) {
+            const userDataParsed = JSON.parse(userDataStr);
+            setUserData(userDataParsed);
             setIsAuthenticated(true);
+            console.log('✅ User authenticated from stored data');
           } else {
-            // Token không hợp lệ → Clear storage
-            console.log('❌ Token invalid, clearing storage');
+            // No userData, clear token
             await AsyncStorage.removeItem('userToken');
-            await AsyncStorage.removeItem('userData');
+            console.log('❌ No userData, clearing token');
           }
         } else {
           console.log('ℹ️ No token found');

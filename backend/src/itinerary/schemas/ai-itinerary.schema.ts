@@ -50,6 +50,15 @@ export class AiItinerary {
         duration_minutes?: number;
         estimated_cost?: number;
         notes?: string;
+        // New fields for AI Optimizer integration
+        ecs_score?: number;
+        estimated_arrival?: string;
+        estimated_departure?: string;
+        // New fields for Google Directions enrichment
+        encoded_polyline?: string;
+        travel_duration_minutes?: number;
+        distance_meters?: number;
+        distance_text?: string;
     }>;
 
     @Prop({ type: Object })
@@ -61,6 +70,9 @@ export class AiItinerary {
         total_estimated_cost?: number;
         total_duration?: string;
         weather_conditions?: object;
+        // New field for tracking Directions API enrichment
+        directions_enriched?: boolean;
+        enriched_at?: string;
     };
 
     @Prop({ type: String, enum: ['draft', 'completed', 'saved', 'archived'], default: 'completed' })
