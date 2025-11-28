@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { FavoritesService } from './favorites.service';
-import { FavoritesController } from './favorites.controller';
+import { FavoritesService } from './likes.service';
+import { FavoritesController } from './likes.controller';
 import { User, UserSchema } from '../user/schemas/user.schema';
 import { Place, PlaceSchema } from '../place/schemas/place.schema';
 
