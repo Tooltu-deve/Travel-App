@@ -111,13 +111,13 @@ const HomeScreen: React.FC = () => {
 
   return (
     <LinearGradient
-      colors={darkMode ? ['#121212', '#121212'] : [COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={darkMode ? [0, 1] : [0, 0.3, 0.6, 1]}
+      colors={darkMode ? ['#121212', '#121212'] : ['#e6f6ff', '#ccecff']}
+      locations={darkMode ? [0, 1] : [0, 1]}
       style={homeStyles.gradientContainer}
     >
       <ScrollView 
         ref={scrollViewRef}
-        style={{flex:1, backgroundColor: darkMode ? '#121212' : '#fff'}}
+        style={{flex:1, backgroundColor: darkMode ? '#121212' : 'transparent'}}
         showsVerticalScrollIndicator={false}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
@@ -134,16 +134,23 @@ const HomeScreen: React.FC = () => {
             <Text style={[homeStyles.welcomeText, {color: darkMode ? '#E0E0E0' : '#1F2937'}]}>Welcome !</Text>
             <Text style={[homeStyles.subtitleText, darkMode && {color:'#E0E0E0'}]}>Trần Minh Thanh</Text>
           </Animated.View>
-          <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}>
+          <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}> 
             <SearchBar onExpandChange={setIsSearchExpanded} />
-            <TouchableOpacity style={homeStyles.headerButton}>
-              <FontAwesome name="cog" size={22} color={darkMode ? '#4DD0E1' : COLORS.primary} />
+            <TouchableOpacity style={[homeStyles.headerButton, { backgroundColor: '#fff', borderColor: COLORS.borderLight, shadowColor: COLORS.primary, shadowOpacity: 0.08, shadowRadius: 8, elevation: 4 }]}> 
+              <FontAwesome name="cog" size={22} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
         </View>
 
-        <View style={[homeStyles.featuredSection, darkMode && {backgroundColor:'#1E1E1E'}]}>
-          <Text style={[homeStyles.featuredTitle, darkMode && {color:'#E0E0E0'}]}>Điểm đến nổi bật</Text>
+        <View style={homeStyles.featuredSection}>
+          <Text style={[homeStyles.featuredTitle, {
+            color: darkMode ? COLORS.primary : '#222',
+            backgroundColor: 'transparent',
+            fontWeight: 'bold',
+            textShadowColor: darkMode ? 'rgba(0,163,255,0.25)' : 'rgba(0,163,255,0.25)',
+            textShadowOffset: { width: 0, height: 4 },
+            textShadowRadius: 8,
+          }]}>Điểm đến nổi bật</Text>
         </View>
 
         <View style={[homeStyles.carouselWrapper, darkMode && {backgroundColor:'#1E1E1E'}]}>
