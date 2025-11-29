@@ -1,15 +1,3 @@
-// Handler: Xóa avatar
-const handleDeleteAvatar = async () => {
-  try {
-    const token = await AsyncStorage.getItem('userToken');
-    if (!token) throw new Error('No token');
-    await deleteAvatarAPI(token);
-    setAvatar('');
-    Alert.alert('Thành công', 'Đã xóa avatar');
-  } catch (error) {
-    Alert.alert('Lỗi', 'Không thể xóa avatar');
-  }
-};
 // Handler: Đổi mật khẩu
 const handleChangePassword = async (oldPassword: string, newPassword: string) => {
   try {
@@ -27,8 +15,8 @@ import { SPACING } from '@/constants';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Image,
@@ -49,7 +37,7 @@ const LANGUAGES = [
   { code: 'en', label: 'English', icon: '🇬🇧' },
 ];
 
-import { getProfileAPI, updateProfileAPI, changePasswordAPI, deleteAvatarAPI } from '@/services/api';
+import { changePasswordAPI, getProfileAPI, updateProfileAPI } from '@/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ProfileScreen: React.FC = () => {
@@ -172,7 +160,7 @@ const handleSave = async () => {
         <Text style={[styles.sectionTitle, darkMode && {color:'#fff'}]}>Cài đặt chung</Text>
         <View style={[styles.menuRow, darkMode && {borderBottomColor:'#363A45'}]}>
           <MaterialCommunityIcons name="palette" size={22} color={darkMode ? '#fff' : '#2196F3'} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkMode && {color:'#fff'}, {flex:1}]}>Dark mode</Text>
+          <Text style={[styles.menuText, darkMode && {color:'#fff'}, {flex:1}]}>Chế độ tối</Text>
           <Switch
             value={darkMode}
             onValueChange={setDarkMode}
@@ -229,11 +217,14 @@ const handleSave = async () => {
           <Text style={[styles.menuText, darkMode && {color:'#fff'}]}>Đánh giá ứng dụng</Text>
           <MaterialCommunityIcons name="chevron-right" size={22} color={darkMode ? '#fff' : '#9CA3AF'} style={styles.menuChevron} />
         </View>
-        <View style={[styles.menuRow, darkMode && {borderBottomColor:'#363A45'}]}>
+        <TouchableOpacity
+          style={[styles.menuRow, darkMode && {borderBottomColor:'#363A45'}]}
+          onPress={() => router.push('/(account)/faq-profile')}
+        >
           <MaterialCommunityIcons name="help-circle-outline" size={22} color={darkMode ? '#fff' : '#2196F3'} style={styles.menuIcon} />
           <Text style={[styles.menuText, darkMode && {color:'#fff'}]}>FAQ</Text>
           <MaterialCommunityIcons name="chevron-right" size={22} color={darkMode ? '#fff' : '#9CA3AF'} style={styles.menuChevron} />
-        </View>
+        </TouchableOpacity>
         <View style={[styles.menuRow, darkMode && {borderBottomColor:'#363A45'}]}>
           <MaterialCommunityIcons name="file-document-outline" size={22} color={darkMode ? '#fff' : '#2196F3'} style={styles.menuIcon} />
           <Text style={[styles.menuText, darkMode && {color:'#fff'}]}>Điều khoản sử dụng</Text>
