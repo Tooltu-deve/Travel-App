@@ -1,8 +1,8 @@
-import { Controller, Get, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Request, UseGuards, Body, Patch } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { UserService } from './user.service';
-import { Body, Patch } from '@nestjs/common';
 import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 @Controller('users')
 export class UserController {
@@ -30,5 +30,20 @@ export class UserController {
     const userId = req.user.userId;
     // req.user.userId được lấy từ JWT token
     return this.userService.updatePreferences(userId, dto);
+  }
+
+  // Thêm endpoint cập nhật thông tin cá nhân
+  @UseGuards(JwtAuthGuard)
+  @Patch('profile')
+  async updateProfile(@Request() req, @Body() dto: UpdateUserDto) {
+    const userId = req.user.userId;
+    const updated = await this.userService.update(userId, dto);
+    if (!updated) {
+      return { error: 'User not found' };
+    }
+    // Xóa password trước khi trả về
+    const plain: any = typeof (updated as any).toObject === 'function' ? (updated as any).toObject() : { ...(updated as any) };
+    delete plain.password;
+    return { user: plain };
   }
 }

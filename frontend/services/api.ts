@@ -404,12 +404,17 @@ const updateProfileAPI = async (
     gender?: string;
   }
 ): Promise<any> => {
+  // Nếu avatar là chuỗi rỗng, loại bỏ khỏi payload
+  const cleanData = { ...data };
+  if (cleanData.avatar === '') {
+    delete cleanData.avatar;
+  }
   return makeRequest<any>('/api/v1/profile', {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(data),
+    body: JSON.stringify(cleanData),
   });
 };
 
