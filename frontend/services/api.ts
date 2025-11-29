@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Render Cloud URL
+const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
 
 // ============================================
 // TYPES
@@ -376,6 +376,64 @@ export const getRoutesAPI = async (
 // ============================================
 // EXPORT
 // ============================================
+
+
+// ================= PROFILE APIs =================
+/**
+ * getProfileAPI: Lấy thông tin cá nhân
+ * Endpoint: GET /api/v1/profile
+ * @param token - JWT token
+ */
+const getProfileAPI = async (token: string): Promise<any> => {
+  return makeRequest<any>('/api/v1/profile', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+const updateProfileAPI = async (
+  token: string,
+  data: {
+    fullName?: string;
+    avatar?: string;
+    dob?: string;
+    address?: string;
+    phone?: string;
+    gender?: string;
+  }
+): Promise<any> => {
+  return makeRequest<any>('/api/v1/profile', {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+};
+
+const changePasswordAPI = async (token: string, data: { currentPassword: string; newPassword: string }): Promise<any> => {
+  return makeRequest<any>('/api/v1/profile/password', {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+};
+
+const deleteAvatarAPI = async (token: string): Promise<any> => {
+  return makeRequest<any>('/api/v1/profile/avatar', {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+
+// Export default and named exports after all declarations
 export default {
   loginAPI,
   registerAPI,
@@ -386,4 +444,15 @@ export default {
   updateRouteStatusAPI,
   deleteRouteAPI,
   getRoutesAPI,
+  getProfileAPI,
+  updateProfileAPI,
+  changePasswordAPI,
+  deleteAvatarAPI,
+};
+
+export {
+  getProfileAPI,
+  updateProfileAPI,
+  changePasswordAPI,
+  deleteAvatarAPI,
 };
