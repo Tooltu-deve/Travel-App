@@ -76,20 +76,39 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const token = await AsyncStorage.getItem('userToken');
         
         if (token) {
-          console.log('✅ Token found');
+          console.log('✅ Token found, validating...');
           
-          // Skip validation since backend doesn't have /validate endpoint
-          // Assume token is valid if exists
-          const userDataStr = await AsyncStorage.getItem('userData');
-          if (userDataStr) {
-            const userDataParsed = JSON.parse(userDataStr);
-            setUserData(userDataParsed);
-            setIsAuthenticated(true);
-            console.log('✅ User authenticated from stored data');
-          } else {
-            // No userData, clear token
-            await AsyncStorage.removeItem('userToken');
-            console.log('❌ No userData, clearing token');
+          // Validate token by calling a protected endpoint
+          const { getMoodsAPI } = await import('@/services/api');
+          try {
+            await getMoodsAPI(token);
+            // If successful, token is valid
+            const userDataStr = await AsyncStorage.getItem('userData');
+            if (userDataStr) {
+              const userDataParsed = JSON.parse(userDataStr);
+              setUserData(userDataParsed);
+              setIsAuthenticated(true);
+              console.log('✅ User authenticated and token valid');
+            } else {
+              await AsyncStorage.removeItem('userToken');
+              console.log('❌ No userData, clearing token');
+            }
+          } catch (error: any) {
+            // If 401, token invalid, clear storage
+            if (error.message?.includes('401') || error.status === 401) {
+              console.log('❌ Token invalid, clearing storage');
+              await AsyncStorage.removeItem('userToken');
+              await AsyncStorage.removeItem('userData');
+            } else {
+              // Other error, assume token valid for now
+              const userDataStr = await AsyncStorage.getItem('userData');
+              if (userDataStr) {
+                const userDataParsed = JSON.parse(userDataStr);
+                setUserData(userDataParsed);
+                setIsAuthenticated(true);
+                console.log('✅ User authenticated (validation failed but assuming valid)');
+              }
+            }
           }
         } else {
           console.log('ℹ️ No token found');

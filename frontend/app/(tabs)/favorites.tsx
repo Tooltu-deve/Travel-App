@@ -175,7 +175,7 @@ const FavoritesScreen: React.FC = () => {
       try {
         if (selectedMood === 'all') {
           const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
-          const mapped = list.map(normalizePlace).sort((a, b) => a.id.localeCompare(b.id));
+          const mapped = list.map(normalizePlace).filter(p => p.name !== 'Không rõ').sort((a, b) => a.id.localeCompare(b.id));
           if (!mounted) return;
           setFavorites(mapped);
           return;
@@ -215,7 +215,13 @@ const FavoritesScreen: React.FC = () => {
       // refresh context in background
       refreshFavorites().catch(() => {});
     } catch (e: any) {
-      setError(e?.message || 'Không thể cập nhật yêu thích');
+      // If the place doesn't exist, still remove locally
+      if (e?.message?.includes('Place không tồn tại')) {
+        setFavorites((prev) => prev.filter((p) => p.id !== placeId));
+        refreshFavorites().catch(() => {});
+      } else {
+        setError(e?.message || 'Không thể cập nhật yêu thích');
+      }
     } finally {
       setIsLiking(null);
     }
