@@ -1,17 +1,18 @@
 // HomeScreen - Trang chủ với các điểm đến nổi bật, danh mục và đánh giá
-import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Animated, TouchableOpacity, NativeSyntheticEvent, NativeScrollEvent, Dimensions } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { useTheme } from '@/contexts/ThemeContext';
 import { FontAwesome } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Dimensions, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CategorySection } from '../../components/HomeScreen/CategorySection';
+import { ChatButton } from '../../components/HomeScreen/ChatButton';
+import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
+import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
+import { SearchBar } from '../../components/HomeScreen/SearchBar';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
 import { featuredDestinations, reviews } from '../mockData';
-import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
-import { CategorySection } from '../../components/HomeScreen/CategorySection';
-import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
-import { SearchBar } from '../../components/HomeScreen/SearchBar';
-import { ChatButton } from '../../components/HomeScreen/ChatButton';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
@@ -19,6 +20,7 @@ const SNAP_INTERVAL = CARD_WIDTH; // Snap theo full width
 const INITIAL_REVIEWS_COUNT = 2;
 
 const HomeScreen: React.FC = () => {
+  const { darkMode } = useTheme();
   const insets = useSafeAreaInsets();
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [isCategoryExpanded, setIsCategoryExpanded] = useState(false);
@@ -109,13 +111,13 @@ const HomeScreen: React.FC = () => {
 
   return (
     <LinearGradient
-      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={[0, 0.3, 0.6, 1]}
+      colors={darkMode ? ['#121212', '#121212'] : [COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
+      locations={darkMode ? [0, 1] : [0, 0.3, 0.6, 1]}
       style={homeStyles.gradientContainer}
     >
       <ScrollView 
         ref={scrollViewRef}
-        style={homeStyles.container} 
+        style={{flex:1, backgroundColor: darkMode ? '#121212' : '#fff'}}
         showsVerticalScrollIndicator={false}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
@@ -129,22 +131,22 @@ const HomeScreen: React.FC = () => {
             ]}
             pointerEvents={isSearchExpanded ? 'none' : 'auto'}
           >
-            <Text style={homeStyles.welcomeText}>Welcome !</Text>
-            <Text style={homeStyles.subtitleText}>Trần Minh Thanh</Text>
+            <Text style={[homeStyles.welcomeText, {color: darkMode ? '#E0E0E0' : '#1F2937'}]}>Welcome !</Text>
+            <Text style={[homeStyles.subtitleText, darkMode && {color:'#E0E0E0'}]}>Trần Minh Thanh</Text>
           </Animated.View>
           <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}>
             <SearchBar onExpandChange={setIsSearchExpanded} />
             <TouchableOpacity style={homeStyles.headerButton}>
-              <FontAwesome name="cog" size={22} color={COLORS.primary} />
+              <FontAwesome name="cog" size={22} color={darkMode ? '#4DD0E1' : COLORS.primary} />
             </TouchableOpacity>
           </View>
         </View>
 
-        <View style={homeStyles.featuredSection}>
-          <Text style={homeStyles.featuredTitle}>Điểm đến nổi bật</Text>
+        <View style={[homeStyles.featuredSection, darkMode && {backgroundColor:'#1E1E1E'}]}>
+          <Text style={[homeStyles.featuredTitle, darkMode && {color:'#E0E0E0'}]}>Điểm đến nổi bật</Text>
         </View>
 
-        <View style={homeStyles.carouselWrapper}>
+        <View style={[homeStyles.carouselWrapper, darkMode && {backgroundColor:'#1E1E1E'}]}>
           <ScrollView
             ref={carouselRef}
             horizontal
@@ -186,7 +188,7 @@ const HomeScreen: React.FC = () => {
 
         {/* Divider before categories */}
         <LinearGradient
-          colors={[COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
+          colors={darkMode ? ['#23262F', '#23262F', '#23262F'] : [COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={homeStyles.sectionDivider}
@@ -199,14 +201,14 @@ const HomeScreen: React.FC = () => {
 
         {/* Divider before reviews */}
         <LinearGradient
-          colors={[COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
+          colors={darkMode ? ['#23262F', '#23262F', '#23262F'] : [COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={homeStyles.sectionDivider}
         />
 
         <View style={homeStyles.reviewsSection}>
-          <Text style={homeStyles.reviewsTitle}>Đánh giá</Text>
+          <Text style={[homeStyles.reviewsTitle, darkMode && {color:'#E0E0E0', textShadowColor:'transparent'}]}>Đánh giá</Text>
           {displayedReviews.map((review) => (
             <ReviewCard key={review.id} review={review} />
           ))}
@@ -322,7 +324,7 @@ const homeStyles = StyleSheet.create({
     paddingVertical: 0,
     paddingTop: SPACING.md,
     marginHorizontal: 0,
-    marginTop: 0,
+    marginTop: SPACING.lg, // Thêm khoảng cách để card không che tiêu đề
     position: 'relative',
   },
   carouselContent: { 

@@ -6,6 +6,7 @@ import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COLORS } from '../../constants';
+import { useTheme } from '@/contexts/ThemeContext';
 
 // Custom Tab Icon Component with Animation
 const TabIcon: React.FC<{
@@ -58,27 +59,39 @@ const TabIcon: React.FC<{
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  
+  const { darkMode } = useTheme();
+
+  // Màu dark mode
+  const darkColors = {
+    bg: '#181A20',
+    icon: '#fff',
+    iconInactive: '#6B7280',
+    label: '#fff',
+    border: '#23262F',
+  };
+
   return (
     <>
-      {/* Shadow gradient overlay above tab bar - positioned ABOVE the border */}
-      <LinearGradient
-        colors={[COLORS.primaryTransparent, COLORS.primaryLight, COLORS.primaryMedium]}
-        style={[styles.shadowGradient, { bottom: 70 + insets.bottom + 2 }]}
-        pointerEvents="none"
-      />
-      
-      {/* Blue border line with shadow on top of tab bar */}
-      <View style={[styles.topBorderLine, { bottom: 70 + insets.bottom }]} pointerEvents="none" />
-      
+      {/* Shadow gradient overlay above tab bar - chỉ hiện ở light mode */}
+      {!darkMode && (
+        <LinearGradient
+          colors={[COLORS.primaryTransparent, COLORS.primaryLight, COLORS.primaryMedium]}
+          style={[styles.shadowGradient, { bottom: 70 + insets.bottom + 2 }]}
+          pointerEvents="none"
+        />
+      )}
+
+      {/* Border line on top of tab bar */}
+      <View style={[styles.topBorderLine, { bottom: 70 + insets.bottom, backgroundColor: darkMode ? darkColors.border : COLORS.primary, shadowColor: darkMode ? darkColors.border : COLORS.primary }]} pointerEvents="none" />
+
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: COLORS.primary,
-          tabBarInactiveTintColor: COLORS.iconInactive,
+          tabBarActiveTintColor: darkMode ? COLORS.primary : COLORS.primary,
+          tabBarInactiveTintColor: darkMode ? darkColors.iconInactive : COLORS.iconInactive,
           tabBarShowLabel: true,
           tabBarStyle: {
-            backgroundColor: COLORS.bgMain,
+            backgroundColor: darkMode ? darkColors.bg : COLORS.bgMain,
             borderTopColor: 'transparent',
             borderTopWidth: 0,
             height: 70 + insets.bottom,
@@ -90,6 +103,7 @@ export default function TabLayout() {
             fontSize: 11,
             fontWeight: '600',
             marginTop: 4,
+            color: darkMode ? darkColors.label : COLORS.textMain,
           },
           tabBarIconStyle: {
             marginTop: 0,
@@ -154,7 +168,7 @@ export default function TabLayout() {
         />
       </Tabs>
       
-      <View style={[styles.safeAreaBottom, { height: insets.bottom, backgroundColor: COLORS.bgMain }]} />
+      <View style={[styles.safeAreaBottom, { height: insets.bottom, backgroundColor: darkMode ? darkColors.bg : COLORS.bgMain }]} />
     </>
   );
 }

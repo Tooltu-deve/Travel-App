@@ -172,7 +172,7 @@ const handleSave = async () => {
         <Text style={[styles.sectionTitle, darkMode && {color:'#fff'}]}>Cài đặt chung</Text>
         <View style={[styles.menuRow, darkMode && {borderBottomColor:'#363A45'}]}>
           <MaterialCommunityIcons name="palette" size={22} color={darkMode ? '#fff' : '#2196F3'} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkMode && {color:'#fff'}, {flex:1}]}>Giao diện</Text>
+          <Text style={[styles.menuText, darkMode && {color:'#fff'}, {flex:1}]}>Dark mode</Text>
           <Switch
             value={darkMode}
             onValueChange={setDarkMode}
@@ -448,6 +448,18 @@ const styles = StyleSheet.create({
   versionText: {
     fontSize: 13,
     color: '#9CA3AF',
+  },
+  // Reusable BackButton for consistent navigation
+  backButton: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'absolute',
+    left: 0,
+    top: Platform.OS === 'ios' ? 44 : 24,
+    zIndex: 100,
+    backgroundColor: 'transparent',
   },
 });
 

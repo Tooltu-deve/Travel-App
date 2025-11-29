@@ -1,7 +1,8 @@
 // FavoritesScreen - Trang danh sách yêu thích
-import React from 'react';
+import { useTheme } from '@/contexts/ThemeContext';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Text, StyleSheet } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text } from 'react-native';
 import { COLORS } from '../../constants/colors';
 
 const simpleStyles = StyleSheet.create({
@@ -17,13 +18,14 @@ const simpleStyles = StyleSheet.create({
 });
 
 const FavoritesScreen: React.FC = () => {
+  const { darkMode } = useTheme();
   return (
     <LinearGradient
-      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={[0, 0.3, 0.6, 1]}
+      colors={darkMode ? ['#181A20', '#23262F'] : [COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
+      locations={darkMode ? [0, 1] : [0, 0.3, 0.6, 1]}
       style={simpleStyles.container}
     >
-      <Text style={simpleStyles.text}>Favorites Screen</Text>
+      <Text style={[simpleStyles.text, darkMode && { color: '#fff', fontWeight:'bold', fontSize:22 }]}>Favorites Screen</Text>
     </LinearGradient>
   );
 };

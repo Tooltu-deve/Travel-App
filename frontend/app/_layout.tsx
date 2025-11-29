@@ -1,7 +1,8 @@
-import React, { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
-import './global.css';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { ThemeProvider } from '@/contexts/ThemeContext';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import React, { useEffect } from 'react';
+import './global.css';
 
 /**
  * Navigation Logic Component
@@ -48,21 +49,23 @@ function NavigationHandler() {
  */
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <NavigationHandler />
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen 
-          name="create-itinerary" 
-          options={{ 
-            headerShown: false,
-            presentation: 'card',
-            animation: 'slide_from_bottom'
-          }} 
-        />
-      </Stack>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <NavigationHandler />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen 
+            name="create-itinerary" 
+            options={{ 
+              headerShown: false,
+              presentation: 'card',
+              animation: 'slide_from_bottom'
+            }} 
+          />
+        </Stack>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

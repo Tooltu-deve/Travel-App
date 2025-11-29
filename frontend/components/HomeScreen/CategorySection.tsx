@@ -1,3 +1,4 @@
+import { useTheme } from '@/contexts/ThemeContext';
 import { FontAwesome } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -24,6 +25,7 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
   isExpanded,
   onToggleExpanded,
 }) => {
+  const { darkMode } = useTheme();
   const [expandAnimation] = useState(new Animated.Value(0));
   const [shouldRender, setShouldRender] = useState(false);
 
@@ -60,42 +62,36 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
   });
 
   return (
-    <View style={styles.categorySection}>
-      <Text style={styles.categoryTitle}>Danh mục</Text>
-
+    <View style={[styles.categorySection, darkMode && {backgroundColor:'#1E1E1E', borderRadius:16}]}> 
+      <Text style={[styles.categoryTitle, darkMode && {color:'#E0E0E0', textShadowColor:'transparent'}]}>Danh mục</Text>
       <View style={styles.categoryGrid}>
-        {/* Hiển thị 4 danh mục đầu tiên */}
         {categories.slice(0, 4).map((category) => (
           <View key={category.id} style={styles.categoryItem}>
             <TouchableOpacity style={styles.categoryItemInner}>
-              <View style={styles.categoryIconContainer}>
+              <View style={[styles.categoryIconContainer, darkMode && {backgroundColor:'#2C2C2C'}]}>
                 <FontAwesome 
                   name={category.icon as any} 
                   size={24} 
-                  color={COLORS.primary} 
+                  color={darkMode ? '#4DD0E1' : COLORS.primary} 
                 />
               </View>
-              <Text style={styles.categoryName}>{category.name}</Text>
+              <Text style={[styles.categoryName, darkMode && {color:'#B0B0B0'}]}>{category.name}</Text>
             </TouchableOpacity>
           </View>
         ))}
-
-        {/* Nút Xem thêm (chỉ hiện khi chưa mở rộng) */}
         {!isExpanded && (
           <View style={styles.categoryItem}>
             <TouchableOpacity 
               style={styles.categoryItemInner}
               onPress={onToggleExpanded}
             >
-              <View style={styles.categoryIconContainer}>
-                <FontAwesome name="angle-down" size={24} color={COLORS.primary} />
+              <View style={[styles.categoryIconContainer, darkMode && {backgroundColor:'#2C2C2C'}]}>
+                <FontAwesome name="angle-down" size={24} color={darkMode ? '#4DD0E1' : COLORS.primary} />
               </View>
-              <Text style={styles.categoryName}>Xem thêm</Text>
+              <Text style={[styles.categoryName, darkMode && {color:'#B0B0B0'}]}>Xem thêm</Text>
             </TouchableOpacity>
           </View>
         )}
-
-        {/* Hiển thị các danh mục còn lại khi mở rộng */}
         {shouldRender && categories.slice(4).map((category, index) => (
           <Animated.View 
             key={category.id} 
@@ -108,27 +104,26 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
             ]}
           >
             <TouchableOpacity style={styles.categoryItemInner}>
-              <View style={styles.categoryIconContainer}>
+              <View style={[styles.categoryIconContainer, darkMode && {backgroundColor:'#2C2C2C'}]}>
                 <FontAwesome 
                   name={category.icon as any} 
                   size={24} 
-                  color={COLORS.primary} 
+                  color={darkMode ? '#4DD0E1' : COLORS.primary} 
                 />
               </View>
-              <Text style={styles.categoryName}>{category.name}</Text>
+              <Text style={[styles.categoryName, darkMode && {color:'#B0B0B0'}]}>{category.name}</Text>
             </TouchableOpacity>
           </Animated.View>
         ))}
       </View>
-
       {shouldRender && (
         <Animated.View style={{ opacity: expandedOpacity }}>
           <TouchableOpacity 
             style={styles.collapseButton} 
             onPress={onToggleExpanded}
           >
-            <Text style={styles.collapseButtonText}>Thu gọn</Text>
-            <FontAwesome name="angle-up" size={16} color={COLORS.primary} />
+            <Text style={[styles.collapseButtonText, darkMode && {color:'#4DD0E1'}]}>Thu gọn</Text>
+            <FontAwesome name="angle-up" size={16} color={darkMode ? '#4DD0E1' : COLORS.primary} />
           </TouchableOpacity>
         </Animated.View>
       )}
