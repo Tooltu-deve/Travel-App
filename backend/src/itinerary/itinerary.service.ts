@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { HttpService } from '@nestjs/axios';
@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { Place, PlaceDocument } from '../place/schemas/place.schema';
 import { Itinerary, ItineraryDocument } from './schemas/itinerary.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 import { GenerateRouteDto } from './dto/generate-route.dto';
 import { CreateItineraryDto } from './dto/create-itinerary.dto';
 
@@ -33,6 +34,7 @@ export class ItineraryService {
     @InjectModel(Itinerary.name) private itineraryModel: Model<ItineraryDocument>,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => NotificationsService)) private notificationsService: NotificationsService,
   ) {
     this.aiOptimizerServiceUrl =
       this.configService.get<string>('AI_OPTIMIZER_SERVICE_URL') ||
@@ -1160,7 +1162,7 @@ export class ItineraryService {
 
     const itinerary = new this.itineraryModel({
       route_id: routeId,
-      user_id: userObjectId,
+      user_id: new Types.ObjectId(userId),
       created_at: new Date(),
       route_data_json: routeDataJson,
       status: 'DRAFT',
@@ -1173,7 +1175,23 @@ export class ItineraryService {
       alerts: weatherAlerts,
     });
 
-    return itinerary.save();
+    const savedItinerary = await itinerary.save();
+
+    // Tạo notification cho user
+    try {
+      await this.notificationsService.createNotification({
+        userId: new Types.ObjectId(userId),
+        type: 'itinerary',
+        title: 'Bạn đã tạo lộ trình mới',
+        message: `Lộ trình: ${metadata.title}`,
+        entityType: 'itinerary',
+        entityId: savedItinerary._id instanceof Types.ObjectId ? savedItinerary._id : new Types.ObjectId(savedItinerary._id),
+      });
+    } catch (err) {
+      // Không throw lỗi nếu tạo noti thất bại
+    }
+
+    return savedItinerary;
   }
 
   private async saveAlertOnlyDraft(

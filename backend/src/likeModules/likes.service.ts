@@ -1,16 +1,18 @@
 
-import { NotFoundException, InternalServerErrorException } from '@nestjs/common';
+import { NotFoundException, InternalServerErrorException, Inject, forwardRef } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument } from '../user/schemas/user.schema';
 import { Place, PlaceDocument } from '../place/schemas/place.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class FavoritesService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Place.name) private placeModel: Model<PlaceDocument>,
+    @Inject(forwardRef(() => NotificationsService)) private notificationsService: NotificationsService,
   ) {}
 
   // Lấy tất cả type trong toàn bộ Place
@@ -78,13 +80,31 @@ export class FavoritesService {
     }
     // Like/unlike logic
     const idx = user.likedPlaces.findIndex((id) => (id as any).equals(place._id as any));
+    let action: 'like' | 'unlike' = 'like';
     if (idx > -1) {
       user.likedPlaces.splice(idx, 1);
+      action = 'unlike';
     } else {
       user.likedPlaces.push(place._id as any);
+      action = 'like';
     }
     await user.save();
-    return { success: true, liked: idx === -1 };
+
+    // Tạo notification
+    try {
+      await this.notificationsService.createNotification({
+        userId: new Types.ObjectId(userId),
+        type: 'favorite',
+        title: action === 'like' ? `Bạn đã thêm địa điểm yêu thích` : `Bạn đã bỏ thích địa điểm`,
+        message: `Địa điểm: ${place.name}`,
+        entityType: 'place',
+        entityId: place._id instanceof Types.ObjectId ? place._id : new Types.ObjectId(String(place._id)),
+      });
+    } catch (err) {
+      // Không throw lỗi nếu tạo noti thất bại
+    }
+
+    return { success: true, liked: action === 'like' };
   }
 
   /**
