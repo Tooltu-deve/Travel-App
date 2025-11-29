@@ -34,3 +34,35 @@ export const NotificationSchema = SchemaFactory.createForClass(Notification);
 
 NotificationSchema.index({ userId: 1, createdAt: -1 });
 NotificationSchema.index({ userId: 1, isRead: 1 });
+
+// Optional: Convert to snake_case when returning as JSON
+NotificationSchema.set('toJSON', {
+  transform: function (doc, ret) {
+    // Chuyển đổi sang snake_case nếu có thuộc tính
+    if ('userId' in ret) {
+      (ret as any).user_id = ret.userId;
+      delete (ret as any).userId;
+    }
+    if ('entityType' in ret) {
+      (ret as any).entity_type = ret.entityType;
+      delete (ret as any).entityType;
+    }
+    if ('entityId' in ret) {
+      (ret as any).entity_id = ret.entityId;
+      delete (ret as any).entityId;
+    }
+    if ('isRead' in ret) {
+      (ret as any).is_read = ret.isRead;
+      delete (ret as any).isRead;
+    }
+    if ('createdAt' in ret) {
+      (ret as any).created_at = ret.createdAt;
+      delete (ret as any).createdAt;
+    }
+    if ('updatedAt' in ret) {
+      (ret as any).updated_at = ret.updatedAt;
+      delete (ret as any).updatedAt;
+    }
+    return ret;
+  }
+});

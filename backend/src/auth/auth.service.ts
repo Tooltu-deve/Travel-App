@@ -101,9 +101,9 @@ export class AuthService {
     return {
       access_token: this.jwtService.sign(payload),
       user: {
-        _id: user._id || user.id,
+        user_id: (user._id || user.id)?.toString(),
         email: user.email,
-        fullName: user.fullName,
+        full_name: user.fullName,
       },
     };
   }
@@ -124,7 +124,7 @@ export class AuthService {
       const user = await this.userService.create(createUserDto);
       // Gửi notification khi đăng ký thành công
       await this.notificationsService.createNotification({
-        userId: new Types.ObjectId(user._id),
+        userId: user._id instanceof Types.ObjectId ? user._id : new Types.ObjectId(user._id),
         type: 'account',
         title: 'Đăng ký tài khoản thành công',
         message: 'Chào mừng bạn đến với hệ thống!',
@@ -177,7 +177,7 @@ export class AuthService {
     await this.userService.update(userId, { password: hashedPassword });
     // Gửi notification khi đổi mật khẩu thành công
     await this.notificationsService.createNotification({
-      userId: new Types.ObjectId(userId),
+      userId: Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : userId,
       type: 'account',
       title: 'Đổi mật khẩu thành công',
       message: 'Bạn vừa đổi mật khẩu tài khoản thành công.',

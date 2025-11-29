@@ -4,7 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Notification, NotificationDocument, NotificationType, EntityType } from './schemas/notification.schema';
 
 interface CreateNotificationDto {
-  userId: Types.ObjectId;
+  userId: string | Types.ObjectId;
   type: NotificationType;
   title: string;
   message?: string;
@@ -32,23 +32,35 @@ export class NotificationsService {
     return notification.save();
   }
 
-  async getNotifications(userId: Types.ObjectId, filters: NotificationFilter = {}): Promise<Notification[]> {
-    const query: any = { userId };
+  async getNotifications(userId: string | Types.ObjectId, filters: NotificationFilter = {}): Promise<any[]> {
+    const query: any = { userId: typeof userId === 'string' ? new Types.ObjectId(userId) : userId };
     if (filters.isRead !== undefined) query.isRead = filters.isRead;
     if (filters.type) query.type = filters.type;
-    return this.notificationModel
+    const results = await this.notificationModel
       .find(query)
       .sort({ createdAt: -1 })
       .lean();
+    return results.map((item: any) => ({
+      _id: item._id,
+      user_id: item.userId,
+      type: item.type,
+      title: item.title,
+      message: item.message,
+      entity_type: item.entityType,
+      entity_id: item.entityId,
+      is_read: item.isRead,
+      created_at: item.createdAt || item.created_at,
+      updated_at: item.updatedAt || item.updated_at,
+    }));
   }
 
-  async getUnreadCount(userId: Types.ObjectId): Promise<number> {
-    return this.notificationModel.countDocuments({ userId, isRead: false });
+  async getUnreadCount(userId: string | Types.ObjectId): Promise<number> {
+    return this.notificationModel.countDocuments({ userId: typeof userId === 'string' ? new Types.ObjectId(userId) : userId, isRead: false });
   }
 
-  async markAsRead(userId: Types.ObjectId, notificationId: Types.ObjectId): Promise<void> {
+  async markAsRead(userId: string | Types.ObjectId, notificationId: Types.ObjectId): Promise<void> {
     const result = await this.notificationModel.updateOne(
-      { _id: notificationId, userId },
+      { _id: notificationId, userId: typeof userId === 'string' ? new Types.ObjectId(userId) : userId },
       { $set: { isRead: true } },
     );
     if (result.modifiedCount === 0) {
@@ -56,23 +68,23 @@ export class NotificationsService {
     }
   }
 
-  async markAllAsRead(userId: Types.ObjectId): Promise<number> {
+  async markAllAsRead(userId: string | Types.ObjectId): Promise<number> {
     const result = await this.notificationModel.updateMany(
-      { userId, isRead: false },
+      { userId: typeof userId === 'string' ? new Types.ObjectId(userId) : userId, isRead: false },
       { $set: { isRead: true } },
     );
     return result.modifiedCount;
   }
 
-  async deleteOne(userId: Types.ObjectId, notificationId: Types.ObjectId): Promise<void> {
-    const result = await this.notificationModel.deleteOne({ _id: notificationId, userId });
+  async deleteOne(userId: string | Types.ObjectId, notificationId: Types.ObjectId): Promise<void> {
+    const result = await this.notificationModel.deleteOne({ _id: notificationId, userId: typeof userId === 'string' ? new Types.ObjectId(userId) : userId });
     if (result.deletedCount === 0) {
       throw new NotFoundException('Notification not found or not owned by user');
     }
   }
 
-  async deleteAll(userId: Types.ObjectId): Promise<number> {
-    const result = await this.notificationModel.deleteMany({ userId });
+  async deleteAll(userId: string | Types.ObjectId): Promise<number> {
+    const result = await this.notificationModel.deleteMany({ userId: typeof userId === 'string' ? new Types.ObjectId(userId) : userId });
     return result.deletedCount;
   }
 }

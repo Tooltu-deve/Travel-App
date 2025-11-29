@@ -57,7 +57,7 @@ export class ItineraryService {
   async saveItinerary(
     userId: string,
     createDto: CreateItineraryDto,
-  ): Promise<ItineraryDocument> {
+  ): Promise<any> {
     const routeId = this.generateRouteId();
 
     const itinerary = new this.itineraryModel({
@@ -68,17 +68,35 @@ export class ItineraryService {
       status: createDto.status || 'DRAFT',
     });
 
-    return await itinerary.save();
+    const saved = await itinerary.save();
+    // Convert to snake_case response
+    return {
+      route_id: saved.route_id,
+      user_id: saved.user_id,
+      created_at: saved.created_at,
+      route_data_json: saved.route_data_json,
+      status: saved.status,
+      _id: saved._id,
+    };
   }
 
-  async findByRouteId(routeId: string): Promise<ItineraryDocument | null> {
-    return this.itineraryModel.findOne({ route_id: routeId }).exec();
+  async findByRouteId(routeId: string): Promise<any | null> {
+    const result = await this.itineraryModel.findOne({ route_id: routeId }).exec();
+    if (!result) return null;
+    return {
+      route_id: result.route_id,
+      user_id: result.user_id,
+      created_at: result.created_at,
+      route_data_json: result.route_data_json,
+      status: result.status,
+      _id: result._id,
+    };
   }
 
   async findByUserId(
     userId: string,
     status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
-  ): Promise<ItineraryDocument[]> {
+  ): Promise<any[]> {
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
       : userId;
@@ -88,10 +106,18 @@ export class ItineraryService {
       query.status = status;
     }
 
-    return this.itineraryModel
+    const results = await this.itineraryModel
       .find(query)
       .sort({ created_at: -1 })
       .exec();
+    return results.map((item: any) => ({
+      route_id: item.route_id,
+      user_id: item.user_id,
+      created_at: item.created_at,
+      route_data_json: item.route_data_json,
+      status: item.status,
+      _id: item._id,
+    }));
   }
 
   async updateStatus(
@@ -99,7 +125,7 @@ export class ItineraryService {
     userId: string,
     status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
     extra?: { title?: string },
-  ): Promise<ItineraryDocument | null> {
+  ): Promise<any | null> {
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
       : userId;
@@ -110,13 +136,22 @@ export class ItineraryService {
       updatePayload['route_data_json.metadata.title'] = extra.title;
     }
 
-    return this.itineraryModel
+    const updated = await this.itineraryModel
       .findOneAndUpdate(
         { route_id: routeId, user_id: userObjectId },
         updatePayload,
         { new: true },
       )
       .exec();
+    if (!updated) return null;
+    return {
+      route_id: updated.route_id,
+      user_id: updated.user_id,
+      created_at: updated.created_at,
+      route_data_json: updated.route_data_json,
+      status: updated.status,
+      _id: updated._id,
+    };
   }
 
   private generateRouteId(): string {
@@ -1088,7 +1123,7 @@ export class ItineraryService {
   async generateAndSaveRoute(
     userId: string,
     generateDto: GenerateRouteDto,
-  ): Promise<ItineraryDocument> {
+  ): Promise<any> {
     let places = await this.filterPoisByBudgetAndDestination(
       generateDto.budget,
       generateDto.destination,
@@ -1162,7 +1197,7 @@ export class ItineraryService {
 
     const itinerary = new this.itineraryModel({
       route_id: routeId,
-      user_id: new Types.ObjectId(userId),
+      user_id: userObjectId,
       created_at: new Date(),
       route_data_json: routeDataJson,
       status: 'DRAFT',
@@ -1180,25 +1215,33 @@ export class ItineraryService {
     // Tạo notification cho user
     try {
       await this.notificationsService.createNotification({
-        userId: new Types.ObjectId(userId),
+        userId: userId,
         type: 'itinerary',
         title: 'Bạn đã tạo lộ trình mới',
         message: `Lộ trình: ${metadata.title}`,
         entityType: 'itinerary',
-        entityId: savedItinerary._id instanceof Types.ObjectId ? savedItinerary._id : new Types.ObjectId(savedItinerary._id),
+        entityId: savedItinerary._id,
       });
     } catch (err) {
       // Không throw lỗi nếu tạo noti thất bại
     }
 
-    return savedItinerary;
+    // Convert to snake_case response
+    return {
+      route_id: savedItinerary.route_id,
+      user_id: savedItinerary.user_id,
+      created_at: savedItinerary.created_at,
+      route_data_json: savedItinerary.route_data_json,
+      status: savedItinerary.status,
+      _id: savedItinerary._id,
+    };
   }
 
   private async saveAlertOnlyDraft(
     userId: string,
     generateDto: GenerateRouteDto,
     alerts: WeatherAlertMessage[],
-  ): Promise<ItineraryDocument> {
+  ): Promise<any> {
     const routeId = this.generateRouteId();
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
@@ -1238,7 +1281,15 @@ export class ItineraryService {
       alerts,
     });
 
-    return itinerary.save();
+    const saved = await itinerary.save();
+    return {
+      route_id: saved.route_id,
+      user_id: saved.user_id,
+      created_at: saved.created_at,
+      route_data_json: saved.route_data_json,
+      status: saved.status,
+      _id: saved._id,
+    };
   }
 
   async deleteDraftRoute(routeId: string, userId: string): Promise<boolean> {

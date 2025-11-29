@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   Request,
+  BadRequestException,
 } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -29,13 +30,21 @@ export class NotificationsController {
     const filters: any = {};
     if (query.isRead !== undefined) filters.isRead = query.isRead === 'true';
     if (query.type) filters.type = query.type;
-    return this.notificationsService.getNotifications(new Types.ObjectId(userId), filters);
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
+    const userObjectId = new Types.ObjectId(userId as string);
+    return this.notificationsService.getNotifications(userObjectId, filters);
   }
 
   @Get('unread-count')
   async getUnreadCount(@Request() req) {
     const userId = req.user.userId;
-    const count = await this.notificationsService.getUnreadCount(new Types.ObjectId(userId));
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
+    const userObjectId = new Types.ObjectId(userId as string);
+    const count = await this.notificationsService.getUnreadCount(userId);
     return { count };
   }
 
@@ -43,27 +52,43 @@ export class NotificationsController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async markAsRead(@Request() req, @Param('id') id: string) {
     const userId = req.user.userId;
-    await this.notificationsService.markAsRead(new Types.ObjectId(userId), new Types.ObjectId(id));
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
+    const userObjectId = new Types.ObjectId(userId as string);
+    await this.notificationsService.markAsRead(userObjectId, new Types.ObjectId(id));
   }
 
   @Patch('read-all')
   @HttpCode(HttpStatus.NO_CONTENT)
   async markAllAsRead(@Request() req) {
     const userId = req.user.userId;
-    await this.notificationsService.markAllAsRead(new Types.ObjectId(userId));
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
+    const userObjectId = new Types.ObjectId(userId as string);
+    await this.notificationsService.markAllAsRead(userObjectId);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteOne(@Request() req, @Param('id') id: string) {
     const userId = req.user.userId;
-    await this.notificationsService.deleteOne(new Types.ObjectId(userId), new Types.ObjectId(id));
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
+    const userObjectId = new Types.ObjectId(userId as string);
+    await this.notificationsService.deleteOne(userObjectId, new Types.ObjectId(id));
   }
 
   @Delete()
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteAll(@Request() req) {
     const userId = req.user.userId;
-    await this.notificationsService.deleteAll(new Types.ObjectId(userId));
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
+    const userObjectId = new Types.ObjectId(userId as string);
+    await this.notificationsService.deleteAll(userObjectId);
   }
 }

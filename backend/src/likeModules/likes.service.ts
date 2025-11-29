@@ -38,9 +38,9 @@ export class FavoritesService {
       type: mood,
     }).select('name address rating type').lean();
 
-    // Map ra DTO card
-    return places.map((p) => ({
-      id: p._id.toString(),
+    // Map ra DTO card (snake_case)
+    return places.map((p: any) => ({
+      place_id: p._id?.toString() || '',
       name: p.name,
       address: p.address,
       mood: p.type,
@@ -90,16 +90,30 @@ export class FavoritesService {
     }
     await user.save();
 
-    // Tạo notification
+    // Tạo notification cho cả like và unlike
     try {
-      await this.notificationsService.createNotification({
-        userId: new Types.ObjectId(userId),
-        type: 'favorite',
-        title: action === 'like' ? `Bạn đã thêm địa điểm yêu thích` : `Bạn đã bỏ thích địa điểm`,
-        message: `Địa điểm: ${place.name}`,
-        entityType: 'place',
-        entityId: place._id instanceof Types.ObjectId ? place._id : new Types.ObjectId(String(place._id)),
-      });
+      const userObjectId = Types.ObjectId.isValid(userId)
+        ? new Types.ObjectId(userId)
+        : userId;
+      if (action === 'like') {
+        await this.notificationsService.createNotification({
+          userId: userObjectId,
+          type: 'favorite',
+          title: `Bạn đã thêm địa điểm yêu thích`,
+          message: `Địa điểm: ${place.name}`,
+          entityType: 'place',
+          entityId: place._id instanceof Types.ObjectId ? place._id : new Types.ObjectId(String(place._id)),
+        });
+      } else {
+        await this.notificationsService.createNotification({
+          userId: userObjectId,
+          type: 'favorite',
+          title: `Bạn đã bỏ thích địa điểm`,
+          message: `Địa điểm: ${place.name}`,
+          entityType: 'place',
+          entityId: place._id instanceof Types.ObjectId ? place._id : new Types.ObjectId(String(place._id)),
+        });
+      }
     } catch (err) {
       // Không throw lỗi nếu tạo noti thất bại
     }
@@ -115,15 +129,15 @@ export class FavoritesService {
     const user = await this.userModel.findById(userId).populate({ path: 'likedPlaces' });
     if (!user || !user.likedPlaces) throw new NotFoundException('User not found');
     const populatedPlaces = (user.likedPlaces as any[]).filter((p) => !!p);
-    return populatedPlaces.map((place) => ({
-      placeId: place._id?.toString() || '',
+    return populatedPlaces.map((place: any) => ({
+      place_id: place._id?.toString() || '',
       google_place_id: place.googlePlaceId,
       name: place.name,
       address: place.address,
       location: place.location,
       type: place.type || '',
-      openingHours: place.openingHours || {},
-      isStub: place.isStub || false,
+      opening_hours: place.openingHours || {},
+      is_stub: place.isStub || false,
     }));
   }
 }
