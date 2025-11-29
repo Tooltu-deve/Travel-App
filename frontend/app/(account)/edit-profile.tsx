@@ -1,6 +1,6 @@
 import { useAuth } from '@/contexts/AuthContext';
-import { deleteAvatarAPI, getProfileAPI, updateProfileAPI } from '@/services/api';
-import { MaterialCommunityIcons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
+import { getProfileAPI, updateProfileAPI } from '@/services/api';
+import { FontAwesome5, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
@@ -65,29 +65,24 @@ const EditProfileScreen: React.FC = () => {
     }
   };
 
-  const handleDeleteAvatar = async () => {
-    try {
-      const token = await AsyncStorage.getItem('userToken');
-      if (!token) throw new Error('No token');
-      await deleteAvatarAPI(token);
-      setAvatar('');
-      Alert.alert('Thành công', 'Đã xóa avatar');
-    } catch (error) {
-      Alert.alert('Lỗi', 'Không thể xóa avatar');
-    }
-  };
-
-  if (loading) return <ActivityIndicator style={{marginTop:40}} size="large" color="#2196F3" />;
+  if (loading) return <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#2196F3" />;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      {/* Header */}
-      <View style={{flexDirection:'row',alignItems:'center',alignSelf:'flex-start',marginBottom:8}}>
-        <TouchableOpacity onPress={() => router.back()} style={{padding:4,marginRight:6}}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#2196F3" />
+      {/* --- HEADER ĐÃ SỬA --- */}
+      <View style={styles.headerContainer}>
+        {/* Nút Back nằm tuyệt đối bên trái */}
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backButton}
+        >
+          <MaterialCommunityIcons name="arrow-left" size={28} color="#2196F3" />
         </TouchableOpacity>
-        <Text style={styles.title}>Hồ sơ cá nhân</Text>
+
+        {/* Tiêu đề nằm giữa */}
+        <Text style={styles.headerTitle}>Hồ sơ cá nhân</Text>
       </View>
+      {/* --------------------- */}
 
       {/* Avatar section */}
       <View style={styles.avatarSection}>
@@ -95,9 +90,6 @@ const EditProfileScreen: React.FC = () => {
           source={avatar ? { uri: avatar } : require('../../assets/images/avatar-default.png')}
           style={styles.avatar}
         />
-        <TouchableOpacity style={styles.editAvatarBtn} onPress={handleDeleteAvatar}>
-          <MaterialCommunityIcons name="delete" size={18} color="#EF4444" />
-        </TouchableOpacity>
       </View>
 
       {/* Group 1: Liên hệ */}
@@ -145,22 +137,22 @@ const EditProfileScreen: React.FC = () => {
         <FontAwesome5 name="venus-mars" size={18} color="#2196F3" style={styles.icon} />
         <View style={styles.genderRow}>
           <TouchableOpacity
-            style={[styles.genderBtn, gender==='male' && styles.genderBtnActive]}
+            style={[styles.genderBtn, gender === 'male' && styles.genderBtnActive]}
             onPress={() => setGender('male')}
           >
-            <Text style={[styles.genderText, gender==='male' && styles.genderTextActive]}>Nam</Text>
+            <Text style={[styles.genderText, gender === 'male' && styles.genderTextActive]}>Nam</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.genderBtn, gender==='female' && styles.genderBtnActive]}
+            style={[styles.genderBtn, gender === 'female' && styles.genderBtnActive]}
             onPress={() => setGender('female')}
           >
-            <Text style={[styles.genderText, gender==='female' && styles.genderTextActive]}>Nữ</Text>
+            <Text style={[styles.genderText, gender === 'female' && styles.genderTextActive]}>Nữ</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.genderBtn, gender==='other' && styles.genderBtnActive]}
+            style={[styles.genderBtn, gender === 'other' && styles.genderBtnActive]}
             onPress={() => setGender('other')}
           >
-            <Text style={[styles.genderText, gender==='other' && styles.genderTextActive]}>Khác</Text>
+            <Text style={[styles.genderText, gender === 'other' && styles.genderTextActive]}>Khác</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -187,14 +179,31 @@ const styles = StyleSheet.create({
     padding: 24,
     backgroundColor: '#F3F6FA',
     flexGrow: 1,
-    alignItems: 'center',
+    // Đã xóa alignItems: 'center' để layout linh hoạt hơn cho header
   },
-  title: {
+  // --- STYLES MỚI CHO HEADER ---
+  headerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    marginBottom: 24,
+    position: 'relative',
+    paddingVertical: 10,
+  },
+  backButton: {
+    position: 'absolute',
+    left: 0,
+    zIndex: 10,
+    padding: 4,
+  },
+  headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    marginBottom: 18,
     color: '#2196F3',
+    textAlign: 'center',
   },
+  // -----------------------------
   avatarSection: {
     alignItems: 'center',
     marginBottom: 18,
