@@ -587,32 +587,9 @@ const deleteAvatarAPI = async (token: string): Promise<any> => {
 
 
 // Export default and named exports after all declarations
-export default {
-  loginAPI,
-  registerAPI,
-  validateTokenAPI,
-  logoutAPI,
-  googleLoginAPI,
-  generateRouteAPI,
-  updateRouteStatusAPI,
-  deleteRouteAPI,
-  getRoutesAPI,
-<<<<<<< HEAD
-  getProfileAPI,
-  updateProfileAPI,
-  changePasswordAPI,
-  deleteAvatarAPI,
-};
-
 export {
   getProfileAPI,
   updateProfileAPI,
   changePasswordAPI,
   deleteAvatarAPI,
-=======
-  getMoodsAPI,
-  getFavoritesByMoodAPI,
-  likePlaceAPI,
-  getLikedPlacesAPI,
->>>>>>> ee0233d159f213c096118a101f4b9e09aec97945
 };

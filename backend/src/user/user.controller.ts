@@ -32,7 +32,6 @@ export class UserController {
     return this.userService.updatePreferences(userId, dto);
   }
 
-<<<<<<< HEAD
   // Thêm endpoint cập nhật thông tin cá nhân
   @UseGuards(JwtAuthGuard)
   @Patch('profile')
@@ -47,7 +46,5 @@ export class UserController {
     delete plain.password;
     return { user: plain };
   }
+
 }
-=======
-}
->>>>>>> ee0233d159f213c096118a101f4b9e09aec97945

@@ -1,12 +1,9 @@
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
-<<<<<<< HEAD
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import React, { useEffect } from 'react';
 import './global.css';
-=======
 import { FavoritesProvider } from '@/contexts/FavoritesContext';
->>>>>>> ee0233d159f213c096118a101f4b9e09aec97945
 
 /**
  * Navigation Logic Component
@@ -53,33 +50,25 @@ function NavigationHandler() {
  */
 export default function RootLayout() {
   return (
-<<<<<<< HEAD
     <ThemeProvider>
       <AuthProvider>
-=======
-    <AuthProvider>
-      <FavoritesProvider>
->>>>>>> ee0233d159f213c096118a101f4b9e09aec97945
-        <NavigationHandler />
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen 
-            name="create-itinerary" 
-            options={{ 
-              headerShown: false,
-              presentation: 'card',
-              animation: 'slide_from_bottom'
-            }} 
-          />
-        </Stack>
-<<<<<<< HEAD
+        <FavoritesProvider>
+          <NavigationHandler />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen 
+              name="create-itinerary" 
+              options={{ 
+                headerShown: false,
+                presentation: 'card',
+                animation: 'slide_from_bottom'
+              }} 
+            />
+          </Stack>
+        </FavoritesProvider>
       </AuthProvider>
     </ThemeProvider>
-=======
-      </FavoritesProvider>
-    </AuthProvider>
->>>>>>> ee0233d159f213c096118a101f4b9e09aec97945
   );
 }

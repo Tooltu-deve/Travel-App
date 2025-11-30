@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useState } from 'react';
+import { useTheme } from '@/contexts/ThemeContext';
 import { LayoutAnimation, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const FAQ_DATA = [
@@ -66,6 +67,7 @@ const FAQ_DATA = [
 
 const FAQProfileScreen = () => {
   const [expanded, setExpanded] = useState<number[]>([0]);
+  const { darkMode } = useTheme();
 
   const toggleGroup = (idx: number) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -74,28 +76,52 @@ const FAQProfileScreen = () => {
     );
   };
 
+  // Dynamic styles for dark mode
+  const dynamicStyles = {
+    container: {
+      backgroundColor: darkMode ? '#18181b' : '#F3F6FA',
+    },
+    title: {
+      color: darkMode ? '#60a5fa' : '#2196F3',
+    },
+    category: {
+      color: darkMode ? '#f1f5f9' : '#1E293B',
+    },
+    qaBox: {
+      backgroundColor: darkMode ? '#27272a' : '#fff',
+      borderColor: darkMode ? '#334155' : '#E5E7EB',
+    },
+    question: {
+      color: darkMode ? '#60a5fa' : '#2196F3',
+    },
+    answer: {
+      color: darkMode ? '#f1f5f9' : '#1E293B',
+    },
+    icon: darkMode ? '#60a5fa' : '#2196F3',
+  };
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+    <ScrollView style={[styles.container, dynamicStyles.container]} contentContainerStyle={styles.contentContainer}>
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => require('expo-router').router.back()} style={styles.backButton} hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-          <MaterialCommunityIcons name="arrow-left" size={28} color="#2196F3" />
+          <MaterialCommunityIcons name="arrow-left" size={28} color={dynamicStyles.icon} />
         </TouchableOpacity>
-        <Text style={styles.title}>Câu hỏi thường gặp (FAQ)</Text>
+        <Text style={[styles.title, dynamicStyles.title]}>Câu hỏi thường gặp (FAQ)</Text>
       </View>
       {FAQ_DATA.map((group, idx) => (
         <View key={group.category} style={styles.group}>
           <TouchableOpacity style={styles.categoryRow} onPress={() => toggleGroup(idx)} activeOpacity={0.7}>
-            <Text style={styles.category}>{idx + 1}. {group.category}</Text>
+            <Text style={[styles.category, dynamicStyles.category]}>{idx + 1}. {group.category}</Text>
             <MaterialCommunityIcons
               name={expanded.includes(idx) ? 'chevron-up' : 'chevron-down'}
               size={26}
-              color="#2196F3"
+              color={dynamicStyles.icon}
             />
           </TouchableOpacity>
           {expanded.includes(idx) && group.items.map((item) => (
-            <View key={item.q} style={styles.qaBox}>
-              <Text style={styles.question}>Q: {item.q}</Text>
-              <Text style={styles.answer}>A: {item.a}</Text>
+            <View key={item.q} style={[styles.qaBox, dynamicStyles.qaBox]}>
+              <Text style={[styles.question, dynamicStyles.question]}>Q: {item.q}</Text>
+              <Text style={[styles.answer, dynamicStyles.answer]}>A: {item.a}</Text>
             </View>
           ))}
         </View>

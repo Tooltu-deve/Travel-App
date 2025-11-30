@@ -215,16 +215,9 @@ const HomeScreen: React.FC = () => {
         />
 
         <View style={homeStyles.reviewsSection}>
-<<<<<<< HEAD
           <Text style={[homeStyles.reviewsTitle, darkMode && {color:'#E0E0E0', textShadowColor:'transparent'}]}>Đánh giá</Text>
-          {displayedReviews.map((review) => (
-            <ReviewCard key={review.id} review={review} />
-          ))}
-=======
-          <Text style={homeStyles.reviewsTitle}>Đánh giá</Text>
           {/* Show a single ReviewCard section (places preview) */}
           <ReviewCard />
->>>>>>> ee0233d159f213c096118a101f4b9e09aec97945
           
           {/* Reviews header only — ReviewCard handles its own "load more" now */}
         </View>

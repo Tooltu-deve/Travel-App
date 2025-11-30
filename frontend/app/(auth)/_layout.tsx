@@ -13,23 +13,23 @@ headerShown: false, // Không hiển thị header
 }}
 >
 <Stack.Screen
-name="login"
-options={{
-title: 'Đăng nhập',
-}}
+  name="login/index"
+  options={{
+    title: 'Đăng nhập',
+  }}
 />
 <Stack.Screen
-name="register"
-options={{
-title: 'Đăng ký',
-}}
+  name="register/index"
+  options={{
+    title: 'Đăng ký',
+  }}
 />
-      <Stack.Screen
-        name="mood"
-        options={{
-          title: 'Chọn tâm trạng',
-        }}
-      />
+<Stack.Screen
+  name="mood/index"
+  options={{
+    title: 'Chọn tâm trạng',
+  }}
+/>
     </Stack>
   );
 }
