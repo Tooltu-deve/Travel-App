@@ -22,29 +22,5 @@ export class UserController {
     delete plain.password;
     return plain;
   }
-  @Patch('profile/preferences')
-  async updatePreferences(
-    @Request() req,
-    @Body() dto: UpdateUserPreferencesDto,
-  ) {
-    const userId = req.user.userId;
-    // req.user.userId được lấy từ JWT token
-    return this.userService.updatePreferences(userId, dto);
-  }
-
-  // Thêm endpoint cập nhật thông tin cá nhân
-  @UseGuards(JwtAuthGuard)
-  @Patch('profile')
-  async updateProfile(@Request() req, @Body() dto: UpdateUserDto) {
-    const userId = req.user.userId;
-    const updated = await this.userService.update(userId, dto);
-    if (!updated) {
-      return { error: 'User not found' };
-    }
-    // Xóa password trước khi trả về
-    const plain: any = typeof (updated as any).toObject === 'function' ? (updated as any).toObject() : { ...(updated as any) };
-    delete plain.password;
-    return { user: plain };
-  }
 
 }

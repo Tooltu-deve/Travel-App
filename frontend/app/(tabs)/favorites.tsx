@@ -317,7 +317,10 @@ const FavoritesScreen: React.FC = () => {
   };
 
   return (
-    <View style={[styles.container, dynamic.container]}>
+    <LinearGradient
+      colors={darkMode ? ['#18181b', '#23272f'] : ['#f8fafc', '#fff']}
+      style={[styles.container, dynamic.container]}
+    >
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={[styles.headerContainer, { paddingTop: insets.top - SPACING.sm }]}> 
