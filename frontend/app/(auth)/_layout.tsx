@@ -30,18 +30,6 @@ title: 'Đăng ký',
           title: 'Chọn tâm trạng',
         }}
       />
-      <Stack.Screen
-        name="register"
-        options={{
-          title: 'Đăng ký',
-        }}
-      />
-      <Stack.Screen
-        name="mood"
-        options={{
-          title: 'Chọn tâm trạng',
-        }}
-      />
     </Stack>
   );
 }

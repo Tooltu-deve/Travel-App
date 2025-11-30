@@ -1,9 +1,9 @@
-import { IsNotEmpty, IsObject, IsString, IsEnum, IsOptional } from 'class-validator';
+import { IsNotEmpty, IsObject, IsEnum, IsOptional } from 'class-validator';
 
-export class CreateTravelRouteDto {
+export class CreateItineraryDto {
   @IsNotEmpty({ message: 'route_data_json không được để trống' })
   @IsObject({ message: 'route_data_json phải là object' })
-  route_data_json: any; // Enriched route JSON từ AI Optimizer Service
+  route_data_json: any;
 
   @IsOptional()
   @IsEnum(['DRAFT', 'CONFIRMED', 'ARCHIVED'], {

@@ -207,26 +207,10 @@ const HomeScreen: React.FC = () => {
 
         <View style={homeStyles.reviewsSection}>
           <Text style={homeStyles.reviewsTitle}>Đánh giá</Text>
-          {displayedReviews.map((review) => (
-            <ReviewCard key={review.id} review={review} />
-          ))}
+          {/* Show a single ReviewCard section (places preview) */}
+          <ReviewCard />
           
-          {/* Nút Xem thêm / Thu gọn */}
-          {reviews.length > INITIAL_REVIEWS_COUNT && (
-            <TouchableOpacity 
-              style={homeStyles.showMoreButton}
-              onPress={() => setShowAllReviews(!showAllReviews)}
-            >
-              <Text style={homeStyles.showMoreText}>
-                {showAllReviews ? 'Thu gọn' : `Xem thêm ${reviews.length - INITIAL_REVIEWS_COUNT} đánh giá`}
-              </Text>
-              <FontAwesome 
-                name={showAllReviews ? 'angle-up' : 'angle-down'} 
-                size={18} 
-                color={COLORS.primary} 
-              />
-            </TouchableOpacity>
-          )}
+          {/* Reviews header only — ReviewCard handles its own "load more" now */}
         </View>
 
         <View style={{ height: SPACING.xl }} />

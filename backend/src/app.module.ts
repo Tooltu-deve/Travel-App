@@ -5,8 +5,9 @@ import { ProfileModule } from './profile/profile.module';
 import { DatabaseModule } from './database/database.module';
 import { ConfigModule } from '@nestjs/config';
 import { PlaceModule } from './place/place.module';
+import { FavoritesModule } from './likeModules/likes.module';
 import { ItineraryModule } from './itinerary/itinerary.module';
-import { TravelRouteModule } from './travel-route/travel-route.module';
+import { AiModule } from './ai/ai.module';
 
 @Module({
   imports: [
@@ -17,7 +18,8 @@ import { TravelRouteModule } from './travel-route/travel-route.module';
     PlaceModule,
     ItineraryModule,
     ProfileModule,
-    TravelRouteModule,
+    AiModule,
+    FavoritesModule,
   ],
   controllers: [],
   providers: [],

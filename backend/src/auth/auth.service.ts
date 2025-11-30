@@ -1,4 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { NotificationsService } from '../notifications/notifications.service';
+import { Types } from 'mongoose';
 import { UserService } from 'src/user/user.service';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
@@ -20,6 +22,7 @@ export class AuthService {
   constructor(
     private userService: UserService,
     private jwtService: JwtService,
+    private readonly notificationsService: NotificationsService,
   ) { }
 
   /**
@@ -100,7 +103,7 @@ export class AuthService {
       user: {
         _id: user._id || user.id,
         email: user.email,
-        fullName: user.fullName,
+        full_name: user.full_name,
       },
     };
   }
@@ -119,11 +122,68 @@ export class AuthService {
       }
 
       const user = await this.userService.create(createUserDto);
+      // Gửi notification khi đăng ký thành công
+      await this.notificationsService.createNotification({
+        userId: user._id instanceof Types.ObjectId ? user._id : new Types.ObjectId(user._id),
+        type: 'account',
+        title: 'Đăng ký tài khoản thành công',
+        message: 'Chào mừng bạn đến với hệ thống!',
+        entityType: 'system',
+        entityId: null,
+      });
       // Trả về token luôn sau khi đăng ký thành công
       return this.login(user);
     } catch (error) {
       throw new UnauthorizedException(error.message);
     }
+  }
+  /**
+   * Đổi mật khẩu cho user (yêu cầu currentPassword, newPassword)
+   */
+  async changePassword(userId: string, changePasswordDto: any): Promise<void> {
+    // Lấy user với password
+    const user = await this.userService.findOneById(userId);
+    if (!user) {
+      throw new UnauthorizedException('Không tìm thấy user');
+    }
+
+    // Kiểm tra user có password không (OAuth users có thể không có)
+    if (!user.password) {
+      throw new UnauthorizedException('Tài khoản này đăng nhập bằng Google/Facebook và không có password');
+    }
+
+    // Verify current password với bcrypt.compare()
+    const isPasswordValid = await bcrypt.compare(
+      changePasswordDto.currentPassword,
+      user.password,
+    );
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Password hiện tại không đúng');
+    }
+
+    // Kiểm tra password mới khác password cũ
+    const isSamePassword = await bcrypt.compare(
+      changePasswordDto.newPassword,
+      user.password,
+    );
+    if (isSamePassword) {
+      throw new UnauthorizedException('Password mới phải khác password cũ');
+    }
+
+    // Hash password mới (salt rounds = 10)
+    const hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
+
+    // Update password trong DB
+    await this.userService.update(userId, { password: hashedPassword });
+    // Gửi notification khi đổi mật khẩu thành công
+    await this.notificationsService.createNotification({
+      userId: Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : userId,
+      type: 'account',
+      title: 'Đổi mật khẩu thành công',
+      message: 'Bạn vừa đổi mật khẩu tài khoản thành công.',
+      entityType: 'system',
+      entityId: null,
+    });
   }
 
   /**
@@ -164,4 +224,3 @@ export class AuthService {
     }
   }
 }
-
