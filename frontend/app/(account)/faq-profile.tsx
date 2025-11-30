@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { LayoutAnimation, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const FAQ_DATA = [
   {
@@ -68,6 +69,7 @@ const FAQ_DATA = [
 const FAQProfileScreen = () => {
   const [expanded, setExpanded] = useState<number[]>([0]);
   const { darkMode } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const toggleGroup = (idx: number) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -102,7 +104,7 @@ const FAQProfileScreen = () => {
 
   return (
     <ScrollView style={[styles.container, dynamicStyles.container]} contentContainerStyle={styles.contentContainer}>
-      <View style={styles.headerRow}>
+      <View style={[styles.headerRow, { paddingTop: insets.top || 16 }]}> 
         <TouchableOpacity onPress={() => require('expo-router').router.back()} style={styles.backButton} hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
           <MaterialCommunityIcons name="arrow-left" size={28} color={dynamicStyles.icon} />
         </TouchableOpacity>

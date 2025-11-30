@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -16,6 +17,7 @@ const ChangePasswordScreen: React.FC = () => {
   const [showConfirm, setShowConfirm] = useState(false);
   const [focusField, setFocusField] = useState('');
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   // Kiểm tra mật khẩu hiện tại đúng hay không (gọi API đổi mật khẩu với newPassword random, không đổi thật)
   const checkCurrentPassword = async (password: string) => {
@@ -89,7 +91,7 @@ const ChangePasswordScreen: React.FC = () => {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {/* Header */}
-      <View style={styles.headerRow}>
+      <View style={[styles.headerRow, { paddingTop: insets.top || 16 }]}> 
         <TouchableOpacity onPress={() => router.back()} style={{padding:4,marginRight:6}}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#2196F3" />
         </TouchableOpacity>

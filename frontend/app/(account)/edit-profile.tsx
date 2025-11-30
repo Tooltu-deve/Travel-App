@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const EditProfileScreen: React.FC = () => {
   const { userData } = useAuth();
@@ -18,6 +19,7 @@ const EditProfileScreen: React.FC = () => {
   const [phone, setPhone] = useState(''); // Số điện thoại
   const [gender, setGender] = useState(''); // Giới tính
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const fetchProfile = async () => {
     setLoading(true);
@@ -70,7 +72,7 @@ const EditProfileScreen: React.FC = () => {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {/* --- HEADER ĐÃ SỬA --- */}
-      <View style={styles.headerContainer}>
+      <View style={[styles.headerContainer, { paddingTop: insets.top || 16 }]}> 
         {/* Nút Back nằm tuyệt đối bên trái */}
         <TouchableOpacity
           onPress={() => router.back()}
