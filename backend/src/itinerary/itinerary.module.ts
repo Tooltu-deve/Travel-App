@@ -4,6 +4,7 @@ import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { ItineraryController } from './itinerary.controller';
 import { ItineraryService } from './itinerary.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { Place, PlaceSchema } from '../place/schemas/place.schema';
 import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
 
@@ -15,6 +16,7 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
       { name: Itinerary.name, schema: ItinerarySchema },
     ]),
     HttpModule,
+    NotificationsModule,
   ],
   controllers: [ItineraryController],
   providers: [ItineraryService],
