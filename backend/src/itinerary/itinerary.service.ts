@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { HttpService } from '@nestjs/axios';
@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { Place, PlaceDocument } from '../place/schemas/place.schema';
 import { Itinerary, ItineraryDocument } from './schemas/itinerary.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 import { GenerateRouteDto } from './dto/generate-route.dto';
 import { CreateItineraryDto } from './dto/create-itinerary.dto';
 
@@ -33,6 +34,7 @@ export class ItineraryService {
     @InjectModel(Itinerary.name) private itineraryModel: Model<ItineraryDocument>,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => NotificationsService)) private notificationsService: NotificationsService,
   ) {
     this.aiOptimizerServiceUrl =
       this.configService.get<string>('AI_OPTIMIZER_SERVICE_URL') ||
@@ -108,13 +110,31 @@ export class ItineraryService {
       updatePayload['route_data_json.metadata.title'] = extra.title;
     }
 
-    return this.itineraryModel
+    const updated = await this.itineraryModel
       .findOneAndUpdate(
         { route_id: routeId, user_id: userObjectId },
         updatePayload,
         { new: true },
       )
       .exec();
+
+    // Gửi notification khi xác nhận lộ trình (CONFIRMED)
+    if (status === 'CONFIRMED' && updated) {
+      try {
+        await this.notificationsService.createNotification({
+          userId: userObjectId,
+          type: 'itinerary',
+          title: 'Bạn đã xác nhận lộ trình',
+          message: extra?.title || updated.title || 'Lộ trình đã xác nhận',
+          entityType: 'itinerary',
+          entityId: updated._id,
+          routeId: updated.route_id,
+        });
+      } catch (err) {
+        console.error('Lỗi khi tạo notification CONFIRMED:', err);
+      }
+    }
+    return updated;
   }
 
   private generateRouteId(): string {
@@ -1173,7 +1193,25 @@ export class ItineraryService {
       alerts: weatherAlerts,
     });
 
-    return itinerary.save();
+    const savedItinerary = await itinerary.save();
+
+    // Tạo notification cho user: chỉ nhắc nhở xác nhận để hoàn tất tạo lộ trình
+    try {
+      await this.notificationsService.createNotification({
+        userId: userObjectId,
+        type: 'itinerary',
+        title: 'Lưu nháp lộ trình',
+        message: 'Bạn đã lưu nháp lộ trình, vui lòng bấm xác nhận để hoàn tất tạo lộ trình.',
+        entityType: 'itinerary',
+        entityId: savedItinerary._id,
+        routeId: savedItinerary.route_id,
+      });
+    } catch (err) {
+      // Không throw lỗi nếu tạo noti thất bại
+      console.error('Lỗi khi tạo notification:', err);
+    }
+
+    return savedItinerary;
   }
 
   private async saveAlertOnlyDraft(
@@ -1220,7 +1258,7 @@ export class ItineraryService {
       alerts,
     });
 
-    return itinerary.save();
+    return await itinerary.save();
   }
 
   async deleteDraftRoute(routeId: string, userId: string): Promise<boolean> {
@@ -1239,4 +1277,3 @@ export class ItineraryService {
     return result.deletedCount > 0;
   }
 }
-
