@@ -125,6 +125,12 @@ export class ChatResponseDto {
         },
     })
     metadata: Record<string, any>;
+
+    @ApiPropertyOptional({
+        description: 'ID của lộ trình đã lưu (nếu có)',
+        example: '507f1f77bcf86cd799439011',
+    })
+    itineraryId?: string;
 }
 
 export class ResetConversationDto {

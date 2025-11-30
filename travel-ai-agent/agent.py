@@ -109,9 +109,12 @@ class TravelState(TypedDict):
     optimization_applied: bool
     weather_checked: bool
     budget_calculated: bool
-    session_stage: str  # "profiling", "planning", "optimizing", "finalizing"
+    session_stage: str  # "profiling", "planning", "optimizing", "finalizing", "off_topic"
     user_location: Optional[str]
     travel_date: Optional[str]
+    intent: Optional[str]  # "travel_planning", "itinerary_modification", "general_question", "off_topic"
+    itinerary_status: Optional[str]  # "DRAFT", "CONFIRMED" - tracks if user is still editing
+    itinerary_id: Optional[str]  # MongoDB _id of saved itinerary for modifications
 
 # =====================================
 # LLM INITIALIZATION
@@ -130,6 +133,177 @@ llm = get_llm()
 # =====================================
 # GRAPH NODES
 # =====================================
+
+def intent_classifier_node(state: TravelState) -> TravelState:
+    """
+    Node 0: Classify user intent to handle off-topic questions
+    """
+    print("🎯 IntentClassifier: Analyzing user intent...")
+    
+    messages = state["messages"]
+    last_message = messages[-1].content if messages else ""
+    
+    # Quick keyword-based classification (faster, no API call for obvious cases)
+    user_text = last_message.lower()
+    
+    # Check for modification intent first (if there's existing itinerary)
+    # IMPORTANT: Check both itinerary_id (saved) and current_itinerary (in-progress)
+    has_itinerary = bool(state.get("itinerary_id")) or len(state.get("current_itinerary", [])) > 0
+    modification_keywords = ["bỏ", "xóa", "thêm", "thay", "đổi", "sửa", "remove", "add", "replace", "change"]
+    
+    print(f"   🔍 Checking modification intent: has_itinerary={has_itinerary}, itinerary_id={state.get('itinerary_id')}, current_itinerary_count={len(state.get('current_itinerary', []))}")
+    
+    # PRIORITY 1: Check modification keywords FIRST - if found, ALWAYS treat as modification (not planning)
+    has_modification_keywords = any(keyword in user_text for keyword in modification_keywords)
+    
+    if has_modification_keywords:
+        if has_itinerary:
+            # User wants to modify existing itinerary
+            intent = "itinerary_modification"
+            print(f"   → Quick detected intent: {intent} (has itinerary + modification keywords)")
+            
+            updated_state = {
+                **state,
+                "intent": intent
+            }
+            return updated_state
+        else:
+            # Has modification keywords but NO itinerary - user is confused, treat as error
+            print(f"   ⚠️ Modification keywords found but no itinerary exists - sending error message")
+            error_message = "❌ Bạn chưa có lộ trình nào để chỉnh sửa.\n\n💡 Hãy tạo lộ trình mới trước:\nVí dụ: 'Tôi muốn đi du lịch Đà Lạt 3 ngày'"
+            
+            updated_state = {
+                **state,
+                "intent": "off_topic",
+                "session_stage": "error",
+                "messages": state["messages"] + [AIMessage(content=error_message)]
+            }
+            return updated_state
+    
+    # PRIORITY 2: Check for travel planning intent (only if NO modification keywords)
+    travel_keywords = ["lộ trình", "du lịch", "đi chơi", "tham quan", "tạo", "làm"]
+    
+    if any(keyword in user_text for keyword in travel_keywords):
+        intent = "travel_planning"
+        print(f"   → Quick detected intent: {intent} (travel keyword, no modification keywords)")
+        
+        updated_state = {
+            **state,
+            "intent": intent
+        }
+        return updated_state
+    
+    # For ambiguous cases, use AI classification with timeout
+    try:
+        # Get conversation context (last 2 messages for context)
+        conversation_context = ""
+        if len(messages) > 1:
+            prev_messages = messages[-3:-1]  # Get 2 messages before current
+            for msg in prev_messages:
+                role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+                conversation_context += f"{role}: {msg.content}\n"
+        
+        # Intent classification prompt with context
+        system_prompt = f"""
+        Bạn là một AI classifier. Phân loại ý định (intent) của câu hỏi người dùng vào 1 trong các loại:
+        
+        1. "travel_planning" - Người dùng muốn lập kế hoạch du lịch, tạo lộ trình mới
+           Ví dụ: "Tạo lộ trình đi Đà Nẵng 3 ngày", "Tôi muốn đi du lịch Phú Quốc"
+           QUAN TRỌNG: Nếu assistant vừa hỏi về địa điểm và user trả lời tên địa điểm → travel_planning!
+           QUAN TRỌNG: Nếu user trả lời "có", "muốn", "được" sau câu hỏi → travel_planning!
+        
+        2. "itinerary_modification" - Người dùng muốn thay đổi lộ trình đã tạo
+           Ví dụ: "Thay địa điểm ngày 2", "Bỏ chùa Linh Ứng đi", "Thêm 1 quán cà phê"
+        
+        3. "travel_question" - Câu hỏi về du lịch Việt Nam (địa điểm, thông tin)
+           Ví dụ: "Đà Nẵng có gì đẹp?", "Nên đi Nha Trang vào tháng mấy?", "Món ăn đặc sản Huế?"
+           CHỈ KHI user hỏi về thông tin, KHÔNG PHẢI khi trả lời câu hỏi của assistant!
+        
+        4. "off_topic" - Câu hỏi KHÔNG liên quan đến du lịch
+           Ví dụ: "Cách nấu phở", "Thời tiết hôm nay", "Giải toán", "Lập trình Python"
+        
+        Context conversation gần đây:
+        {conversation_context}
+        
+        Tin nhắn mới nhất của user: {last_message}
+        
+        Chỉ trả về TÊN INTENT, không giải thích.
+        """
+        
+        # Call with shorter timeout
+        response = llm.invoke([
+            SystemMessage(content=system_prompt)
+        ], timeout=10)  # 10 second timeout
+        
+        intent = response.content.strip().lower()
+        print(f"   → AI detected intent: {intent}")
+        
+    except Exception as e:
+        print(f"   ⚠️ Intent classification failed: {e}, defaulting to travel_planning")
+        intent = "travel_planning"  # Default to travel planning on error
+    
+    # Update state with detected intent
+    updated_state = {
+        **state,
+        "intent": intent
+    }
+    
+    # Handle off-topic immediately
+    if "off_topic" in intent:
+        off_topic_response = """
+🤖 Xin lỗi, tôi là AI chuyên về **lập kế hoạch du lịch Việt Nam**.
+
+Tôi có thể giúp bạn:
+✅ Tạo lộ trình du lịch theo sở thích
+✅ Gợi ý địa điểm tham quan
+✅ Tối ưu hóa tuyến đường di chuyển
+✅ Tính toán ngân sách
+✅ Kiểm tra thời tiết & giờ mở cửa
+
+❌ Tôi không thể trả lời các câu hỏi ngoài phạm vi du lịch.
+
+💡 **Bạn có muốn tôi giúp tạo lộ trình du lịch không?**
+Ví dụ: "Tạo lộ trình đi Đà Nẵng 3 ngày 2 đêm cho 2 người"
+        """
+        updated_state["messages"] = state["messages"] + [AIMessage(content=off_topic_response)]
+        updated_state["session_stage"] = "off_topic"
+    
+    # Handle travel questions (provide info without creating itinerary)
+    elif "travel_question" in intent:
+        updated_state["session_stage"] = "answering_question"
+    
+    return updated_state
+
+def travel_question_answerer_node(state: TravelState) -> TravelState:
+    """
+    Node: Answer travel-related questions without creating itinerary
+    """
+    print("❓ TravelQuestionAnswerer: Answering travel question...")
+    
+    messages = state["messages"]
+    last_message = messages[-1].content if messages else ""
+    
+    system_prompt = """
+    Bạn là travel expert về du lịch Việt Nam. Trả lời câu hỏi của người dùng một cách chi tiết và hữu ích.
+    
+    Sau khi trả lời, LUÔN hỏi lại: "Bạn có muốn tôi tạo lộ trình du lịch chi tiết không?"
+    
+    Trả lời bằng tiếng Việt, ngắn gọn (3-5 câu), dễ hiểu.
+    """
+    
+    response = llm.invoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=last_message)
+    ])
+    
+    # Add follow-up prompt
+    full_response = f"{response.content}\n\n💡 Bạn có muốn tôi tạo lộ trình du lịch chi tiết không?"
+    
+    return {
+        **state,
+        "messages": state["messages"] + [AIMessage(content=full_response)],
+        "session_stage": "profiling"  # Ready to create itinerary if user wants
+    }
 
 def profile_collector_node(state: TravelState) -> TravelState:
     """
@@ -168,10 +342,17 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     Tin nhắn mới nhất của khách: "{last_message}"
     
+    QUAN TRỌNG:
+    - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ thông tin → Nói sẽ tạo lộ trình
+    - Nếu khách mới bắt đầu conversation hoặc còn thiếu thông tin → HỎI thông tin còn thiếu
+    - Thông tin CẦN THIẾT: địa điểm (destination)
+    - Thông tin còn thiếu: {missing_info}
+    
     Hãy:
     1. Phân tích tin nhắn để trích xuất thông tin sở thích (nếu có), đặc biệt chú ý đến TÊN ĐỊA ĐIỂM/THÀNH PHỐ
-    2. Nếu thiếu thông tin quan trọng ({missing_info}), hỏi 1-2 câu hỏi một cách tự nhiên
-    3. Nếu đã đủ thông tin, chuyển sang giai đoạn lập kế hoạch lộ trình
+    2. Nếu CHƯA CÓ ĐỊA ĐIỂM (destination) → HỎI: "Bạn đã có ý tưởng về địa điểm nào chưa?"
+    3. Nếu đã có đủ thông tin và khách xác nhận → KHÔNG cần hỏi gì nữa
+    4. Hỏi một cách tự nhiên, thân thiện
     
     Trả lời bằng tiếng Việt, thân thiện và chuyên nghiệp.
     """
@@ -182,10 +363,41 @@ def profile_collector_node(state: TravelState) -> TravelState:
     ])
     
     # Update preferences based on user input (simple keyword detection)
-    updated_preferences = preferences.copy()
+    # Use model_copy() for Pydantic models
+    updated_preferences = preferences.model_copy() if hasattr(preferences, 'model_copy') else preferences.copy()
     
     # Extract info from user message
     user_text = last_message.lower()
+    
+    # CRITICAL: Detect confirmation responses (user answering "yes" to our question)
+    # Only consider as confirmation if:
+    # 1. Message is short (< 15 chars) AND contains confirmation word
+    # 2. OR message is ONLY a confirmation word (like "Muốn", "Có", "Được")
+    confirmation_keywords = ["có", "được", "muốn", "ok", "okay", "yes", "ừ", "oke", "đồng ý", "vâng"]
+    user_text_stripped = user_text.strip().replace(".", "").replace("!", "")
+    
+    # Check if message is a simple confirmation (not part of a longer sentence)
+    is_confirmation = (
+        len(user_text) < 15 and any(word in user_text for word in confirmation_keywords)
+    ) or user_text_stripped in confirmation_keywords
+    
+    # If user is just confirming and we already have destination, auto-fill missing info
+    if is_confirmation and updated_preferences.start_location:
+        print(f"   ✅ User confirmed → Auto-filling missing info")
+        
+        # Auto-fill defaults for quick planning
+        if not updated_preferences.travel_style:
+            updated_preferences.travel_style = "cultural"
+            print(f"      → Defaulting travel_style: cultural")
+        if not updated_preferences.group_type:
+            updated_preferences.group_type = "solo"
+            print(f"      → Defaulting group_type: solo")
+        if not updated_preferences.budget_range:
+            updated_preferences.budget_range = "mid-range"
+            print(f"      → Defaulting budget_range: mid-range")
+        if not updated_preferences.duration:
+            updated_preferences.duration = "3_days"
+            print(f"      → Defaulting duration: 3_days")
     
     # Destination detection (IMPORTANT!)
     destination_keywords = {
@@ -219,6 +431,10 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.travel_style = "cultural"
     elif any(word in user_text for word in ["ăn uống", "ẩm thực", "quán ăn", "món ngon"]):
         updated_preferences.travel_style = "foodie"
+    elif not updated_preferences.travel_style:
+        # Default to cultural if not specified
+        updated_preferences.travel_style = "cultural"
+        print(f"   ⚙️ Defaulting travel_style to 'cultural'")
     
     # Group type detection
     # Detect based on number of people first
@@ -273,6 +489,16 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.budget_range,
         updated_preferences.duration
     ])
+    
+    # If user confirmed with complete info, go straight to planning
+    if is_confirmation and updated_preferences.start_location and is_info_complete:
+        print(f"   🚀 User confirmed with complete info → Going to planning")
+        
+        return {
+            **state,
+            "user_preferences": updated_preferences,
+            "session_stage": "planning"
+        }
     
     next_stage = "planning" if is_info_complete else "profiling"
     
@@ -458,6 +684,7 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
         "user_preferences": preferences,  # Update with mood
         "optimization_applied": True,  # Mark as optimized
         "session_stage": "optimizing",
+        "itinerary_status": "DRAFT",  # New itinerary starts as DRAFT
         "messages": state["messages"] + [AIMessage(content=explanation)]
     }
 
@@ -610,6 +837,360 @@ def budget_calculator_node(state: TravelState) -> TravelState:
         "messages": state["messages"] + [AIMessage(content=budget_message)]
     }
 
+def itinerary_modifier_node(state: TravelState) -> TravelState:
+    """
+    Node: Modify existing itinerary based on user request
+    """
+    print("✏️ ItineraryModifier: Processing modification request...")
+    
+    messages = state["messages"]
+    last_message = messages[-1].content if messages else ""
+    current_itinerary = state.get("current_itinerary", [])
+    itinerary_id = state.get("itinerary_id")
+    
+    # CRITICAL: If we have itinerary_id but no current_itinerary, fetch from database
+    if itinerary_id and not current_itinerary:
+        print(f"   ⚠️  No current_itinerary in state but have itinerary_id: {itinerary_id}")
+        print(f"   🔄 Fetching itinerary from database...")
+        
+        try:
+            from pymongo import MongoClient
+            import os
+            
+            # Connect to MongoDB
+            mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+            client = MongoClient(mongo_uri)
+            db = client["travel_planner"]
+            collection = db["ai_itineraries"]
+            
+            # Fetch itinerary by ID
+            from bson import ObjectId
+            itinerary_doc = collection.find_one({"_id": ObjectId(itinerary_id)})
+            
+            if itinerary_doc and "itinerary" in itinerary_doc:
+                current_itinerary = itinerary_doc["itinerary"]
+                print(f"   ✅ Fetched {len(current_itinerary)} places from database")
+            else:
+                print(f"   ❌ Itinerary not found in database: {itinerary_id}")
+                return {
+                    **state,
+                    "messages": state["messages"] + [AIMessage(content="❌ Không tìm thấy lộ trình. Vui lòng tạo lộ trình mới.")],
+                    "session_stage": "error"
+                }
+        except Exception as e:
+            print(f"   ❌ Error fetching itinerary from database: {e}")
+            return {
+                **state,
+                "messages": state["messages"] + [AIMessage(content=f"❌ Lỗi khi tải lộ trình: {str(e)}")],
+                "session_stage": "error"
+            }
+    
+    # Check if we still don't have itinerary
+    if not current_itinerary:
+        print(f"   ❌ No itinerary to modify!")
+        return {
+            **state,
+            "messages": state["messages"] + [AIMessage(content="❌ Bạn chưa có lộ trình nào. Vui lòng tạo lộ trình mới trước.")],
+            "session_stage": "error"
+        }
+    
+    # Parse modification request
+    system_prompt = """
+    Bạn là AI assistant chuyên parse yêu cầu chỉnh sửa lộ trình.
+    
+    Phân tích yêu cầu và trả về JSON format:
+    {
+        "action": "add" | "remove" | "replace",
+        "place_name": "tên địa điểm",
+        "day": số ngày (nếu có),
+        "replace_with": "địa điểm mới" (nếu action = replace)
+    }
+    
+    Ví dụ:
+    - "Bỏ Chùa Linh Ứng" → {"action": "remove", "place_name": "Chùa Linh Ứng"}
+    - "Thêm Bà Nà Hills vào ngày 2" → {"action": "add", "place_name": "Bà Nà Hills", "day": 2}
+    - "Thay VinWonders bằng Hội An" → {"action": "replace", "place_name": "VinWonders", "replace_with": "Hội An"}
+    
+    Chỉ trả về JSON, không giải thích.
+    """
+    
+    # Simple keyword-based modification (more reliable than JSON parsing)
+    user_text = last_message.lower()
+    updated_itinerary = current_itinerary.copy()
+    response_msg = ""
+    
+    print(f"   📝 User message (lowercased): '{user_text}'")
+    
+    # Check if user is confirming a previous duplicate warning
+    is_confirmation = any(word in user_text[:10] for word in ["có", "được", "yes", "ok", "chắc chắn"]) and "thêm" in user_text
+    
+    try:
+        # PRIORITY: Handle confirmation of duplicate add
+        if is_confirmation:
+            # Extract place name from confirmation message
+            place_query = user_text
+            confirm_words = ["có", "được", "yes", "ok", "chắc chắn", "thêm", "vào", "lộ trình", ",", "."]
+            for word in confirm_words:
+                place_query = place_query.replace(word, " ")
+            place_query = " ".join(place_query.split()).strip()
+            
+            print(f"   ✅ User confirmed to add duplicate: '{place_query}'")
+            
+            # Search and add the place (force add even if duplicate)
+            try:
+                from pymongo import MongoClient
+                import os
+                
+                MONGO_URI = os.getenv("MONGO_URI")
+                DB_NAME = os.getenv("DATABASE_NAME")
+                mongo_client = MongoClient(MONGO_URI)
+                mongo_db = mongo_client[DB_NAME]
+                places_coll = mongo_db["places"]
+                
+                # Use fuzzy search with word overlap scoring
+                query_words = set(place_query.lower().split())
+                all_places = list(places_coll.find())
+                
+                best_match = None
+                best_score = 0.0
+                for p in all_places:
+                    place_name = p.get("name", "")
+                    place_words = set(place_name.lower().split())
+                    common = query_words.intersection(place_words)
+                    score = len(common) / len(query_words) if query_words else 0
+                    if score > best_score:
+                        best_score = score
+                        best_match = p
+                
+                print(f"   🎯 Best match score: {best_score:.2f}")
+                found_place = best_match if best_score > 0.3 else None
+                
+                if found_place:
+                    found_place.pop('_id', None)
+                    place_data = {
+                        "googlePlaceId": found_place.get("googlePlaceId", ""),
+                        "name": found_place.get("name", place_query),
+                        "address": found_place.get("address", ""),
+                        "formatted_address": found_place.get("formatted_address", found_place.get("address", "")),
+                        "type": found_place.get("type", "tourist_attraction"),
+                        "location": found_place.get("location", {}),
+                        "budgetRange": found_place.get("budgetRange", "mid-range"),
+                        "emotionalTags": found_place.get("emotionalTags", {}),
+                        "openingHours": found_place.get("openingHours", found_place.get("regularOpeningHours", {})),
+                        "rating": found_place.get("rating"),
+                        "user_ratings_total": found_place.get("user_ratings_total"),
+                        "photos": found_place.get("photos", []),
+                        "description": found_place.get("description", ""),
+                        "visit_duration_minutes": found_place.get("visit_duration_minutes", 90),
+                        "priceLevel": found_place.get("priceLevel"),
+                        "phone": found_place.get("phone", ""),
+                        "website": found_place.get("website", "")
+                    }
+                    
+                    new_item = {
+                        "day": len(updated_itinerary) // 3 + 1,
+                        "time": "14:00",
+                        "activity": "Tham quan",
+                        "place": place_data,
+                        "duration_minutes": place_data.get("visit_duration_minutes", 90),
+                        "notes": "Địa điểm được thêm bởi người dùng (confirmed duplicate)"
+                    }
+                    
+                    updated_itinerary.append(new_item)
+                    response_msg = f"✅ Đã thêm **{place_data['name']}** vào lộ trình (lần 2).\n\n📋 Lộ trình hiện có {len(updated_itinerary)} địa điểm."
+                else:
+                    response_msg = f"❌ Không tìm thấy địa điểm '{place_query}' để thêm."
+            except Exception as e:
+                print(f"   ❌ Error adding confirmed place: {e}")
+                response_msg = f"❌ Không thể thêm địa điểm. Vui lòng thử lại."
+            
+            # Return immediately after handling confirmation - don't continue to ADD/REMOVE logic
+            return {
+                **state,
+                "messages": state["messages"] + [AIMessage(content=response_msg)],
+                "current_itinerary": updated_itinerary,
+                "stage": "modified"
+            }
+        
+        # REMOVE action
+        elif any(word in user_text for word in ["bỏ", "xóa", "xoá", "remove", "loại"]):
+            # Extract place name - simple approach: remove action keywords and get the main text
+            place_query = user_text
+            remove_words = ["bỏ", "xóa", "remove", "loại", "ra", "khỏi", "lộ trình", "itinerary", "đi", "muốn", "tôi"]
+            for word in remove_words:
+                place_query = place_query.replace(word, " ")
+            place_query = " ".join(place_query.split()).strip()  # Clean whitespace
+            
+            print(f"   🔍 Looking for place to remove: '{place_query}'")
+            
+            # Fuzzy matching: Find best match using word overlap
+            best_match = None
+            best_score = 0
+            query_words = set([w.lower() for w in place_query.split() if len(w) >= 2])
+            
+            for item in current_itinerary:
+                place_name = item.get("place", {}).get("name", "")
+                place_words = set([w.lower() for w in place_name.split() if len(w) >= 2])
+                
+                # Calculate word overlap score
+                common_words = query_words.intersection(place_words)
+                if common_words:
+                    score = len(common_words) / max(len(query_words), 1)
+                    if score > best_score:
+                        best_score = score
+                        best_match = item
+            
+            # Accept match if score > 0.3 (at least 30% word overlap)
+            if best_match and best_score > 0.3:
+                place_name = best_match.get("place", {}).get("name", "")
+                updated_itinerary = [
+                    it for it in updated_itinerary 
+                    if it.get("place", {}).get("name", "") != place_name
+                ]
+                response_msg = f"✅ Đã xóa **{place_name}** khỏi lộ trình.\n\n📋 Lộ trình còn lại {len(updated_itinerary)} địa điểm."
+                print(f"   ✅ Removed: {place_name} (match score: {best_score:.2f})")
+            else:
+                # Show available places to help user
+                places_list = [item.get("place", {}).get("name", "") for item in current_itinerary if item.get("place")]
+                response_msg = f"❌ Không tìm thấy địa điểm '{place_query}' trong lộ trình.\n\n📍 Các địa điểm hiện có:\n" + "\n".join([f"• {p}" for p in places_list[:10]])
+        
+        # ADD action
+        elif any(word in user_text for word in ["thêm", "add", "bổ sung"]):
+            # Extract place name - simple approach: remove action keywords and get the main text
+            place_query = user_text
+            add_words = ["thêm", "add", "bổ sung", "vào", "vô", "cho", "tôi", "lộ trình", "itinerary", "địa điểm"]
+            for word in add_words:
+                place_query = place_query.replace(word, " ")
+            place_query = " ".join(place_query.split()).strip()  # Clean whitespace
+            
+            print(f"   🔍 Looking for place to add: '{place_query}'")
+            
+            if len(place_query) < 3:
+                response_msg = "❌ Vui lòng cho biết tên địa điểm bạn muốn thêm.\n\nVí dụ: 'Thêm Hồ Tuyền Lâm', 'Thêm Thiền viện Trúc Lâm'"
+            else:
+                # Search for the place in database with FULL details from MongoDB
+                try:
+                    from pymongo import MongoClient
+                    import os
+                    
+                    # Connect directly to MongoDB to get complete place data
+                    MONGO_URI = os.getenv("MONGO_URI")
+                    DB_NAME = os.getenv("DATABASE_NAME")
+                    mongo_client = MongoClient(MONGO_URI)
+                    mongo_db = mongo_client[DB_NAME]
+                    places_coll = mongo_db["places"]
+                    
+                    preferences = state.get("user_preferences", UserPreferences())
+                    location_filter = preferences.start_location or "vietnam"
+                    
+                    # Build search filter with name and location
+                    search_filter = {
+                        "name": {"$regex": place_query, "$options": "i"}
+                    }
+                    
+                    # Add location filter if specified
+                    if location_filter and location_filter.lower() != "vietnam":
+                        search_filter["$or"] = [
+                            {"address": {"$regex": location_filter, "$options": "i"}},
+                            {"formatted_address": {"$regex": location_filter, "$options": "i"}}
+                        ]
+                    
+                    # Get full place document from database (not projection - get ALL fields)
+                    found_place = places_coll.find_one(search_filter)
+                    
+                    if found_place:
+                        # Remove MongoDB _id field and extract complete place data
+                        found_place.pop('_id', None)
+                        
+                        # Ensure all required fields exist with defaults
+                        place_data = {
+                            "googlePlaceId": found_place.get("googlePlaceId", ""),
+                            "name": found_place.get("name", place_query),
+                            "address": found_place.get("address", ""),
+                            "formatted_address": found_place.get("formatted_address", found_place.get("address", "")),
+                            "type": found_place.get("type", "tourist_attraction"),
+                            "location": found_place.get("location", {}),
+                            "budgetRange": found_place.get("budgetRange", "mid-range"),
+                            "emotionalTags": found_place.get("emotionalTags", {}),
+                            "openingHours": found_place.get("openingHours", found_place.get("regularOpeningHours", {})),
+                            "rating": found_place.get("rating"),
+                            "user_ratings_total": found_place.get("user_ratings_total"),
+                            "photos": found_place.get("photos", []),
+                            "description": found_place.get("description", ""),
+                            "visit_duration_minutes": found_place.get("visit_duration_minutes", 90),
+                            "priceLevel": found_place.get("priceLevel"),
+                            "phone": found_place.get("phone", ""),
+                            "website": found_place.get("website", "")
+                        }
+                        
+                        print(f"   ✅ Found place in DB: {place_data['name']} (googlePlaceId: {place_data['googlePlaceId']})")
+                        
+                        # CHECK IF PLACE ALREADY EXISTS IN ITINERARY
+                        place_exists = False
+                        for existing_item in updated_itinerary:
+                            existing_place = existing_item.get("place", {})
+                            # Check by googlePlaceId OR name similarity
+                            if existing_place.get("googlePlaceId") == place_data["googlePlaceId"]:
+                                place_exists = True
+                                break
+                            # Check by name similarity (fuzzy match)
+                            existing_name_words = set([w.lower() for w in existing_place.get("name", "").split() if len(w) >= 2])
+                            new_name_words = set([w.lower() for w in place_data["name"].split() if len(w) >= 2])
+                            common = existing_name_words.intersection(new_name_words)
+                            if common and len(common) / max(len(new_name_words), 1) > 0.5:  # 50% overlap
+                                place_exists = True
+                                break
+                        
+                        if place_exists:
+                            # Place already in itinerary - ask for confirmation
+                            response_msg = f"⚠️ **{place_data['name']}** đã có trong lộ trình.\n\n❓ Bạn có chắc chắn muốn thêm lại địa điểm này không?\n\n💡 Nếu muốn thêm, hãy nói: 'Có, thêm {place_data['name']}'\n💡 Nếu không, hãy thử địa điểm khác."
+                            print(f"   ⚠️  Place already exists, asking for confirmation")
+                        else:
+                            # Create new itinerary item with COMPLETE place data
+                            new_item = {
+                                "day": len(updated_itinerary) // 3 + 1,  # Estimate day
+                                "time": "14:00",  # Default afternoon time
+                                "activity": "Tham quan",
+                                "place": place_data,
+                                "duration_minutes": place_data.get("visit_duration_minutes", 90),
+                                "notes": "Địa điểm được thêm bởi người dùng"
+                            }
+                            
+                            updated_itinerary.append(new_item)
+                            response_msg = f"✅ Đã thêm **{place_data['name']}** vào lộ trình.\n\n📋 Lộ trình hiện có {len(updated_itinerary)} địa điểm.\n\n💡 Tip: Bạn có thể tối ưu lại lộ trình để sắp xếp thứ tự hợp lý hơn."
+                            print(f"   ✅ Added place to itinerary")
+                    else:
+                        response_msg = f"❌ Không tìm thấy địa điểm '{place_query}' tại {location_filter}.\n\n💡 Vui lòng thử:\n• Tên khác của địa điểm\n• Tên đầy đủ hơn\n• Kiểm tra chính tả"
+                        
+                except Exception as search_error:
+                    print(f"   ❌ Error adding place: {search_error}")
+                    import traceback
+                    traceback.print_exc()
+                    response_msg = f"❌ Không thể thêm địa điểm '{place_query}'.\n\n💡 Vui lòng thử lại hoặc mô tả rõ hơn."
+        
+        # REPLACE action  
+        elif any(word in user_text for word in ["thay", "đổi", "replace", "change"]):
+            response_msg = "✅ Tính năng thay thế địa điểm đang được phát triển.\n\n💡 Bạn có thể:\n• Xóa địa điểm cũ và tạo lộ trình mới\n• Hoặc tạo lộ trình hoàn toàn mới"
+        
+        else:
+            response_msg = "❌ Tôi chưa hiểu yêu cầu chỉnh sửa của bạn.\n\n💡 Bạn có thể nói:\n• 'Bỏ [tên địa điểm]'\n• 'Xóa [tên địa điểm]'\n• 'Thêm [tên địa điểm]'"
+        
+        return {
+            **state,
+            "current_itinerary": updated_itinerary,
+            "messages": state["messages"] + [AIMessage(content=response_msg)],
+            "session_stage": "modified",
+            "itinerary": updated_itinerary  # Return modified itinerary to backend
+        }
+    
+    except Exception as e:
+        print(f"   ❌ Error parsing modification: {e}")
+        error_msg = "❌ Xin lỗi, tôi chưa hiểu yêu cầu của bạn. Bạn có thể nói rõ hơn không?\n\nVí dụ: 'Bỏ Chùa Linh Ứng', 'Thêm Bà Nà Hills vào ngày 2'"
+        return {
+            **state,
+            "messages": state["messages"] + [AIMessage(content=error_msg)]
+        }
+
 def final_response_node(state: TravelState) -> TravelState:
     """
     Node 6: Format final response with complete itinerary
@@ -618,6 +1199,7 @@ def final_response_node(state: TravelState) -> TravelState:
     
     itinerary = state["current_itinerary"]
     preferences = state["user_preferences"]
+    itinerary_status = state.get("itinerary_status", "DRAFT")
     
     # Create comprehensive final response
     final_message = f"""
@@ -655,19 +1237,34 @@ def final_response_node(state: TravelState) -> TravelState:
     • Phù hợp với sở thích {preferences.travel_style} của nhóm {preferences.group_type}
     • Nằm trong ngân sách {preferences.budget_range}
     • Đã kiểm tra giờ mở cửa và thời tiết
+    """
     
-    💡 **Bạn có thể yêu cầu tôi:**
-    • Thay đổi một địa điểm nào đó
-    • Điều chỉnh thời gian
-    • Thêm/bớt hoạt động
-    • Tính lại ngân sách
+    # Add status-specific suggestions
+    if itinerary_status == "DRAFT":
+        final_message += f"""
     
-    Chúc bạn có một chuyến đi tuyệt vời! 🚀
+    � **Trạng thái:** ✏️ Bản nháp (DRAFT) - Bạn vẫn có thể chỉnh sửa!
+    
+    💡 **Bạn có thể làm gì tiếp theo:**
+    • 🗑️ "Bỏ [tên địa điểm]" - Xóa một địa điểm khỏi lộ trình
+    • ➕ "Thêm [tên địa điểm]" - Thêm địa điểm mới (đang phát triển)
+    • 🔄 "Thay [địa điểm A] bằng [địa điểm B]" (đang phát triển)
+    • ✅ "Xác nhận lộ trình" - Hoàn tất và lưu vào kế hoạch của bạn
+    
+    ⚠️ Lưu ý: Bản nháp này sẽ được lưu tự động và bạn có thể quay lại chỉnh sửa bất cứ lúc nào!
+    """
+    else:
+        final_message += f"""
+    
+    ✅ **Trạng thái:** Đã xác nhận (CONFIRMED)
+    
+    🎉 Chúc bạn có một chuyến đi tuyệt vời! 🚀
     """
     
     return {
         **state,
         "session_stage": "complete",
+        "itinerary_status": itinerary_status,  # Preserve status
         "messages": state["messages"] + [AIMessage(content=final_message)]
     }
 
@@ -682,19 +1279,57 @@ def create_travel_agent_graph():
     workflow = StateGraph(TravelState)
     
     # Add nodes
+    workflow.add_node("intent_classifier", intent_classifier_node)
+    workflow.add_node("travel_question_answerer", travel_question_answerer_node)
     workflow.add_node("profile_collector", profile_collector_node)
     workflow.add_node("itinerary_planner", itinerary_planner_node)
+    workflow.add_node("itinerary_modifier", itinerary_modifier_node)
     workflow.add_node("route_optimizer", route_optimizer_node)
     workflow.add_node("feasibility_checker", feasibility_checker_node)
     workflow.add_node("budget_calculator", budget_calculator_node)
     workflow.add_node("final_response", final_response_node)
     
     # Define routing logic
+    def route_after_intent_classification(state: TravelState):
+        """Route based on detected intent"""
+        stage = state.get("session_stage", "profiling")
+        intent = state.get("intent", "")
+        has_itinerary = state.get("itinerary_id") or state.get("current_itinerary")
+        
+        print(f"   🔀 Routing after intent: intent={intent}, stage={stage}, has_itinerary={bool(has_itinerary)}")
+        
+        if stage == "off_topic":
+            return END  # End conversation for off-topic
+        elif stage == "answering_question":
+            return "travel_question_answerer"
+        elif "itinerary_modification" in intent and has_itinerary:
+            print("   → Going to itinerary_modifier")
+            return "itinerary_modifier"  # User wants to modify existing itinerary
+        else:
+            print("   → Going to profile_collector")
+            return "profile_collector"  # Default: start profiling
+    
     def route_after_profiling(state: TravelState):
-        if state["session_stage"] == "planning":
+        stage = state.get("session_stage", "profiling")
+        preferences = state.get("user_preferences", UserPreferences())
+        
+        # Check if we have all required info to create itinerary
+        is_info_complete = all([
+            preferences.start_location,
+            preferences.travel_style,
+            preferences.group_type,
+            preferences.budget_range,
+            preferences.duration
+        ])
+        
+        print(f"   🔀 Routing after profiling: stage={stage}, complete={is_info_complete}")
+        
+        if stage == "planning" or is_info_complete:
+            print("   → Going to itinerary_planner")
             return "itinerary_planner"
         else:
-            return "profile_collector"  # Continue profiling
+            print("   → Staying in profile_collector (missing info)")
+            return END  # End and wait for next message
     
     def route_after_planning(state: TravelState):
         return "route_optimizer"
@@ -709,7 +1344,10 @@ def create_travel_agent_graph():
         return "final_response"
     
     # Add edges
-    workflow.add_edge(START, "profile_collector")
+    workflow.add_edge(START, "intent_classifier")
+    workflow.add_conditional_edges("intent_classifier", route_after_intent_classification)
+    workflow.add_edge("travel_question_answerer", END)
+    workflow.add_edge("itinerary_modifier", END)  # After modification, show result and end
     workflow.add_conditional_edges("profile_collector", route_after_profiling)
     workflow.add_conditional_edges("itinerary_planner", route_after_planning)
     workflow.add_conditional_edges("route_optimizer", route_after_optimization)
@@ -741,8 +1379,16 @@ class TravelAgent:
         
         # Initialize or update state
         if conversation_state:
-            state = conversation_state
+            # Preserve existing state and add new message
+            state = conversation_state.copy()
             state["messages"].append(HumanMessage(content=user_message))
+            
+            # Ensure user_preferences is UserPreferences object (not dict)
+            if isinstance(state.get("user_preferences"), dict):
+                state["user_preferences"] = UserPreferences(**state["user_preferences"])
+            
+            print(f"   📋 Resuming conversation with {len(state['messages'])} messages")
+            print(f"   📍 Existing preferences: location={state['user_preferences'].start_location}, style={state['user_preferences'].travel_style}")
         else:
             state = {
                 "messages": [HumanMessage(content=user_message)],
@@ -753,8 +1399,12 @@ class TravelAgent:
                 "budget_calculated": False,
                 "session_stage": "profiling",
                 "user_location": None,
-                "travel_date": None
+                "travel_date": None,
+                "intent": None,
+                "itinerary_status": None,
+                "itinerary_id": None
             }
+            print(f"   🆕 Starting new conversation")
         
         # Run the graph
         try:
@@ -763,6 +1413,10 @@ class TravelAgent:
             # Extract the latest AI response
             ai_messages = [msg for msg in final_state["messages"] if isinstance(msg, AIMessage)]
             latest_response = ai_messages[-1].content if ai_messages else "Xin lỗi, tôi không thể xử lý yêu cầu của bạn."
+            
+            # Debug: Log final state
+            print(f"   ✅ Conversation complete: stage={final_state.get('session_stage')}, messages={len(final_state['messages'])}")
+            print(f"   📍 Final preferences: location={final_state['user_preferences'].start_location}, style={final_state['user_preferences'].travel_style}")
             
             return {
                 "response": latest_response,
