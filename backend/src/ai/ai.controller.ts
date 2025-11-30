@@ -283,4 +283,58 @@ export class AiController {
             );
         }
     }
+
+    /**
+     * Xác nhận lộ trình (DRAFT → CONFIRMED)
+     * Khi user hài lòng với lộ trình đã chỉnh sửa
+     */
+    @Post('itineraries/:id/confirm')
+    @UseGuards(JwtAuthGuard)
+    async confirmItinerary(@Req() req: any, @Param('id') itineraryId: string) {
+        try {
+            const userId = req.user?.userId || req.user?.sub || req.user?.id;
+
+            if (!userId) {
+                throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+            }
+
+            return await this.aiService.confirmItinerary(userId, itineraryId);
+        } catch (error) {
+            if (error instanceof HttpException) {
+                throw error;
+            }
+
+            throw new HttpException(
+                'Failed to confirm itinerary',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+
+    /**
+     * Enrich itinerary với Google Directions API
+     * (Thêm polyline và travel_duration_minutes cho mỗi leg)
+     */
+    @Post('itineraries/:id/enrich')
+    @UseGuards(JwtAuthGuard)
+    async enrichItinerary(@Req() req: any, @Param('id') itineraryId: string) {
+        try {
+            const userId = req.user?.userId || req.user?.sub || req.user?.id;
+
+            if (!userId) {
+                throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+            }
+
+            return await this.aiService.enrichItineraryWithDirections(userId, itineraryId);
+        } catch (error) {
+            if (error instanceof HttpException) {
+                throw error;
+            }
+
+            throw new HttpException(
+                'Failed to enrich itinerary',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
 }

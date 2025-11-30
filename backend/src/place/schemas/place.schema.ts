@@ -48,6 +48,9 @@ export class Place {
     type: string;
 
     @Prop([String])
+    types?: string[];
+
+    @Prop([String])
     images?: string[];
 
     @Prop()

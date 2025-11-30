@@ -5,6 +5,7 @@ import { ProfileModule } from './profile/profile.module';
 import { DatabaseModule } from './database/database.module';
 import { ConfigModule } from '@nestjs/config';
 import { PlaceModule } from './place/place.module';
+import { FavoritesModule } from './likeModules/likes.module';
 import { ItineraryModule } from './itinerary/itinerary.module';
 import { AiModule } from './ai/ai.module';
 
@@ -18,6 +19,7 @@ import { AiModule } from './ai/ai.module';
     ItineraryModule,
     ProfileModule,
     AiModule,
+    FavoritesModule,
   ],
   controllers: [],
   providers: [],

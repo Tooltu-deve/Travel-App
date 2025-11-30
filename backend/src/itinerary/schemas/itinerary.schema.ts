@@ -1,6 +1,16 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
+export type ItineraryAlert = {
+  type: string;
+  title: string;
+  message: string;
+  severity: 'info' | 'warning' | 'danger';
+  from?: string;
+  to?: string;
+  tags?: string[];
+};
+
 export type ItineraryDocument = Document & {
   _id: Types.ObjectId;
   route_id: string;
@@ -89,6 +99,26 @@ export class Itinerary {
     index: true,
   })
   status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+
+  @Prop({
+    type: [
+      {
+        type: { type: String },
+        title: { type: String },
+        message: { type: String },
+        severity: {
+          type: String,
+          enum: ['info', 'warning', 'danger'],
+          default: 'info',
+        },
+        from: { type: String },
+        to: { type: String },
+        tags: [{ type: String }],
+      },
+    ],
+    default: [],
+  })
+  alerts?: ItineraryAlert[];
 }
 
 export const ItinerarySchema = SchemaFactory.createForClass(Itinerary);

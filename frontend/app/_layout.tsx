@@ -1,8 +1,12 @@
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+<<<<<<< HEAD
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import React, { useEffect } from 'react';
 import './global.css';
+=======
+import { FavoritesProvider } from '@/contexts/FavoritesContext';
+>>>>>>> ee0233d159f213c096118a101f4b9e09aec97945
 
 /**
  * Navigation Logic Component
@@ -49,8 +53,13 @@ function NavigationHandler() {
  */
 export default function RootLayout() {
   return (
+<<<<<<< HEAD
     <ThemeProvider>
       <AuthProvider>
+=======
+    <AuthProvider>
+      <FavoritesProvider>
+>>>>>>> ee0233d159f213c096118a101f4b9e09aec97945
         <NavigationHandler />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" options={{ headerShown: false }} />
@@ -65,7 +74,12 @@ export default function RootLayout() {
             }} 
           />
         </Stack>
+<<<<<<< HEAD
       </AuthProvider>
     </ThemeProvider>
+=======
+      </FavoritesProvider>
+    </AuthProvider>
+>>>>>>> ee0233d159f213c096118a101f4b9e09aec97945
   );
 }

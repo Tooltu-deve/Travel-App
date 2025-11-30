@@ -165,11 +165,45 @@ async def chat_with_agent(request: ChatRequest):
         # Get existing conversation state
         conversation_state = conversations.get(conversation_key)
         
+        # Debug logging
+        if conversation_state:
+            logging.info(f"📋 Found existing conversation: {conversation_key} with {len(conversation_state.get('messages', []))} messages")
+            # Handle UserPreferences object (has attributes, not dict keys)
+            prefs = conversation_state.get('user_preferences')
+            if prefs:
+                if hasattr(prefs, 'start_location'):
+                    # Pydantic model
+                    logging.info(f"   📍 Preserved: location={prefs.start_location}, group={prefs.group_type}")
+                elif isinstance(prefs, dict):
+                    # Dict
+                    logging.info(f"   📍 Preserved: location={prefs.get('start_location')}, group={prefs.get('group_type')}")
+        else:
+            logging.info(f"🆕 Creating new conversation: {conversation_key}")
+            if request.session_id:
+                # User provided session_id but no state found
+                logging.warning(f"   ⚠️  Session ID provided but no state found! Available sessions: {list(conversations.keys())[:5]}")
+            else:
+                logging.info(f"   ℹ️  No session_id provided, generating new one")
+        
+        # Update state with context from backend (e.g., itinerary_id)
+        if request.context and conversation_state:
+            if request.context.get('itinerary_id'):
+                conversation_state['itinerary_id'] = request.context['itinerary_id']
+                logging.info(f"   🔗 Updated state with itinerary_id from context: {request.context['itinerary_id']}")
+        
         # Call the AI agent
         result = travel_agent.chat(request.message, conversation_state)
         
         # Update conversation storage
         conversations[conversation_key] = result["state"]
+        logging.info(f"💾 Saved conversation state: {conversation_key} (total: {len(conversations)} conversations)")
+        
+        # Debug: Verify state was saved
+        saved_state = conversations.get(conversation_key)
+        if saved_state:
+            logging.info(f"   ✅ Verification: State saved with {len(saved_state.get('messages', []))} messages")
+        else:
+            logging.error(f"   ❌ Verification FAILED: State not found after save!")
         
         # Generate suggestions
         suggestions = extract_suggestions(result["stage"], result["preferences"])
@@ -183,7 +217,8 @@ async def chat_with_agent(request: ChatRequest):
             "response_length": len(result["response"]),
             "optimization_applied": result["state"].get("optimization_applied", False),
             "weather_checked": result["state"].get("weather_checked", False),
-            "budget_calculated": result["state"].get("budget_calculated", False)
+            "budget_calculated": result["state"].get("budget_calculated", False),
+            "itinerary_id": result["state"].get("itinerary_id")  # Include itinerary_id for modifications
         }
         
         return ChatResponse(
@@ -222,6 +257,42 @@ async def reset_conversation(request: ResetRequest):
         
     except Exception as e:
         logging.error(f"Error in reset endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/update-state")
+async def update_conversation_state(request: dict):
+    """
+    Update conversation state with external data (e.g., itinerary_id from backend)
+    """
+    try:
+        user_id = request.get("user_id")
+        session_id = request.get("session_id")
+        state_updates = request.get("state_updates", {})
+        
+        if not user_id or not session_id:
+            raise HTTPException(status_code=400, detail="user_id and session_id are required")
+        
+        conversation_key = get_conversation_key(user_id, session_id)
+        
+        if conversation_key not in conversations:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Update state with provided fields
+        current_state = conversations[conversation_key]
+        for key, value in state_updates.items():
+            current_state[key] = value
+            logging.info(f"Updated state {conversation_key}: {key}={value}")
+        
+        return {
+            "message": "State updated successfully",
+            "conversation_key": conversation_key,
+            "updates": state_updates
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error in update-state endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/conversations/{user_id}")
@@ -297,7 +368,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",  # Import string format để enable reload
         host="0.0.0.0",
-        port=8000,
+        port=8001,  # Changed from 8000 to avoid conflict
         reload=True,  # For development
         log_level="info"
     )

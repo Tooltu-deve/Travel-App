@@ -135,6 +135,9 @@ def optimize_route(places: List[Dict], start_location: Optional[Tuple[float, flo
     Tối ưu hóa thứ tự các địa điểm để tối thiểu hóa quãng đường di chuyển.
     Sử dụng thuật toán Nearest Neighbor đơn giản.
     
+    DEPRECATED: Hàm này đang được giữ lại cho backward compatibility.
+    Sử dụng optimize_route_with_ecs() để tận dụng AI Optimizer Service.
+    
     Args:
         places: List các địa điểm cần sắp xếp
         start_location: Điểm bắt đầu (lat, lng). Nếu None, bắt đầu từ địa điểm đầu tiên
@@ -203,6 +206,111 @@ def optimize_route(places: List[Dict], start_location: Optional[Tuple[float, flo
     except Exception as e:
         print(f"Error optimizing route: {e}")
         return places
+
+@tool
+def optimize_route_with_ecs(
+    places: List[Dict],
+    user_mood: str,
+    duration_days: int,
+    current_location: Dict[str, float],
+    start_datetime: Optional[str] = None,
+    ecs_score_threshold: float = 0.0
+) -> Dict:
+    """
+    Tối ưu hóa lộ trình sử dụng AI Optimizer Service với ECS scoring.
+    
+    Args:
+        places: List các địa điểm (POI) từ MongoDB
+        user_mood: Mood của user (map từ travel_style + group_type)
+        duration_days: Số ngày du lịch
+        current_location: Vị trí hiện tại {'lat': float, 'lng': float}
+        start_datetime: Thời gian bắt đầu (ISO 8601), optional
+        ecs_score_threshold: Ngưỡng ECS tối thiểu (default: 0.0)
+        
+    Returns:
+        Dict: {
+            'optimized_route': List[Dict] - Lộ trình đã tối ưu theo ngày
+        }
+    """
+    try:
+        AI_OPTIMIZER_URL = os.getenv("AI_OPTIMIZER_SERVICE_URL", "http://localhost:8000")
+        
+        # Convert places to AI Optimizer format
+        poi_list = []
+        for place in places:
+            # Extract coordinates
+            if 'location' in place and 'coordinates' in place['location']:
+                lng, lat = place['location']['coordinates']
+            elif 'latitude' in place and 'longitude' in place:
+                lat, lng = place['latitude'], place['longitude']
+            else:
+                continue  # Skip places without coordinates
+            
+            # Convert emotional tags from Map to Dict if needed
+            emotional_tags = {}
+            if 'emotionalTags' in place:
+                if isinstance(place['emotionalTags'], dict):
+                    emotional_tags = place['emotionalTags']
+                else:
+                    # If it's a MongoDB Map, convert to dict
+                    emotional_tags = dict(place['emotionalTags'])
+            
+            # Format opening hours
+            opening_hours = place.get('openingHours') or place.get('regularOpeningHours') or {}
+            
+            poi = {
+                'google_place_id': place.get('googlePlaceId') or str(place.get('_id')),
+                'name': place.get('name', 'Unknown'),
+                'emotional_tags': emotional_tags,
+                'location': {'lat': lat, 'lng': lng},
+                'opening_hours': opening_hours,
+                'visit_duration_minutes': place.get('visit_duration_minutes', 90)
+            }
+            poi_list.append(poi)
+        
+        if not poi_list:
+            print("⚠️ No valid POIs to optimize")
+            return {'optimized_route': []}
+        
+        # Prepare request payload
+        payload = {
+            'poi_list': poi_list,
+            'user_mood': user_mood,
+            'duration_days': duration_days,
+            'current_location': current_location,
+            'start_datetime': start_datetime,
+            'ecs_score_threshold': ecs_score_threshold
+        }
+        
+        print(f"🔄 Calling AI Optimizer Service with {len(poi_list)} POIs...")
+        print(f"   → User mood: {user_mood}")
+        print(f"   → Duration: {duration_days} days")
+        print(f"   → ECS threshold: {ecs_score_threshold}")
+        
+        # Call AI Optimizer Service
+        response = requests.post(
+            f"{AI_OPTIMIZER_URL}/optimize-route",
+            json=payload,
+            timeout=60  # 60 seconds timeout
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            print(f"✅ AI Optimizer returned {len(result.get('optimized_route', []))} days")
+            return result
+        else:
+            print(f"❌ AI Optimizer error: {response.status_code} - {response.text}")
+            return {'optimized_route': []}
+            
+    except requests.exceptions.Timeout:
+        print("⏱️ AI Optimizer Service timeout")
+        return {'optimized_route': []}
+    except requests.exceptions.ConnectionError:
+        print("🔌 Cannot connect to AI Optimizer Service")
+        return {'optimized_route': []}
+    except Exception as e:
+        print(f"Error calling AI Optimizer Service: {e}")
+        return {'optimized_route': []}
 
 @tool
 def check_opening_status(place: Dict, target_time: Optional[str] = None) -> Dict:
@@ -465,6 +573,7 @@ TOOLS = [
     search_places,
     calculate_distance, 
     optimize_route,
+    optimize_route_with_ecs,  # NEW: AI Optimizer Service integration
     check_opening_status,
     check_weather,
     calculate_budget_estimate

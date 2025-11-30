@@ -29,16 +29,12 @@ export class CreateUserDto {
   facebookId?: string;
 }
 
-export type UserDocument = Document & {
-  _id: Types.ObjectId;
-  email: string;
-  password?: string | null;
-  fullName: string;
-  avatar?: string;
-  googleId?: string;
-  facebookId?: string;
-  id: string;
-};
+export type UserDocument =
+  User &
+  Document & {
+    _id: Types.ObjectId;
+    id: string;
+  };
 
 @Schema({
   timestamps: true,
@@ -71,6 +67,12 @@ export class User {
 
   @Prop([String]) // Một mảng các chuỗi
   preferredTags?: string[]; // vd: ['romantic', 'quiet', 'local gem']
+
+  /**
+   * List of placeIds that the user has liked (favorite places)
+   */
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Place' }], default: [] })
+  likedPlaces: Types.ObjectId[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
