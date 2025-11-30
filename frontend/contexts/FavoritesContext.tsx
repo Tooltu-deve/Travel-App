@@ -54,7 +54,8 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       const remote = (await getLikedPlacesAPI(token)) || [];
       const enriched = await Promise.all(remote.map(async (p: any) => {
-        const id = p.placeId || p._id || p.id;
+        // backend may return `place_id` (snake_case) or `placeId`/`_id` etc.
+        const id = p.place_id || p.placeId || p._id || p.id;
         let base = p;
         if (!p.name || !p.type) {
           const d = id ? await getPlaceDetails(id) : null;
@@ -70,7 +71,8 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ...base, moods };
       }));
       setFavorites(enriched);
-      const ids = new Set<string>(enriched.map((p: any) => p.google_place_id || p.googlePlaceId || p.placeId || p.id || p._id).filter(Boolean) as string[]);
+      // include place_id (snake_case) when building the set of liked ids
+      const ids = new Set<string>(enriched.map((p: any) => p.google_place_id || p.googlePlaceId || p.place_id || p.placeId || p.id || p._id).filter(Boolean) as string[]);
       setLikedPlaceIds(ids);
     } catch (err) {
       console.warn('refreshFavorites failed', err);
