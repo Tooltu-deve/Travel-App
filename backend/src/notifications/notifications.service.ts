@@ -10,6 +10,7 @@ interface CreateNotificationDto {
   message?: string;
   entityType?: EntityType;
   entityId?: Types.ObjectId | null;
+  routeId?: string | null;
 }
 
 interface NotificationFilter {
@@ -48,6 +49,7 @@ export class NotificationsService {
       message: item.message,
       entity_type: item.entityType,
       entity_id: item.entityId,
+      route_id: item.routeId,
       is_read: item.isRead,
       created_at: item.createdAt || item.created_at,
       updated_at: item.updatedAt || item.updated_at,

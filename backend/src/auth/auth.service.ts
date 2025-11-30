@@ -101,9 +101,9 @@ export class AuthService {
     return {
       access_token: this.jwtService.sign(payload),
       user: {
-        user_id: (user._id || user.id)?.toString(),
+        _id: user._id || user.id,
         email: user.email,
-        full_name: user.fullName,
+        full_name: user.full_name,
       },
     };
   }

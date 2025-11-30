@@ -26,6 +26,9 @@ export class Notification {
   @Prop({ type: Types.ObjectId, default: null })
   entityId?: Types.ObjectId | null;
 
+  @Prop({ type: String, default: null })
+  routeId?: string | null;
+
   @Prop({ type: Boolean, default: false, index: true })
   isRead: boolean;
 }
@@ -50,6 +53,10 @@ NotificationSchema.set('toJSON', {
     if ('entityId' in ret) {
       (ret as any).entity_id = ret.entityId;
       delete (ret as any).entityId;
+    }
+    if ('routeId' in ret) {
+      (ret as any).route_id = ret.routeId;
+      delete (ret as any).routeId;
     }
     if ('isRead' in ret) {
       (ret as any).is_read = ret.isRead;
