@@ -64,15 +64,15 @@ export class UserService {
     userId: string,
     dto: UpdateUserPreferencesDto,
   ): Promise<User> {
-    const { preferredTags } = dto;
+  const { preferencedTags } = dto;
 
-    const updatedUser = await this.userModel
-      .findByIdAndUpdate(
-        userId,
-        { $set: { preferredTags: preferredTags } },
-        { new: true }, // Trả về tài liệu user đã được cập nhật
-      )
-      .exec();
+  const updatedUser = await this.userModel
+    .findByIdAndUpdate(
+    userId,
+    { $set: { preferencedTags: preferencedTags } },
+    { new: true }, // Trả về tài liệu user đã được cập nhật
+    )
+    .exec();
 
     if (!updatedUser) {
       throw new NotFoundException('Không tìm thấy người dùng');
@@ -81,6 +81,5 @@ export class UserService {
     updatedUser.password = undefined; // Luôn ẩn password khi trả về
     return updatedUser;
   }
-
 }
 

@@ -4,11 +4,15 @@ import {
   Request,
   UseGuards,
   Body,
-  Get, // Thêm Get
+  Get,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { CreateUserDto } from 'src/user/dto/create-user.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -16,13 +20,46 @@ export class AuthController {
 
   @Post('register')
   async register(@Body() createUserDto: CreateUserDto) {
-    return this.authService.register(createUserDto);
+    const result = await this.authService.register(createUserDto);
+    return {
+      access_token: result.access_token,
+      user: {
+        _id: result.user._id,
+        email: result.user.email,
+        full_name: result.user.full_name,
+        preferenced_tags: result.user.preferenced_tags || [],
+      },
+    };
   }
 
   @UseGuards(AuthGuard('local'))
   @Post('login')
   async login(@Request() req) {
-    return this.authService.login(req.user);
+    const result = await this.authService.login(req.user);
+    return {
+      access_token: result.access_token,
+      user: {
+        _id: result.user._id,
+        email: result.user.email,
+        full_name: result.user.full_name,
+        preferenced_tags: result.user.preferenced_tags || [],
+      },
+    };
+  }
+
+  /**
+   * Đổi mật khẩu cho user đang đăng nhập
+   * Yêu cầu JWT token và currentPassword, newPassword
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @Request() req,
+    @Body() changePasswordDto: ChangePasswordDto,
+  ) {
+    await this.authService.changePassword(req.user.userId, changePasswordDto);
+    return { message: 'Đổi mật khẩu thành công' };
   }
 
   // --- API MỚI CHO GOOGLE ---
@@ -53,7 +90,16 @@ export class AuthController {
   async googleAuthCallback(@Request() req) {
     // Đăng nhập thành công, req.user đã có
     // Trả về JWT Token của CHÍNH MÌNH
-    return this.authService.login(req.user);
+    const result = await this.authService.login(req.user);
+    return {
+      access_token: result.access_token,
+      user: {
+        _id: result.user._id,
+        email: result.user.email,
+        full_name: result.user.full_name,
+        preferenced_tags: result.user.preferenced_tags || [],
+      },
+    };
   }
 }
 

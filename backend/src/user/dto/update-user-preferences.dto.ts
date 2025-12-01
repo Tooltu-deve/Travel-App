@@ -8,5 +8,5 @@ export class UpdateUserPreferencesDto {
   @IsArray()
   @IsString({ each: true }) // Đảm bảo mỗi phần tử trong mảng là 1 string
   @IsOptional()
-  preferredTags: string[]; // vd: ['romantic', 'quiet', 'local gem']
+  preferencedTags: string[]; // vd: ['romantic', 'quiet', 'local gem']
 }
