@@ -76,29 +76,50 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const token = await AsyncStorage.getItem('userToken');
         
         if (token) {
-          console.log('✅ Token found');
+          console.log('✅ Token found, validating with backend...');
           
-          // Skip validation since backend doesn't have /validate endpoint
-          // Assume token is valid if exists
-          const userDataStr = await AsyncStorage.getItem('userData');
-          if (userDataStr) {
-            const userDataParsed = JSON.parse(userDataStr);
-            setUserData(userDataParsed);
-            setIsAuthenticated(true);
-            console.log('✅ User authenticated from stored data');
-          } else {
-            // No userData, clear token
+          try {
+            // Validate token với backend
+            const response = await validateTokenAPI(token);
+            
+            if (response.success && response.user) {
+              // Token hợp lệ, set userData và authenticated
+              const userData: UserData = {
+                id: response.user.id,
+                email: response.user.email,
+                fullName: response.user.fullName,
+              };
+              
+              // Cập nhật AsyncStorage với userData mới nhất từ backend
+              await AsyncStorage.setItem('userData', JSON.stringify(userData));
+              
+              setUserData(userData);
+              setIsAuthenticated(true);
+              console.log('✅ User authenticated via backend validation');
+            } else {
+              // Token không hợp lệ
+              console.log('❌ Token validation failed:', response.message);
+              await AsyncStorage.removeItem('userToken');
+              await AsyncStorage.removeItem('userData');
+              setIsAuthenticated(false);
+            }
+          } catch (validateError: any) {
+            // Lỗi khi gọi API (network, 401, etc.)
+            console.error('❌ Token validation error:', validateError);
             await AsyncStorage.removeItem('userToken');
-            console.log('❌ No userData, clearing token');
+            await AsyncStorage.removeItem('userData');
+            setIsAuthenticated(false);
           }
         } else {
           console.log('ℹ️ No token found');
+          setIsAuthenticated(false);
         }
       } catch (error) {
         console.error('❌ Check auth error:', error);
         // Nếu lỗi (network, etc.) → Clear storage
         await AsyncStorage.removeItem('userToken');
         await AsyncStorage.removeItem('userData');
+        setIsAuthenticated(false);
       } finally {
         setIsLoading(false);
       }
