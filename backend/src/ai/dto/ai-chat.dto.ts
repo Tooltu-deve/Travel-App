@@ -54,7 +54,12 @@ export class AuthenticatedChatRequestDto {
 
     @ApiPropertyOptional({
         description: 'Context bổ sung cho cuộc trò chuyện',
-        example: { location: 'Hanoi', previous_preferences: {} },
+        example: {
+            location: 'Hanoi',
+            previous_preferences: {},
+            current_location: { lat: 21.0285, lng: 105.8542 },
+            active_place_id: 'ChIJDWNZ_iBZwokRKq0lj8yw3QI'
+        },
     })
     @IsOptional()
     @IsObject()
@@ -62,6 +67,43 @@ export class AuthenticatedChatRequestDto {
 
     // userId sẽ được thêm từ JWT token, không cần trong request body
     userId?: string;
+}
+
+/**
+ * DTO for Live Travel Companion requests
+ */
+export class CompanionRequestDto {
+    @ApiProperty({
+        description: 'Câu hỏi của user (real-time travel question)',
+        example: 'Gần đây có quán ăn nào ngon không?',
+    })
+    @IsString()
+    @IsNotEmpty()
+    message: string;
+
+    @ApiPropertyOptional({
+        description: 'Vị trí hiện tại của user (GPS coordinates)',
+        example: { lat: 21.0285, lng: 105.8542 },
+    })
+    @IsOptional()
+    @IsObject()
+    currentLocation?: { lat: number; lng: number };
+
+    @ApiPropertyOptional({
+        description: 'Place ID của địa điểm hiện tại (nếu user đang tại một địa điểm)',
+        example: 'ChIJDWNZ_iBZwokRKq0lj8yw3QI',
+    })
+    @IsOptional()
+    @IsString()
+    activePlaceId?: string;
+
+    @ApiPropertyOptional({
+        description: 'Session ID (optional)',
+        example: 'session_456',
+    })
+    @IsOptional()
+    @IsString()
+    sessionId?: string;
 }
 
 export class ChatResponseDto {
