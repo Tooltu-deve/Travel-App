@@ -22,7 +22,7 @@ import { BlurView } from 'expo-blur';
 import { COLORS } from '../../constants';
 import { useAuth } from '../../contexts/AuthContext';
 import ItineraryDetailScreen from './ItineraryDetailScreen';
-import useLocation, { LocationCoordinates } from '../../hooks/useLocation';
+import useLocation from '../../hooks/useLocation';
 
 const { width } = Dimensions.get('window');
 
@@ -237,15 +237,17 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
     setInputText('');
     setIsLoading(true);
 
-    // Request location if not already available
+    // Check if user is asking about nearby places and request location if needed
+    const isNearbyQuery = message.toLowerCase().includes('gần') || 
+                          message.toLowerCase().includes('quanh') ||
+                          message.toLowerCase().includes('xung quanh');
+
     let currentLocation = location;
-    if (!currentLocation && message.toLowerCase().includes('gần')) {
-      console.debug('[Chat] Requesting location for nearby places query');
+    if (isNearbyQuery && !currentLocation) {
+      console.debug('[Chat] Nearby query detected, requesting location...');
       currentLocation = await requestLocation();
-      if (!currentLocation) {
-        Alert.alert('GPS không khả dụng', locationError || 'Không thể lấy vị trí của bạn. Vui lòng bật GPS.');
-        setIsLoading(false);
-        return;
+      if (currentLocation) {
+        console.debug('[Chat] Location obtained for nearby query:', currentLocation);
       }
     }
 
@@ -257,14 +259,15 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
         try {
           const requestBody: any = { message, sessionId };
           
-          // Add location if available
+          // Add location in context if available
           if (currentLocation) {
-            requestBody.location = {
-              latitude: currentLocation.latitude,
-              longitude: currentLocation.longitude,
-              accuracy: currentLocation.accuracy,
+            requestBody.context = {
+              current_location: {
+                lat: currentLocation.latitude,
+                lng: currentLocation.longitude,
+              },
             };
-            console.debug('[Chat] Sending location:', requestBody.location);
+            console.debug('[Chat] Sending location in context:', requestBody.context.current_location);
           }
           
           console.debug('Sending chat request', requestBody);
@@ -649,12 +652,9 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
                         </View>
 
                         {[
-                          'Lên kế hoạch du lịch 5 ngày ở Hà Nội và Hạ Long',
-                          'Đề xuất các địa điểm du lịch nổi tiếng ở miền Nam Việt Nam',
-                          'Chia sẻ kinh nghiệm và lời khuyên du lịch tiết kiệm',
-                          'Những đặc sản và món ăn đặc biệt nên thử ở các tỉnh miền Trung',
-                          'Hôm nay thích đi đâu? Gợi ý cho tôi các điểm du lịch gần đây',
-                          'Cách du lịch tiết kiệm chi phí mà vẫn vui vẻ'
+                          'Gần đây có quán cà phê nào không?',
+                          'Tôi muốn du lịch Hà Nội, 4 người, 3 ngày, ngân sách 10 triệu đồng',
+                          'Gợi ý lộ trình du lịch Đà Nẵng - Hội An, 2 người, 2 ngày, 5 triệu đồng'
                         ].map((suggestion, index) => (
                           <TouchableOpacity 
                             key={index}
@@ -758,36 +758,6 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
                 maxLength={500}
                 placeholderTextColor={COLORS.textSecondary}
               />
-              
-              {/* GPS Button */}
-              <TouchableOpacity
-                style={[
-                  styles.gpsButton,
-                  (locationLoading || !token) && styles.gpsButtonDisabled,
-                  location && styles.gpsButtonActive,
-                ]}
-                onPress={requestLocation}
-                disabled={locationLoading || !token}
-              >
-                <LinearGradient
-                  colors={
-                    location
-                      ? ['#10B981', '#059669']
-                      : locationLoading
-                      ? [COLORS.disabled, COLORS.disabled]
-                      : [COLORS.primary + '40', COLORS.primary + '20']
-                  }
-                  style={styles.gpsButtonGradient}
-                >
-                  <MaterialCommunityIcons
-                    name={location ? "check-circle" : locationLoading ? "loading" : "crosshairs-gps"}
-                    size={20}
-                    color={location ? COLORS.textWhite : COLORS.primary}
-                  />
-                </LinearGradient>
-              </TouchableOpacity>
-
-              {/* Send Button */}
               <TouchableOpacity
                 style={[styles.sendButton, (!inputText.trim() || isLoading || !token) && styles.sendButtonDisabled]}
                 onPress={() => sendMessage(inputText)}
@@ -916,6 +886,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 4,
+    flexShrink: 1,
   },
   userMessage: {
     backgroundColor: COLORS.bgMain,
@@ -975,24 +946,28 @@ const styles = StyleSheet.create({
   },
   messageContent: {
     marginBottom: 8,
+    flexShrink: 1,
   },
   messageText: {
     fontSize: 15,
     lineHeight: 24,
     letterSpacing: 0.2,
     color: COLORS.textMain,
+    flexWrap: 'wrap',
   },
   messageTextContent: {
     fontSize: 15,
     lineHeight: 24,
     color: COLORS.textMain,
     fontWeight: '400',
+    flexWrap: 'wrap',
   },
   boldText: {
     fontSize: 15,
     lineHeight: 24,
     color: COLORS.textMain,
     fontWeight: '700',
+    flexWrap: 'wrap',
   },
   italicText: {
     fontSize: 15,
@@ -1000,6 +975,7 @@ const styles = StyleSheet.create({
     color: COLORS.textMain,
     fontStyle: 'italic',
     fontWeight: '400',
+    flexWrap: 'wrap',
   },
   codeInlineText: {
     fontSize: 14,
@@ -1304,32 +1280,6 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontWeight: '500',
     letterSpacing: 0.2,
-  },
-  gpsButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    overflow: 'hidden',
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  gpsButtonGradient: {
-    width: '100%',
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  gpsButtonDisabled: {
-    shadowOpacity: 0.08,
-    elevation: 1,
-  },
-  gpsButtonActive: {
-    shadowColor: '#10B981',
-    shadowOpacity: 0.35,
-    elevation: 5,
   },
 });
 

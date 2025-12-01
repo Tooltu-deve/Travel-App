@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import * as Location from 'expo-location';
 
 export interface LocationCoordinates {
@@ -33,6 +33,7 @@ export const useLocation = (): UseLocationReturn => {
   const checkPermission = async () => {
     try {
       const { status } = await Location.getForegroundPermissionsAsync();
+      console.debug('[useLocation] Permission status:', status);
       setHasPermission(status === 'granted');
     } catch (err: any) {
       console.error('[useLocation] Permission check error:', err);
@@ -57,16 +58,18 @@ export const useLocation = (): UseLocationReturn => {
         const msg = 'Quyền truy cập GPS bị từ chối';
         setError(msg);
         setHasPermission(false);
+        console.warn('[useLocation]', msg);
         return null;
       }
 
       setHasPermission(true);
 
       // Get current location
+      console.debug('[useLocation] Requesting location with High accuracy...');
       const currentLocation = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-        timeInterval: 1000,
-        distanceInterval: 10,
+        accuracy: Location.Accuracy.High,
+        timeout: 15000,
+        maximumAge: 0,
       });
 
       const coords: LocationCoordinates = {
@@ -79,7 +82,11 @@ export const useLocation = (): UseLocationReturn => {
         speed: currentLocation.coords.speed || undefined,
       };
 
-      console.debug('[useLocation] Location obtained:', coords);
+      console.debug('[useLocation] Location obtained:', {
+        lat: coords.latitude.toFixed(6),
+        lng: coords.longitude.toFixed(6),
+        accuracy: coords.accuracy,
+      });
       setLocation(coords);
       return coords;
     } catch (err: any) {
