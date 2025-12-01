@@ -30,6 +30,51 @@ class OpeningHours {
     weekdayDescriptions?: string[];
 }
 
+@Schema({ _id: false })
+class PhotoAttribution {
+  @Prop()
+  displayName?: string;
+
+  @Prop()
+  uri?: string;
+
+  @Prop()
+  photoUri?: string;
+}
+
+@Schema({ _id: false })
+class PlacePhoto {
+  @Prop({ required: true })
+  name: string;
+
+  @Prop()
+  widthPx?: number;
+
+  @Prop()
+  heightPx?: number;
+
+  @Prop({ type: [PhotoAttribution], default: [] })
+  authorAttributions?: PhotoAttribution[];
+}
+
+@Schema({ _id: false })
+class PlaceReview {
+  @Prop()
+  name?: string;
+
+  @Prop()
+  relativePublishTimeDescription?: string;
+
+  @Prop()
+  rating?: number;
+
+  @Prop()
+  text?: string;
+
+  @Prop({ type: [PhotoAttribution], default: [] })
+  authorAttributions?: PhotoAttribution[];
+}
+
 @Schema({ timestamps: true })
 export class Place {
     @Prop({ required: true })
@@ -44,17 +89,29 @@ export class Place {
     @Prop()
     description?: string;
 
-    @Prop({ type: String, enum: PlaceTypes, default: PlaceTypes.OTHER })
+    @Prop({ type: String, default: PlaceTypes.OTHER })
     type: string;
 
     @Prop([String])
     types?: string[];
 
-    @Prop([String])
-    images?: string[];
+    @Prop({ type: [PlacePhoto], default: [] })
+    photos?: PlacePhoto[];
 
     @Prop()
     rating?: number;
+
+    @Prop()
+    websiteUri?: string;
+
+    @Prop()
+    contactNumber?: string;
+
+    @Prop({ type: String })
+    editorialSummary?: string;
+
+    @Prop({ type: [PlaceReview], default: [] })
+    reviews?: PlaceReview[];
 
     @Prop({ type: String })
     budgetRange?: string; // vd: 'free', 'affordable'
@@ -67,6 +124,9 @@ export class Place {
 
     @Prop({ type: MongooseSchema.Types.Map, of: Number }) // Lưu trữ tags cảm xúc
     emotionalTags?: Map<string, number>;
+
+    @Prop({ type: Date, default: null })
+    lastEnrichedAt?: Date;
 }
 
 export const PlaceSchema = SchemaFactory.createForClass(Place);
