@@ -12,13 +12,9 @@ const EditProfileScreen: React.FC = () => {
   const { userData } = useAuth();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [avatar, setAvatar] = useState('');
+  const [preferencedTags, setPreferencedTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [dob, setDob] = useState(''); // Ngày sinh
-  const [address, setAddress] = useState(''); // Nơi cư trú
-  const [phone, setPhone] = useState(''); // Số điện thoại
-  const [gender, setGender] = useState(''); // Giới tính
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { darkMode } = useTheme();
@@ -29,13 +25,11 @@ const EditProfileScreen: React.FC = () => {
       const token = await AsyncStorage.getItem('userToken');
       if (!token) throw new Error('No token');
       const res = await getProfileAPI(token);
-      if (res && res.email) setEmail(res.email);
-      if (res && res.fullName) setFullName(res.fullName);
-      if (res && res.avatar) setAvatar(res.avatar);
-      if (res && res.dob) setDob(res.dob);
-      if (res && res.address) setAddress(res.address);
-      if (res && res.phone) setPhone(res.phone);
-      if (res && res.gender) setGender(res.gender);
+      if (res) {
+        setEmail(res.email || '');
+        setFullName(res.full_name || '');
+        setPreferencedTags(res.preferenced_tags || []);
+      }
     } catch (e) {
       Alert.alert('Lỗi', 'Không thể tải thông tin cá nhân');
     } finally {
@@ -52,17 +46,17 @@ const EditProfileScreen: React.FC = () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
       if (!token) throw new Error('No token');
-      const res = await updateProfileAPI(token, { fullName, avatar, dob, address, phone, gender });
-      if (res && res.user) {
-        setFullName(res.user.fullName || '');
-        setAvatar(res.user.avatar || '');
-        setDob(res.user.dob || '');
-        setAddress(res.user.address || '');
-        setPhone(res.user.phone || '');
-        setGender(res.user.gender || '');
-        Alert.alert('Thành công', 'Đã cập nhật thông tin cá nhân');
+      console.log('📤 Sending preferencedTags:', preferencedTags);
+      const res = await updateProfileAPI(token, preferencedTags);
+      console.log('📥 Response from API:', res);
+      if (res) {
+        setEmail(res.email || '');
+        setFullName(res.full_name || '');
+        setPreferencedTags(res.preferenced_tags || []);
+        Alert.alert('Thành công', 'Đã cập nhật sở thích của bạn');
       }
     } catch (error) {
+      console.error('❌ Update error:', error);
       Alert.alert('Lỗi', 'Không thể cập nhật thông tin');
     } finally {
       setSaving(false);
@@ -119,35 +113,14 @@ const EditProfileScreen: React.FC = () => {
       </View>
       {/* --------------------- */}
 
-      {/* Avatar section */}
-      <View style={styles.avatarSection}>
-        <Image
-          source={avatar ? { uri: avatar } : require('../../assets/images/avatar-default.png')}
-          style={styles.avatar}
-        />
-      </View>
-
-      {/* Group 1: Liên hệ */}
-      <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Liên hệ</Text>
+      {/* Thông tin cơ bản */}
+      <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Thông tin tài khoản</Text>
       <View style={styles.fieldRow}>
         <MaterialIcons name="person" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
         <TextInput
-          style={[styles.inputRow, dynamicStyles.inputRow]}
+          style={[styles.inputRow, dynamicStyles.inputDisabled]}
           value={fullName}
-          onChangeText={setFullName}
-          placeholder="Tên hiển thị"
-          placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
-        />
-      </View>
-      <View style={styles.fieldRow}>
-        <MaterialIcons name="phone" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
-        <TextInput
-          style={[styles.inputRow, dynamicStyles.inputRow]}
-          value={phone}
-          onChangeText={setPhone}
-          placeholder="Số điện thoại"
-          keyboardType="phone-pad"
-          placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
+          editable={false}
         />
       </View>
       <View style={styles.fieldRow}>
@@ -159,51 +132,43 @@ const EditProfileScreen: React.FC = () => {
         />
       </View>
 
-      {/* Group 2: Thông tin cá nhân */}
-      <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Thông tin cá nhân</Text>
+      {/* Emotional Tags Section */}
+      <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Sở thích của bạn (Emotional Tags)</Text>
+      <Text style={[styles.helperText, { color: darkMode ? '#9CA3AF' : '#6B7280' }]}>
+        Nhập các tag cảm xúc/sở thích của bạn, cách nhau bởi dấu phẩy
+      </Text>
       <View style={styles.fieldRow}>
-        <MaterialIcons name="calendar-today" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
+        <MaterialCommunityIcons name="tag-multiple" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
         <TextInput
-          style={[styles.inputRow, dynamicStyles.inputRow]}
-          value={dob}
-          onChangeText={setDob}
-          placeholder="Ngày sinh (dd/mm/yyyy)"
+          style={[styles.inputRow, dynamicStyles.inputRow, styles.tagsInput]}
+          value={preferencedTags.join(', ')}
+          onChangeText={(text) => {
+            const tags = text.split(',').map(t => t.trim()).filter(t => t.length > 0);
+            setPreferencedTags(tags);
+          }}
+          placeholder="VD: bình yên, sôi động, lãng mạn, thư giãn"
           placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
+          multiline
         />
       </View>
-      <View style={styles.fieldRow}>
-        <FontAwesome5 name="venus-mars" size={18} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
-        <View style={styles.genderRow}>
-          <TouchableOpacity
-            style={[styles.genderBtn, dynamicStyles.genderBtn, gender === 'male' && styles.genderBtnActive]}
-            onPress={() => setGender('male')}
-          >
-            <Text style={[styles.genderText, dynamicStyles.genderText, gender === 'male' && styles.genderTextActive]}>Nam</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.genderBtn, dynamicStyles.genderBtn, gender === 'female' && styles.genderBtnActive]}
-            onPress={() => setGender('female')}
-          >
-            <Text style={[styles.genderText, dynamicStyles.genderText, gender === 'female' && styles.genderTextActive]}>Nữ</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.genderBtn, dynamicStyles.genderBtn, gender === 'other' && styles.genderBtnActive]}
-            onPress={() => setGender('other')}
-          >
-            <Text style={[styles.genderText, dynamicStyles.genderText, gender === 'other' && styles.genderTextActive]}>Khác</Text>
-          </TouchableOpacity>
+      
+      {/* Hiển thị tags dạng chips */}
+      {preferencedTags.length > 0 && (
+        <View style={styles.tagsContainer}>
+          {preferencedTags.map((tag, index) => (
+            <View key={index} style={[styles.tagChip, { backgroundColor: darkMode ? '#3b82f6' : '#2196F3' }]}>
+              <Text style={styles.tagChipText}>{tag}</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setPreferencedTags(preferencedTags.filter((_, i) => i !== index));
+                }}
+              >
+                <MaterialIcons name="close" size={16} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          ))}
         </View>
-      </View>
-      <View style={styles.fieldRow}>
-        <MaterialIcons name="location-on" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
-        <TextInput
-          style={[styles.inputRow, dynamicStyles.inputRow]}
-          value={address}
-          onChangeText={setAddress}
-          placeholder="Địa chỉ"
-          placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
-        />
-      </View>
+      )}
 
       {/* Save button at the end */}
       <TouchableOpacity style={[styles.saveBtn, dynamicStyles.saveBtn]} onPress={handleSave} disabled={saving}>
@@ -297,33 +262,35 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
-  genderRow: {
-    flex: 1,
+  helperText: {
+    fontSize: 13,
+    marginBottom: 8,
+    marginLeft: 2,
+  },
+  tagsInput: {
+    minHeight: 60,
+    textAlignVertical: 'top',
+  },
+  tagsContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
+    marginTop: 12,
+    marginBottom: 8,
   },
-  genderBtn: {
-    flex: 1,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    paddingVertical: 10,
-    marginRight: 8,
+  tagChip: {
+    flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  genderBtnActive: {
     backgroundColor: '#2196F3',
-    borderColor: '#2196F3',
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 6,
   },
-  genderText: {
-    color: '#1E293B',
-    fontWeight: '500',
-    fontSize: 15,
-  },
-  genderTextActive: {
+  tagChipText: {
     color: '#fff',
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '500',
   },
   saveBtn: {
     marginTop: 32,

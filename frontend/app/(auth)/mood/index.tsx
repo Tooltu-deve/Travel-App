@@ -41,11 +41,11 @@ async function fetchAvailableMoods() {
 // Lưu preferences của user
 async function saveUserPreferences(moods: string[], token?: string) {
   try {
-    const url = `${BASE_URL}/users/profile/preferences`;
+    const url = `${BASE_URL}/users/profile`;
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     console.log('🔄 PATCH:', url);
-    console.log('📦 Body:', { preferences: moods });
-    const res = await axios.patch(url, { preferences: moods }, { headers });
+    console.log('📦 Body:', { preferencedTags: moods });
+    const res = await axios.patch(url, { preferencedTags: moods }, { headers });
     console.log('✅ Save preferences response:', res.data);
     return res.data;
   } catch (err: any) {
@@ -308,8 +308,19 @@ export default function MoodSelectionScreen() {
 
       console.log('✅ Selected moods:', selectedMoods);
 
-      // TODO: Lưu preferences khi backend có endpoint
-      // await saveUserPreferences(selectedMoods);
+      // Lưu preferences vào backend
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const token = await AsyncStorage.getItem('userToken');
+        if (token) {
+          await saveUserPreferences(selectedMoods, token);
+          console.log('✅ Đã lưu preferences thành công');
+        } else {
+          console.log('⚠️ Không có token, bỏ qua lưu preferences');
+        }
+      } catch (err) {
+        console.log('⚠️ Không thể lưu preferences, nhưng vẫn tiếp tục');
+      }
 
       // Chuyển sang main app
       router.replace('/(tabs)');

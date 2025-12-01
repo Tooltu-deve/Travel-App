@@ -500,6 +500,68 @@ export const getLikedPlacesAPI = async (
 };
 
 /**
+ * getProfileAPI: Lấy thông tin profile của user hiện tại
+ * 
+ * @param token - JWT token
+ * @returns Profile với email, full_name, preferenced_tags
+ * 
+ * Endpoint: GET /users/profile
+ * Headers: Authorization: Bearer <token>
+ * Response: { email, full_name, preferenced_tags }
+ */
+export const getProfileAPI = async (
+  token: string,
+): Promise<{
+  email: string;
+  full_name: string;
+  preferenced_tags: string[];
+}> => {
+  return makeRequest<{
+    email: string;
+    full_name: string;
+    preferenced_tags: string[];
+  }>('/api/v1/users/profile', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * updateProfileAPI: Cập nhật emotional tags của user
+ * 
+ * @param token - JWT token
+ * @param preferencedTags - Array các emotional tags
+ * @returns Profile đã cập nhật
+ * 
+ * Endpoint: PATCH /users/profile
+ * Headers: Authorization: Bearer <token>
+ * Request: { preferencedTags: string[] }
+ * Response: { email, full_name, preferenced_tags }
+ */
+export const updateProfileAPI = async (
+  token: string,
+  preferencedTags: string[],
+): Promise<{
+  email: string;
+  full_name: string;
+  preferenced_tags: string[];
+}> => {
+  return makeRequest<{
+    email: string;
+    full_name: string;
+    preferenced_tags: string[];
+  }>('/api/v1/users/profile', {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ preferencedTags }),
+  });
+};
+
+/**
  * getPlaceByIdAPI: Lấy chi tiết place theo internal DB id (`placeId` / `_id`)
  * Public endpoint: GET /api/v1/places/:id
  */
@@ -524,72 +586,20 @@ export const getPlacesAPI = async (): Promise<any[]> => {
 // ============================================
 // EXPORT
 // ============================================
-
-
-// ================= PROFILE APIs =================
-/**
- * getProfileAPI: Lấy thông tin cá nhân
- * Endpoint: GET /api/v1/profile
- * @param token - JWT token
- */
-const getProfileAPI = async (token: string): Promise<any> => {
-  return makeRequest<any>('/api/v1/profile', {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-};
-
-const updateProfileAPI = async (
-  token: string,
-  data: {
-    fullName?: string;
-    avatar?: string;
-    dob?: string;
-    address?: string;
-    phone?: string;
-    gender?: string;
-  }
-): Promise<any> => {
-  // Nếu avatar là chuỗi rỗng, loại bỏ khỏi payload
-  const cleanData = { ...data };
-  if (cleanData.avatar === '') {
-    delete cleanData.avatar;
-  }
-  return makeRequest<any>('/api/v1/profile', {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(cleanData),
-  });
-};
-
-const changePasswordAPI = async (token: string, data: { currentPassword: string; newPassword: string }): Promise<any> => {
-  return makeRequest<any>('/api/v1/profile/password', {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(data),
-  });
-};
-
-const deleteAvatarAPI = async (token: string): Promise<any> => {
-  return makeRequest<any>('/api/v1/profile/avatar', {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-};
-
-
-// Export default and named exports after all declarations
-export {
+export default {
+  loginAPI,
+  registerAPI,
+  validateTokenAPI,
+  logoutAPI,
+  googleLoginAPI,
+  generateRouteAPI,
+  updateRouteStatusAPI,
+  deleteRouteAPI,
+  getRoutesAPI,
+  getMoodsAPI,
+  getFavoritesByMoodAPI,
+  likePlaceAPI,
+  getLikedPlacesAPI,
   getProfileAPI,
   updateProfileAPI,
-  changePasswordAPI,
-  deleteAvatarAPI,
 };
