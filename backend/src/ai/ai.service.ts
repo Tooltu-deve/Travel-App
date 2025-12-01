@@ -20,7 +20,7 @@ export class AiService {
         // AI Agent URL from environment or default
         this.AI_AGENT_URL =
             this.configService.get<string>('AI_AGENT_URL') ||
-            'http://localhost:8000';
+            'http://localhost:8001';  // AI Agent runs on port 8001
     }
 
     /**
@@ -30,12 +30,30 @@ export class AiService {
         try {
             this.logger.log(`Sending request to AI Agent: ${chatRequest.message.substring(0, 50)}...`);
 
-            const response = await firstValueFrom(
+            // Prepare context - include itinerary_id from latest DRAFT itinerary if not provided
+            let requestContext = chatRequest.context || {};
+
+            // If context doesn't have itinerary_id, try to get latest DRAFT itinerary
+            if (!requestContext.itinerary_id) {
+                try {
+                    const latestDraftItinerary = await this.aiItineraryModel
+                        .findOne({ userId: chatRequest.userId, status: 'DRAFT' })
+                        .sort({ updatedAt: -1 })
+                        .exec();
+
+                    if (latestDraftItinerary) {
+                        requestContext.itinerary_id = (latestDraftItinerary._id as any).toString();
+                        this.logger.log(`Auto-attached latest DRAFT itinerary: ${requestContext.itinerary_id}`);
+                    }
+                } catch (err) {
+                    this.logger.warn(`Failed to fetch latest DRAFT itinerary: ${err.message}`);
+                }
+            } const response = await firstValueFrom(
                 this.httpService.post(`${this.AI_AGENT_URL}/chat`, {
                     message: chatRequest.message,
                     user_id: chatRequest.userId,
                     session_id: chatRequest.sessionId,
-                    context: chatRequest.context,
+                    context: requestContext,
                 }, {
                     timeout: 30000, // 30 second timeout
                 })
@@ -56,11 +74,59 @@ export class AiService {
             // Auto-save completed itinerary to database
             if (response.data.stage === 'complete' && response.data.itinerary?.length > 0) {
                 try {
-                    await this.saveItineraryToDatabase(chatRequest.userId, responseData);
-                    this.logger.log(`Auto-saved itinerary for user ${chatRequest.userId}`);
+                    const savedItinerary = await this.saveItineraryToDatabase(chatRequest.userId, responseData);
+                    const itineraryId = (savedItinerary._id as any).toString();
+                    responseData.itineraryId = itineraryId;
+                    this.logger.log(`Auto-saved itinerary ${itineraryId} for user ${chatRequest.userId}`);
+
+                    // Update AI Agent state with itinerary_id and itinerary data
+                    try {
+                        await this.updateAgentStateWithItineraryId(
+                            chatRequest.userId,
+                            responseData.sessionId,
+                            itineraryId,
+                            responseData.itinerary  // Pass itinerary data for modification
+                        );
+                    } catch (stateError) {
+                        this.logger.error(`Failed to update AI Agent state: ${stateError.message}`);
+                    }
                 } catch (saveError) {
                     this.logger.error(`Failed to auto-save itinerary: ${saveError.message}`);
                     // Don't throw error, just log it - user still gets the response
+                }
+            }
+
+            // Update database when itinerary is modified
+            if (response.data.stage === 'modified' && response.data.itinerary?.length > 0) {
+                try {
+                    // Get itinerary_id from context or metadata
+                    const itineraryId = chatRequest.context?.itinerary_id || responseData.metadata?.itinerary_id;
+
+                    if (itineraryId) {
+                        // Check if itinerary status allows modification
+                        const existingItinerary = await this.aiItineraryModel.findById(itineraryId).exec();
+
+                        if (!existingItinerary) {
+                            this.logger.warn(`Itinerary ${itineraryId} not found`);
+                        } else if (existingItinerary.status === 'CONFIRMED') {
+                            this.logger.warn(`Cannot modify CONFIRMED itinerary ${itineraryId}`);
+                            // Override response to inform user
+                            responseData.response = '❌ Không thể chỉnh sửa lộ trình đã xác nhận.\n\nLộ trình này đã được xác nhận và không thể thay đổi. Bạn có thể tạo lộ trình mới hoặc tạo bản sao để chỉnh sửa.';
+                            responseData.stage = 'error';
+                        } else {
+                            // Only update if status is DRAFT or ARCHIVED
+                            await this.updateItinerary(chatRequest.userId, itineraryId, {
+                                itinerary: responseData.itinerary,
+                                preferences: responseData.preferences,
+                            });
+                            responseData.itineraryId = itineraryId;
+                            this.logger.log(`Updated DRAFT itinerary ${itineraryId} after modification`);
+                        }
+                    } else {
+                        this.logger.warn('Modified itinerary but no itinerary_id found');
+                    }
+                } catch (updateError) {
+                    this.logger.error(`Failed to update modified itinerary: ${updateError.message}`);
                 }
             }
 
@@ -183,6 +249,30 @@ export class AiService {
     }
 
     /**
+     * Update AI Agent conversation state with itinerary_id and itinerary data
+     */
+    private async updateAgentStateWithItineraryId(userId: string, sessionId: string, itineraryId: string, itinerary?: any[]): Promise<void> {
+        try {
+            await firstValueFrom(
+                this.httpService.post(`${this.AI_AGENT_URL}/update-state`, {
+                    user_id: userId,
+                    session_id: sessionId,
+                    state_updates: {
+                        itinerary_id: itineraryId,
+                        current_itinerary: itinerary || []  // Save itinerary data for modification
+                    }
+                }, {
+                    timeout: 5000
+                })
+            );
+            this.logger.log(`Updated AI Agent state with itinerary_id: ${itineraryId}`);
+        } catch (error) {
+            this.logger.error(`Failed to update AI Agent state: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
      * Lưu lộ trình vào database khi AI tạo xong
      */
     private async saveItineraryToDatabase(userId: string, aiResponse: ChatResponseDto): Promise<AiItineraryDocument> {
@@ -210,7 +300,7 @@ export class AiService {
                 preferences: aiResponse.preferences,
                 itinerary: aiResponse.itinerary,
                 metadata: aiResponse.metadata,
-                status: 'completed',
+                status: 'DRAFT',  // Set as DRAFT when AI creates itinerary
                 tags,
                 travel_date: travelDate,
                 is_favorite: false,
@@ -343,6 +433,44 @@ export class AiService {
             this.logger.error(`Failed to update itinerary: ${error.message}`);
             throw new HttpException(
                 'Failed to update itinerary',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+
+    /**
+     * Xác nhận lộ trình (DRAFT → CONFIRMED)
+     * Chuyển status từ DRAFT sang CONFIRMED khi user hài lòng
+     */
+    async confirmItinerary(userId: string, itineraryId: string): Promise<AiItineraryDocument> {
+        try {
+            const itinerary = await this.aiItineraryModel.findOne({
+                _id: itineraryId,
+                userId,
+            }).exec();
+
+            if (!itinerary) {
+                throw new HttpException('Itinerary not found', HttpStatus.NOT_FOUND);
+            }
+
+            if (itinerary.status === 'CONFIRMED') {
+                throw new HttpException('Itinerary already confirmed', HttpStatus.BAD_REQUEST);
+            }
+
+            itinerary.status = 'CONFIRMED';
+            await itinerary.save();
+
+            this.logger.log(`Itinerary ${itineraryId} confirmed by user ${userId}`);
+
+            return itinerary;
+
+        } catch (error) {
+            if (error instanceof HttpException) {
+                throw error;
+            }
+            this.logger.error(`Failed to confirm itinerary: ${error.message}`);
+            throw new HttpException(
+                'Failed to confirm itinerary',
                 HttpStatus.INTERNAL_SERVER_ERROR,
             );
         }

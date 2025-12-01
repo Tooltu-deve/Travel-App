@@ -75,7 +75,7 @@ export class AiItinerary {
         enriched_at?: string;
     };
 
-    @Prop({ type: String, enum: ['draft', 'completed', 'saved', 'archived'], default: 'completed' })
+    @Prop({ type: String, enum: ['DRAFT', 'CONFIRMED', 'ARCHIVED'], default: 'DRAFT' })
     status: string;
 
     @Prop({ type: [String], default: [] })

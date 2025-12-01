@@ -1,17 +1,36 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+    HttpException,
+    HttpStatus,
+    Injectable,
+    NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { firstValueFrom } from 'rxjs';
 import { Place, PlaceDocument } from './schemas/place.schema';
 import { CreatePlaceDto } from './dto/create-place.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
 import { PlaceSeedDto } from './dto/place-seed.dto';
 import { SearchPlaceDto } from './dto/search-place.dto';
+import { EnrichPoiDto, EnrichedPoiResponseDto } from './dto/enrich-poi.dto';
 
 @Injectable()
 export class PlaceService {
+    private readonly googlePlacesApiKey: string;
+    private static readonly THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
     constructor(
         @InjectModel(Place.name) private placeModel: Model<PlaceDocument>,
-    ) { }
+        private readonly httpService: HttpService,
+        private readonly configService: ConfigService,
+    ) {
+        this.googlePlacesApiKey =
+            this.configService.get<string>('GOOGLE_PLACES_API_KEY') ||
+            process.env.GOOGLE_PLACES_API_KEY ||
+            '';
+    }
 
     async upsertPlace(placeData: PlaceSeedDto): Promise<PlaceDocument> {
         const {
@@ -201,5 +220,184 @@ export class PlaceService {
       'cultural',
       'spiritual',
     ];
+  }
+
+  private mapPlaceToEnrichedDto(place: PlaceDocument): EnrichedPoiResponseDto {
+    const emotionalTagsObject: Record<string, number> | undefined =
+      place.emotionalTags
+        ? Object.fromEntries(
+            Array.from(place.emotionalTags.entries()) as [string, number][],
+          )
+        : undefined;
+
+    return {
+      googlePlaceId: place.googlePlaceId,
+      name: place.name,
+      address: place.address,
+      description: place.description,
+      type: place.type,
+      types: place.types,
+      rating: place.rating,
+      editorialSummary: place.editorialSummary ?? null,
+      websiteUri: place.websiteUri,
+      contactNumber: place.contactNumber,
+      photos: place.photos?.map((photo) => ({
+        name: photo.name,
+        widthPx: photo.widthPx,
+        heightPx: photo.heightPx,
+        authorAttributions: photo.authorAttributions?.map((attr) => ({
+          displayName: attr.displayName,
+          uri: attr.uri,
+          photoUri: attr.photoUri,
+        })),
+      })),
+      reviews: place.reviews?.map((review) => ({
+        name: review.name,
+        relativePublishTimeDescription: review.relativePublishTimeDescription,
+        rating: review.rating,
+        text: review.text,
+        authorAttributions: review.authorAttributions?.map((attr) => ({
+          displayName: attr.displayName,
+          uri: attr.uri,
+          photoUri: attr.photoUri,
+        })),
+      })),
+      lastEnrichedAt: place.lastEnrichedAt,
+      budgetRange: place.budgetRange,
+      openingHours: place.openingHours,
+      location: place.location,
+      emotionalTags: emotionalTagsObject,
+    };
+  }
+
+  async enrichPlaceDetails(
+    enrichDto: EnrichPoiDto,
+  ): Promise<EnrichedPoiResponseDto> {
+    if (!this.googlePlacesApiKey) {
+      throw new HttpException(
+        'Google Places API key chưa được cấu hình.',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    const { googlePlaceId, forceRefresh } = enrichDto;
+
+    const place = await this.placeModel
+      .findOne({ googlePlaceId })
+      .exec();
+
+    if (!place) {
+      throw new NotFoundException(
+        `Không tìm thấy địa điểm với Google Place ID: ${googlePlaceId}`,
+      );
+    }
+
+    const lastEnrichedAt = place.lastEnrichedAt?.getTime() ?? 0;
+    const isExpired =
+      Date.now() - lastEnrichedAt > PlaceService.THIRTY_DAYS_MS;
+
+    if (!forceRefresh && place.lastEnrichedAt && !isExpired) {
+      return this.mapPlaceToEnrichedDto(place);
+    }
+
+    const url = `https://places.googleapis.com/v1/places/${googlePlaceId}`;
+    const fieldMask = [
+      'rating',
+      'editorialSummary',
+      'photos',
+      'reviews',
+      'websiteUri',
+      'internationalPhoneNumber',
+      'nationalPhoneNumber',
+    ].join(',');
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(url, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': this.googlePlacesApiKey,
+            'X-Goog-FieldMask': fieldMask,
+          },
+          timeout: 10000,
+        }),
+      );
+
+      const data = response.data;
+
+      if (typeof data.rating === 'number') {
+        place.rating = data.rating;
+      }
+
+      if (data.editorialSummary) {
+        place.editorialSummary = data.editorialSummary.text ?? null;
+      }
+
+      if (data.websiteUri) {
+        place.websiteUri = data.websiteUri;
+      }
+
+      const phoneNumber =
+        data.internationalPhoneNumber || data.nationalPhoneNumber;
+      if (phoneNumber) {
+        place.contactNumber = phoneNumber;
+      }
+      if (data.photos) {
+        place.photos = data.photos.map((photo) => ({
+          name: photo.name,
+          widthPx: photo.widthPx,
+          heightPx: photo.heightPx,
+          authorAttributions: photo.authorAttributions?.map((attr) => ({
+            displayName: attr.displayName,
+            uri: attr.uri,
+            photoUri: attr.photoUri,
+          })),
+        }));
+      }
+
+      if (data.reviews) {
+        place.reviews = data.reviews.slice(0, 5).map((review) => ({
+          name: review.name,
+          relativePublishTimeDescription:
+            review.relativePublishTimeDescription,
+          rating: review.rating,
+          text: review.text?.text ?? review.text ?? undefined,
+          authorAttributions: review.authorAttributions?.map((attr) => ({
+            displayName: attr.displayName,
+            uri: attr.uri,
+            photoUri: attr.photoUri,
+          })),
+        }));
+      }
+      place.lastEnrichedAt = new Date();
+
+      await place.save();
+
+      return this.mapPlaceToEnrichedDto(place);
+    } catch (error: any) {
+      // Lỗi từ Google Places API (có response)
+      if (error.response) {
+        const status = error.response.status;
+        const message =
+          error.response.data?.error?.message ||
+          error.response.statusText ||
+          'Lỗi không xác định từ Google Places API';
+        throw new HttpException(message, status);
+      }
+
+      // Lỗi validate / lưu MongoDB
+      if (error.name === 'ValidationError') {
+        throw new HttpException(
+          `Lỗi validate dữ liệu Place: ${error.message}`,
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+
+      // Các lỗi khác (network, timeout, ...)
+      throw new HttpException(
+        `Không thể kết nối tới Google Places API: ${error.message}`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
   }
 }
