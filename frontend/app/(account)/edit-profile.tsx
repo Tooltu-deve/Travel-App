@@ -8,6 +8,22 @@ import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TextInpu
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/contexts/ThemeContext';
 
+// Danh sách mood tags có sẵn
+const AVAILABLE_MOOD_TAGS = [
+  'Yên tĩnh & Thư giãn',
+  'Náo nhiệt & Xã hội',
+  'Lãng mạn & Riêng tư',
+  'Ven biển & Nghỉ dưỡng',
+  'Lễ hội & Sôi động',
+  'Điểm thu hút khách du lịch',
+  'Mạo hiểm & Thú vị',
+  'Gia đình & Thoải mái',
+  'Hiện đại & Sáng tạo',
+  'Tâm linh & Tôn giáo',
+  'Địa phương & Đích thực',
+  'Cảnh quan thiên nhiên',
+];
+
 const EditProfileScreen: React.FC = () => {
   const { userData } = useAuth();
   const [fullName, setFullName] = useState('');
@@ -60,6 +76,14 @@ const EditProfileScreen: React.FC = () => {
       Alert.alert('Lỗi', 'Không thể cập nhật thông tin');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const toggleTag = (tag: string) => {
+    if (preferencedTags.includes(tag)) {
+      setPreferencedTags(preferencedTags.filter(t => t !== tag));
+    } else {
+      setPreferencedTags([...preferencedTags, tag]);
     }
   };
 
@@ -135,39 +159,50 @@ const EditProfileScreen: React.FC = () => {
       {/* Emotional Tags Section */}
       <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Sở thích của bạn (Emotional Tags)</Text>
       <Text style={[styles.helperText, { color: darkMode ? '#9CA3AF' : '#6B7280' }]}>
-        Nhập các tag cảm xúc/sở thích của bạn, cách nhau bởi dấu phẩy
+        Chọn các tâm trạng/sở thích yêu thích của bạn
       </Text>
-      <View style={styles.fieldRow}>
-        <MaterialCommunityIcons name="tag-multiple" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
-        <TextInput
-          style={[styles.inputRow, dynamicStyles.inputRow, styles.tagsInput]}
-          value={preferencedTags.join(', ')}
-          onChangeText={(text) => {
-            const tags = text.split(',').map(t => t.trim()).filter(t => t.length > 0);
-            setPreferencedTags(tags);
-          }}
-          placeholder="VD: bình yên, sôi động, lãng mạn, thư giãn"
-          placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
-          multiline
-        />
+      
+      {/* Hiển thị tags để chọn */}
+      <View style={styles.availableTagsContainer}>
+        {AVAILABLE_MOOD_TAGS.map((tag, index) => {
+          const isSelected = preferencedTags.includes(tag);
+          return (
+            <TouchableOpacity
+              key={index}
+              style={[
+                styles.selectableTagChip,
+                isSelected && styles.selectableTagChipSelected,
+                { 
+                  backgroundColor: isSelected 
+                    ? (darkMode ? '#3b82f6' : '#2196F3')
+                    : (darkMode ? '#27272a' : '#F3F4F6'),
+                  borderColor: isSelected
+                    ? (darkMode ? '#3b82f6' : '#2196F3')
+                    : (darkMode ? '#3f3f46' : '#E5E7EB')
+                }
+              ]}
+              onPress={() => toggleTag(tag)}
+            >
+              <Text style={[
+                styles.selectableTagText,
+                isSelected && styles.selectableTagTextSelected,
+                { color: isSelected ? '#fff' : (darkMode ? '#f1f5f9' : '#1E293B') }
+              ]}>
+                {tag}
+              </Text>
+              {isSelected && (
+                <MaterialIcons name="check-circle" size={18} color="#fff" style={{ marginLeft: 4 }} />
+              )}
+            </TouchableOpacity>
+          );
+        })}
       </View>
       
-      {/* Hiển thị tags dạng chips */}
+      {/* Hiển thị số lượng tags đã chọn */}
       {preferencedTags.length > 0 && (
-        <View style={styles.tagsContainer}>
-          {preferencedTags.map((tag, index) => (
-            <View key={index} style={[styles.tagChip, { backgroundColor: darkMode ? '#3b82f6' : '#2196F3' }]}>
-              <Text style={styles.tagChipText}>{tag}</Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setPreferencedTags(preferencedTags.filter((_, i) => i !== index));
-                }}
-              >
-                <MaterialIcons name="close" size={16} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          ))}
-        </View>
+        <Text style={[styles.selectedCountText, { color: darkMode ? '#60a5fa' : '#2196F3' }]}>
+          Đã chọn {preferencedTags.length} tâm trạng
+        </Text>
       )}
 
       {/* Save button at the end */}
@@ -270,6 +305,43 @@ const styles = StyleSheet.create({
   tagsInput: {
     minHeight: 60,
     textAlignVertical: 'top',
+  },
+  availableTagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  selectableTagChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+  },
+  selectableTagChipSelected: {
+    backgroundColor: '#2196F3',
+    borderColor: '#2196F3',
+  },
+  selectableTagText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1E293B',
+  },
+  selectableTagTextSelected: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  selectedCountText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2196F3',
+    marginBottom: 8,
+    textAlign: 'center',
   },
   tagsContainer: {
     flexDirection: 'row',

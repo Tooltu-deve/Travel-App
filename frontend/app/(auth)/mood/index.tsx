@@ -59,21 +59,6 @@ async function saveUserPreferences(moods: string[], token?: string) {
   }
 }
 
-// -------------------- MOOD MAPPING --------------------
-const MOOD_TO_TAGS: Record<string, string[]> = {
-  'calm_relax': ['quiet', 'peaceful', 'relaxing'],
-  'social_energy': ['crowded', 'lively', 'vibrant'],
-  'romantic_private': ['romantic', 'good for couples'],
-  'luxury_premium': ['expensive', 'luxury'],
-  'budget_value': ['good value', 'cheap', 'affordable'],
-  'tourist_hotspot': ['touristy'],
-  'adventure_fun': ['adventurous', 'exciting'],
-  'family_cozy': ['family friendly'],
-  'modern_creative': ['trendy', 'instagrammable'],
-  'spiritual_religious': ['spiritual', 'serene'],
-  'local_authentic': ['local gem', 'authentic'],
-};
-
 // -------------------- TYPES --------------------
 interface MoodOption {
   id: string;
@@ -306,14 +291,19 @@ export default function MoodSelectionScreen() {
     try {
       setLoading(true);
 
-      console.log('✅ Selected moods:', selectedMoods);
+      // Chuyển mood IDs sang labels để lưu
+      const moodLabels = selectedMoods
+        .map(id => MOOD_OPTIONS.find(m => m.id === id)?.label)
+        .filter(Boolean) as string[];
+
+      console.log('✅ Selected mood labels:', moodLabels);
 
       // Lưu preferences vào backend
       try {
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
         const token = await AsyncStorage.getItem('userToken');
         if (token) {
-          await saveUserPreferences(selectedMoods, token);
+          await saveUserPreferences(moodLabels, token);
           console.log('✅ Đã lưu preferences thành công');
         } else {
           console.log('⚠️ Không có token, bỏ qua lưu preferences');
