@@ -422,6 +422,9 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
               if (response.ok) {
                 setMessages([]);
                 setSessionId(null);
+                setItineraryId(null);
+                setItinerary(null);
+                setShowItineraryDetail(false);
                 Alert.alert('Thành công', 'Cuộc trò chuyện đã được xóa');
               } else {
                 const data = await response.json().catch(() => ({}));
