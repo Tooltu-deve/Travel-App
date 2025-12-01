@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTheme } from '@/contexts/ThemeContext';
 
 const EditProfileScreen: React.FC = () => {
   const { userData } = useAuth();
@@ -20,6 +21,7 @@ const EditProfileScreen: React.FC = () => {
   const [gender, setGender] = useState(''); // Giới tính
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { darkMode } = useTheme();
 
   const fetchProfile = async () => {
     setLoading(true);
@@ -67,10 +69,41 @@ const EditProfileScreen: React.FC = () => {
     }
   };
 
-  if (loading) return <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#2196F3" />;
+  const dynamicStyles = {
+    container: {
+      backgroundColor: darkMode ? '#18181b' : '#F3F6FA',
+    },
+    headerTitle: {
+      color: darkMode ? '#60a5fa' : '#2196F3',
+    },
+    sectionHeader: {
+      color: darkMode ? '#60a5fa' : '#2196F3',
+    },
+    inputRow: {
+      backgroundColor: darkMode ? '#27272a' : '#fff',
+      borderColor: darkMode ? '#334155' : '#E5E7EB',
+      color: darkMode ? '#f1f5f9' : '#1E293B',
+    },
+    inputDisabled: {
+      backgroundColor: darkMode ? '#23262f' : '#F3F4F6',
+      color: darkMode ? '#6B7280' : '#888',
+    },
+    genderBtn: {
+      backgroundColor: darkMode ? '#27272a' : '#F3F4F6',
+      borderColor: darkMode ? '#334155' : '#E5E7EB',
+    },
+    genderText: {
+      color: darkMode ? '#f1f5f9' : '#1E293B',
+    },
+    saveBtn: {
+      backgroundColor: darkMode ? '#60a5fa' : '#2196F3',
+    },
+  };
+
+  if (loading) return <ActivityIndicator style={{ marginTop: 40 }} size="large" color={darkMode ? '#60a5fa' : '#2196F3'} />;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={[styles.container, dynamicStyles.container]}>
       {/* --- HEADER ĐÃ SỬA --- */}
       <View style={[styles.headerContainer, { paddingTop: insets.top || 16 }]}> 
         {/* Nút Back nằm tuyệt đối bên trái */}
@@ -78,11 +111,11 @@ const EditProfileScreen: React.FC = () => {
           onPress={() => router.back()}
           style={styles.backButton}
         >
-          <MaterialCommunityIcons name="arrow-left" size={28} color="#2196F3" />
+          <MaterialCommunityIcons name="arrow-left" size={28} color={darkMode ? '#60a5fa' : '#2196F3'} />
         </TouchableOpacity>
 
         {/* Tiêu đề nằm giữa */}
-        <Text style={styles.headerTitle}>Hồ sơ cá nhân</Text>
+        <Text style={[styles.headerTitle, dynamicStyles.headerTitle]}>Hồ sơ cá nhân</Text>
       </View>
       {/* --------------------- */}
 
@@ -95,81 +128,85 @@ const EditProfileScreen: React.FC = () => {
       </View>
 
       {/* Group 1: Liên hệ */}
-      <Text style={styles.sectionHeader}>Liên hệ</Text>
+      <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Liên hệ</Text>
       <View style={styles.fieldRow}>
-        <MaterialIcons name="person" size={20} color="#2196F3" style={styles.icon} />
+        <MaterialIcons name="person" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
         <TextInput
-          style={styles.inputRow}
+          style={[styles.inputRow, dynamicStyles.inputRow]}
           value={fullName}
           onChangeText={setFullName}
           placeholder="Tên hiển thị"
+          placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
         />
       </View>
       <View style={styles.fieldRow}>
-        <MaterialIcons name="phone" size={20} color="#2196F3" style={styles.icon} />
+        <MaterialIcons name="phone" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
         <TextInput
-          style={styles.inputRow}
+          style={[styles.inputRow, dynamicStyles.inputRow]}
           value={phone}
           onChangeText={setPhone}
           placeholder="Số điện thoại"
           keyboardType="phone-pad"
+          placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
         />
       </View>
       <View style={styles.fieldRow}>
-        <MaterialIcons name="email" size={20} color="#2196F3" style={styles.icon} />
+        <MaterialIcons name="email" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
         <TextInput
-          style={[styles.inputRow, { backgroundColor: '#F3F4F6', color: '#888' }]}
+          style={[styles.inputRow, dynamicStyles.inputDisabled]}
           value={email}
           editable={false}
         />
       </View>
 
       {/* Group 2: Thông tin cá nhân */}
-      <Text style={styles.sectionHeader}>Thông tin cá nhân</Text>
+      <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Thông tin cá nhân</Text>
       <View style={styles.fieldRow}>
-        <MaterialIcons name="calendar-today" size={20} color="#2196F3" style={styles.icon} />
+        <MaterialIcons name="calendar-today" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
         <TextInput
-          style={styles.inputRow}
+          style={[styles.inputRow, dynamicStyles.inputRow]}
           value={dob}
           onChangeText={setDob}
           placeholder="Ngày sinh (dd/mm/yyyy)"
+          placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
         />
       </View>
       <View style={styles.fieldRow}>
-        <FontAwesome5 name="venus-mars" size={18} color="#2196F3" style={styles.icon} />
+        <FontAwesome5 name="venus-mars" size={18} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
         <View style={styles.genderRow}>
           <TouchableOpacity
-            style={[styles.genderBtn, gender === 'male' && styles.genderBtnActive]}
+            style={[styles.genderBtn, dynamicStyles.genderBtn, gender === 'male' && styles.genderBtnActive]}
             onPress={() => setGender('male')}
           >
-            <Text style={[styles.genderText, gender === 'male' && styles.genderTextActive]}>Nam</Text>
+            <Text style={[styles.genderText, dynamicStyles.genderText, gender === 'male' && styles.genderTextActive]}>Nam</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.genderBtn, gender === 'female' && styles.genderBtnActive]}
+            style={[styles.genderBtn, dynamicStyles.genderBtn, gender === 'female' && styles.genderBtnActive]}
             onPress={() => setGender('female')}
           >
-            <Text style={[styles.genderText, gender === 'female' && styles.genderTextActive]}>Nữ</Text>
+            <Text style={[styles.genderText, dynamicStyles.genderText, gender === 'female' && styles.genderTextActive]}>Nữ</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.genderBtn, gender === 'other' && styles.genderBtnActive]}
+            style={[styles.genderBtn, dynamicStyles.genderBtn, gender === 'other' && styles.genderBtnActive]}
             onPress={() => setGender('other')}
           >
-            <Text style={[styles.genderText, gender === 'other' && styles.genderTextActive]}>Khác</Text>
+            <Text style={[styles.genderText, dynamicStyles.genderText, gender === 'other' && styles.genderTextActive]}>Khác</Text>
           </TouchableOpacity>
         </View>
       </View>
       <View style={styles.fieldRow}>
-        <MaterialIcons name="location-on" size={20} color="#2196F3" style={styles.icon} />
+        <MaterialIcons name="location-on" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
         <TextInput
-          style={styles.inputRow}
+          style={[styles.inputRow, dynamicStyles.inputRow]}
           value={address}
           onChangeText={setAddress}
           placeholder="Địa chỉ"
+          placeholderTextColor={darkMode ? '#6B7280' : '#9CA3AF'}
         />
       </View>
 
       {/* Save button at the end */}
-      <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
+      <TouchableOpacity style={[styles.saveBtn, dynamicStyles.saveBtn]} onPress={handleSave} disabled={saving}>
         <Text style={styles.saveBtnText}>{saving ? 'Đang lưu...' : 'Lưu thay đổi'}</Text>
       </TouchableOpacity>
     </ScrollView>

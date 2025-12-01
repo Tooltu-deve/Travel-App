@@ -2,7 +2,6 @@ import { Controller, Get, Request, UseGuards, Body, Patch, NotFoundException } f
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { UserService } from './user.service';
 import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
 
 @Controller('users')
 export class UserController {

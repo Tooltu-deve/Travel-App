@@ -28,6 +28,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const AVATAR_SIZE = 72;
 const APP_VERSION = 'v1.0.2 (Build 2024)';
@@ -44,6 +45,7 @@ const ProfileScreen: React.FC = () => {
   const router = useRouter();
   const { userData, signOut } = useAuth();
   const { darkMode, setDarkMode } = useTheme();
+  const insets = useSafeAreaInsets();
   const [fullName, setFullName] = useState(userData?.fullName || '');
   const [email, setEmail] = useState(userData?.email || '');
   const [avatar, setAvatar] = useState(userData?.avatar || '');
@@ -131,7 +133,7 @@ const handleSave = async () => {
   return (
     <ScrollView style={[styles.container, darkMode && {backgroundColor:'#181A20'}]} contentContainerStyle={styles.contentContainer}>
       {/* Header - compact, with avatar, quick edit, member info */}
-      <View style={[styles.headerWrap, darkMode && {backgroundColor:'#181A20'}]}>
+      <View style={[styles.headerWrap, darkMode && {backgroundColor:'#181A20'}, { paddingTop: insets.top || 16 }]}>
         <View style={styles.headerRow}>
           <View style={styles.avatarWrap}>
             <Image
@@ -284,7 +286,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#2196F3',
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
-    paddingTop: Platform.OS === 'ios' ? 44 : 28,
     paddingBottom: 18,
     paddingHorizontal: SPACING.lg,
     marginBottom: 8,
