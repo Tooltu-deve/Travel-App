@@ -65,8 +65,8 @@ export class User {
   @Prop({ type: String, unique: true, sparse: true, required: false })
   facebookId?: string;
 
-  @Prop([String]) // Một mảng các chuỗi
-  preferredTags?: string[]; // vd: ['romantic', 'quiet', 'local gem']
+  @Prop({ type: [String], default: [] })
+  preferencedTags: string[];
 
   /**
    * List of placeIds that the user has liked (favorite places)
