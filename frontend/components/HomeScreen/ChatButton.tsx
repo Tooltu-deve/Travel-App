@@ -1,14 +1,16 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { COLORS } from '../../constants';
+import { ChatModal } from './ChatModal';
 
 interface ChatButtonProps {
   visible: boolean;
 }
 
 export const ChatButton: React.FC<ChatButtonProps> = ({ visible }) => {
+  const [modalVisible, setModalVisible] = useState(false);
   const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -20,36 +22,40 @@ export const ChatButton: React.FC<ChatButtonProps> = ({ visible }) => {
   }, [visible]);
 
   return (
-    <Animated.View
-      style={[
-        styles.chatBubble,
-        {
-          opacity,
-          transform: [
-            {
-              scale: opacity.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0.8, 1],
-              }),
-            },
-          ],
-        },
-      ]}
-      pointerEvents={visible ? 'auto' : 'none'}
-    >
-      <TouchableOpacity activeOpacity={0.8}>
-        <LinearGradient
-          colors={[COLORS.gradientStart, COLORS.gradientChat, COLORS.primary]}
-          style={styles.chatBubbleGradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-        >
-          <View style={styles.chatBubbleInner}>
-            <MaterialCommunityIcons name="robot" size={32} color={COLORS.primary} />
-          </View>
-        </LinearGradient>
-      </TouchableOpacity>
-    </Animated.View>
+    <>
+      <Animated.View
+        style={[
+          styles.chatBubble,
+          {
+            opacity,
+            transform: [
+              {
+                scale: opacity.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.8, 1],
+                }),
+              },
+            ],
+          },
+        ]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <TouchableOpacity activeOpacity={0.8} onPress={() => setModalVisible(true)}>
+          <LinearGradient
+            colors={[COLORS.gradientStart, COLORS.gradientChat, COLORS.primary]}
+            style={styles.chatBubbleGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <View style={styles.chatBubbleInner}>
+              <MaterialCommunityIcons name="robot" size={32} color={COLORS.primary} />
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
+      </Animated.View>
+
+      <ChatModal visible={modalVisible} onClose={() => setModalVisible(false)} />
+    </>
   );
 };
 

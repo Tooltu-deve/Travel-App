@@ -53,13 +53,14 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return;
       }
       const remote = (await getLikedPlacesAPI(token)) || [];
-      const enriched = await Promise.all(remote.map(async (p: any) => {
+      const enriched = (await Promise.all(remote.map(async (p: any) => {
         // backend may return `place_id` (snake_case) or `placeId`/`_id` etc.
         const id = p.place_id || p.placeId || p._id || p.id;
         let base = p;
         if (!p.name || !p.type) {
           const d = id ? await getPlaceDetails(id) : null;
-          base = { ...p, ...(d || {}) };
+          if (!d) return null; // skip invalid places
+          base = { ...p, ...d };
         }
 
         // normalize/translate moods/type to Vietnamese labels for UI consistency
@@ -69,7 +70,7 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         else if (base.type) moods = [translatePlaceType(base.type)];
 
         return { ...base, moods };
-      }));
+      }))).filter(Boolean); // filter out nulls
       setFavorites(enriched);
       // include place_id (snake_case) when building the set of liked ids
       const ids = new Set<string>(enriched.map((p: any) => p.google_place_id || p.googlePlaceId || p.place_id || p.placeId || p.id || p._id).filter(Boolean) as string[]);

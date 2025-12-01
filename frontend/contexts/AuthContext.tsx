@@ -15,6 +15,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   userData: UserData | null;
+  token: string | null;
   signIn: (token: string, userData: UserData) => Promise<void>;
   signInWithGoogle: (idToken: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -54,6 +55,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [userData, setUserData] = useState<UserData | null>(null);
+  const [token, setToken] = useState<string | null>(null);
 
   // ============================================
   // CHECK AUTH ON MOUNT
@@ -83,6 +85,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           try {
             await getMoodsAPI(token);
             // If successful, token is valid
+              setToken(token);
             const userDataStr = await AsyncStorage.getItem('userData');
             if (userDataStr) {
               const userDataParsed = JSON.parse(userDataStr);
@@ -94,21 +97,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               console.log('❌ No userData, clearing token');
             }
           } catch (error: any) {
-            // If 401, token invalid, clear storage
-            if (error.message?.includes('401') || error.status === 401) {
-              console.log('❌ Token invalid, clearing storage');
-              await AsyncStorage.removeItem('userToken');
-              await AsyncStorage.removeItem('userData');
-            } else {
-              // Other error, assume token valid for now
-              const userDataStr = await AsyncStorage.getItem('userData');
-              if (userDataStr) {
-                const userDataParsed = JSON.parse(userDataStr);
-                setUserData(userDataParsed);
-                setIsAuthenticated(true);
-                console.log('✅ User authenticated (validation failed but assuming valid)');
-              }
-            }
+            // If validation fails for any reason, clear storage and don't authenticate
+            console.log('❌ Token validation failed, clearing storage');
+            await AsyncStorage.removeItem('userToken');
+            await AsyncStorage.removeItem('userData');
           }
         } else {
           console.log('ℹ️ No token found');
@@ -155,7 +147,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         // Lấy token từ response
         const token = response.access_token || response.token;
-        
+
         // Gọi signIn để lưu token và userData
         await signIn(token as string, response.user);
       } else {
@@ -189,6 +181,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Update state
       setUserData(userData);
+      setToken(token);
       setIsAuthenticated(true);
       
       console.log('✅ User signed in successfully');
@@ -219,6 +212,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Reset state
       setUserData(null);
+      setToken(null);
       setIsAuthenticated(false);
       
       console.log('✅ User signed out successfully');
@@ -235,6 +229,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isAuthenticated,
     isLoading,
     userData,
+    token,
     signIn,
     signInWithGoogle,
     signOut,
