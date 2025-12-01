@@ -21,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { COLORS } from '../../constants';
 import { useAuth } from '../../contexts/AuthContext';
+import ItineraryDetailScreen from './ItineraryDetailScreen';
 
 const { width } = Dimensions.get('window');
 
@@ -171,6 +172,9 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [itineraryId, setItineraryId] = useState<string | null>(null);
+  const [itinerary, setItinerary] = useState<any>(null);
+  const [showItineraryDetail, setShowItineraryDetail] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const buttonScale = useRef(new Animated.Value(0)).current;
@@ -318,6 +322,17 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           }
           if (resp === null || resp === undefined || resp === '') {
             resp = 'Không có phản hồi từ server';
+          }
+
+          // Track itinerary from response
+          if (dataOk.itineraryId) {
+            setItineraryId(dataOk.itineraryId);
+          }
+          if (dataOk.itinerary && Array.isArray(dataOk.itinerary)) {
+            setItinerary(dataOk.itinerary);
+          }
+          if (dataOk.stage) {
+            console.debug('[Chat Response] Stage:', dataOk.stage);
           }
 
           const assistantMessage: Message = {
@@ -493,6 +508,21 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
       presentationStyle="fullScreen"
       onRequestClose={onClose}
     >
+      {/* Itinerary Detail Screen Modal */}
+      {showItineraryDetail && itinerary && itineraryId && (
+        <ItineraryDetailScreen
+          itinerary={itinerary}
+          itineraryId={itineraryId}
+          onClose={() => setShowItineraryDetail(false)}
+          onConfirmSuccess={() => {
+            // Optional: handle post-confirmation logic
+            setShowItineraryDetail(false);
+          }}
+        />
+      )}
+
+      {/* Main Chat Modal */}
+      {!showItineraryDetail && (
       <LinearGradient
         colors={[COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.bgLightBlue]}
         style={styles.gradientBackground}
@@ -658,15 +688,44 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
           {/* Input Container with Glassmorphism */}
           <BlurView intensity={80} tint="light" style={styles.inputContainer}>
+            {/* Itinerary Quick View Button */}
+            {itinerary && itinerary.length > 0 && (
+              <TouchableOpacity
+                style={styles.itineraryQuickButton}
+                onPress={() => setShowItineraryDetail(true)}
+              >
+                <LinearGradient
+                  colors={[COLORS.primary + '25', COLORS.gradientSecondary + '15']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.itineraryQuickButtonGradient}
+                >
+                  <View style={styles.itineraryQuickButtonIconWrapper}>
+                    <MaterialCommunityIcons name="calendar-check" size={20} color={COLORS.textWhite} />
+                  </View>
+                  <View style={styles.itineraryQuickButtonText}>
+                    <Text style={styles.itineraryQuickButtonTitle}>
+                      Lộ trình của bạn
+                    </Text>
+                    <Text style={styles.itineraryQuickButtonSubtitle}>
+                      {itinerary.length} hoạt động • Nhấn để xem chi tiết
+                    </Text>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-right" size={22} color={COLORS.primary} />
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
+
             <View style={styles.inputWrapper}>
               <TextInput
                 style={styles.textInput}
                 value={inputText}
                 onChangeText={setInputText}
-                placeholder="Hỏi AI về kế hoạch du lịch của bạn..."
-                placeholderTextColor={COLORS.textSecondary}
+                placeholder="Hỏi AI về kế hoạch du lịch..."
+                placeholderTextColor={COLORS.textSecondary + '70'}
                 multiline
                 maxLength={500}
+                placeholderTextColor={COLORS.textSecondary}
               />
               <TouchableOpacity
                 style={[styles.sendButton, (!inputText.trim() || isLoading || !token) && styles.sendButtonDisabled]}
@@ -677,11 +736,13 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
                   colors={(!inputText.trim() || isLoading || !token) 
                     ? [COLORS.disabled, COLORS.disabled] 
                     : [COLORS.primary, COLORS.gradientSecondary]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
                   style={styles.sendButtonGradient}
                 >
                   <MaterialCommunityIcons
-                    name="send"
-                    size={20}
+                    name={isLoading ? "loading" : "send"}
+                    size={22}
                     color={COLORS.textWhite}
                   />
                 </LinearGradient>
@@ -690,6 +751,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           </BlurView>
         </KeyboardAvoidingView>
       </LinearGradient>
+      )}
     </Modal>
   );
 };
@@ -1086,45 +1148,47 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   inputContainer: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
     overflow: 'hidden',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 32 : 16,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    padding: 16,
-    paddingBottom: Platform.OS === 'ios' ? 32 : 16,
-    gap: 12,
+    gap: 10,
+    paddingBottom: 12,
   },
   textInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    paddingTop: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary + '30',
+    borderRadius: 28,
+    paddingHorizontal: 20,
+    paddingVertical: 13,
+    paddingTop: 13,
     maxHeight: 120,
     fontSize: 15,
     color: COLORS.textMain,
     backgroundColor: COLORS.bgMain,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
   sendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     overflow: 'hidden',
     shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 6,
   },
   sendButtonGradient: {
     width: '100%',
@@ -1133,8 +1197,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    shadowOpacity: 0.1,
-    elevation: 1,
+    shadowOpacity: 0.12,
+    elevation: 2,
+  },
+  itineraryQuickButton: {
+    marginBottom: 14,
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  itineraryQuickButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary + '40',
+    borderRadius: 18,
+    gap: 12,
+  },
+  itineraryQuickButtonIconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  itineraryQuickButtonText: {
+    flex: 1,
+  },
+  itineraryQuickButtonTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textMain,
+    marginBottom: 2,
+    letterSpacing: 0.3,
+  },
+  itineraryQuickButtonSubtitle: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
 });
 
