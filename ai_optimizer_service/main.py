@@ -290,7 +290,26 @@ def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime) -> bool:
 
 
 
-# --- 3. API DUY NHẤT: TÍNH ECS + TỐI ƯU LỘ TRÌNH ---
+# --- 3. HEALTH CHECK ENDPOINTS ---
+# Render sẽ health check bằng GET /, cần endpoint này để tránh 404
+@app.get("/")
+async def root():
+    """Root endpoint cho health check"""
+    return {
+        "status": "ok",
+        "service": "AI Optimizer Service",
+        "message": "Service is running"
+    }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "AI Optimizer Service"
+    }
+
+# --- 4. API DUY NHẤT: TÍNH ECS + TỐI ƯU LỘ TRÌNH ---
 # Gộp 2 tác vụ (tính ECS và tối ưu lộ trình) vào cùng một endpoint
 @app.post("/optimize-route")
 async def optimize_route_endpoint(request: OptimizerRequest):
