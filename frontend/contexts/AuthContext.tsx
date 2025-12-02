@@ -15,7 +15,6 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   userData: UserData | null;
-  token: string | null;
   signIn: (token: string, userData: UserData) => Promise<void>;
   signInWithGoogle: (idToken: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -55,7 +54,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [userData, setUserData] = useState<UserData | null>(null);
-  const [token, setToken] = useState<string | null>(null);
 
   // ============================================
   // CHECK AUTH ON MOUNT
@@ -159,7 +157,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         // Lấy token từ response
         const token = response.access_token || response.token;
-
+        
         // Gọi signIn để lưu token và userData
         await signIn(token as string, response.user);
       } else {
@@ -193,7 +191,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Update state
       setUserData(userData);
-      setToken(token);
       setIsAuthenticated(true);
       
       console.log('✅ User signed in successfully');
@@ -224,7 +221,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Reset state
       setUserData(null);
-      setToken(null);
       setIsAuthenticated(false);
       
       console.log('✅ User signed out successfully');
@@ -241,7 +237,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isAuthenticated,
     isLoading,
     userData,
-    token,
     signIn,
     signInWithGoogle,
     signOut,
