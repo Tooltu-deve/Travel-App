@@ -185,11 +185,36 @@ async def chat_with_agent(request: ChatRequest):
             else:
                 logging.info(f"   ℹ️  No session_id provided, generating new one")
         
-        # Update state with context from backend (e.g., itinerary_id)
+        # Update state with context from backend (e.g., itinerary_id, current_location)
         if request.context and conversation_state:
             if request.context.get('itinerary_id'):
                 conversation_state['itinerary_id'] = request.context['itinerary_id']
                 logging.info(f"   🔗 Updated state with itinerary_id from context: {request.context['itinerary_id']}")
+            if request.context.get('current_location'):
+                conversation_state['current_location'] = request.context['current_location']
+                logging.info(f"   📍 Updated state with current_location from context: {request.context['current_location']}")
+            if request.context.get('active_place_id'):
+                conversation_state['active_place_id'] = request.context['active_place_id']
+                logging.info(f"   🏛️ Updated state with active_place_id from context: {request.context['active_place_id']}")
+        elif request.context and not conversation_state:
+            # New conversation - create initial state with context
+            conversation_state = {
+                'messages': [],
+                'user_preferences': {},
+                'current_itinerary': [],
+                'optimization_applied': False,
+                'weather_checked': False,
+                'budget_calculated': False,
+                'session_stage': 'profiling',
+                'user_location': None,
+                'travel_date': None,
+                'intent': None,
+                'itinerary_status': None,
+                'itinerary_id': request.context.get('itinerary_id'),
+                'current_location': request.context.get('current_location'),
+                'active_place_id': request.context.get('active_place_id')
+            }
+            logging.info(f"   🆕 Created new state with context: location={conversation_state.get('current_location')}, place_id={conversation_state.get('active_place_id')}")
         
         # Call the AI agent
         result = travel_agent.chat(request.message, conversation_state)
