@@ -1,21 +1,24 @@
 import {
-    Controller,
-    Get,
-    Post,
     Body,
-    Patch,
-    Param,
+    Controller,
     Delete,
-    UseGuards,
-    Query,
+    Get,
+    HttpCode,
+    HttpStatus,
+    Param,
     ParseFloatPipe,
     ParseIntPipe,
+    Patch,
+    Post,
+    Query,
+    UseGuards,
 } from '@nestjs/common';
 import { PlaceService } from './place.service';
 import { CreatePlaceDto } from './dto/create-place.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SearchPlaceDto } from './dto/search-place.dto';
+import { EnrichPoiDto } from './dto/enrich-poi.dto';
 
 @Controller('places') // Tất cả API sẽ bắt đầu bằng /api/v1/places
 export class PlaceController {
@@ -46,6 +49,17 @@ export class PlaceController {
         // Nhờ dùng DTO, NestJS sẽ tự động validate
         // (tags là bắt buộc, minScore/sortBy là tùy chọn)
         return this.placeService.searchByEmotions(searchDto);
+    }
+
+    @UseGuards(JwtAuthGuard)
+    @Post('enrich')
+    @HttpCode(HttpStatus.OK)
+    async enrichPlace(@Body() enrichDto: EnrichPoiDto) {
+        const data = await this.placeService.enrichPlaceDetails(enrichDto);
+        return {
+            message: 'Enrich POI thành công',
+            data,
+        };
     }
 
     // GET /places/near?lon=...&lat=...&dist=...

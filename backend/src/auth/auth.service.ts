@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Types } from 'mongoose';
 import { UserService } from 'src/user/user.service';
@@ -93,9 +93,10 @@ export class AuthService {
 
   /**
    * Tạo JWT token khi user đăng nhập thành công.
+   * @param user - User object từ validateUser hoặc validateOAuthUser
+   * @returns Object chứa access_token và thông tin user
    */
   async login(user: any) {
-    // 'user' có thể là user từ validateUser hoặc validateOAuthUser
     // Đảm bảo _id (từ Mongoose object) hoặc id (từ plain object)
     const payload = { email: user.email, sub: user._id || user.id };
     return {
@@ -103,26 +104,32 @@ export class AuthService {
       user: {
         _id: user._id || user.id,
         email: user.email,
-        full_name: user.full_name,
+        full_name: user.fullName || user.full_name,
+        preferenced_tags: user.preferencedTags || [],
       },
     };
   }
 
   /**
    * Xử lý đăng ký user mới.
+   * @param createUserDto - DTO chứa thông tin đăng ký (email, password, fullName)
+   * @returns Object chứa access_token và thông tin user mới tạo
+   * @throws ConflictException nếu email đã tồn tại
    */
   async register(createUserDto: CreateUserDto) {
-    try {
-      // Logic kiểm tra email tồn tại có thể thêm ở đây
-      const existingUser = await this.userService.findOneByEmail(
-        createUserDto.email,
-      );
-      if (existingUser) {
-        throw new UnauthorizedException('Email đã tồn tại');
-      }
+    // Kiểm tra email đã tồn tại chưa
+    const existingUser = await this.userService.findOneByEmail(
+      createUserDto.email,
+    );
+    if (existingUser) {
+      throw new ConflictException('Email đã tồn tại');
+    }
 
-      const user = await this.userService.create(createUserDto);
-      // Gửi notification khi đăng ký thành công
+    // Tạo user mới (preferredTags sẽ có default [] từ schema)
+    const user = await this.userService.create(createUserDto);
+
+    // Gửi notification chào mừng (không throw error nếu fail)
+    try {
       await this.notificationsService.createNotification({
         userId: user._id instanceof Types.ObjectId ? user._id : new Types.ObjectId(user._id),
         type: 'account',
@@ -131,16 +138,23 @@ export class AuthService {
         entityType: 'system',
         entityId: null,
       });
-      // Trả về token luôn sau khi đăng ký thành công
-      return this.login(user);
-    } catch (error) {
-      throw new UnauthorizedException(error.message);
+    } catch (notifError) {
+      console.error('Lỗi khi tạo notification đăng ký:', notifError);
     }
+
+    // Trả về token và thông tin user
+    return this.login(user);
   }
   /**
-   * Đổi mật khẩu cho user (yêu cầu currentPassword, newPassword)
+   * Đổi mật khẩu cho user
+   * @param userId - ID của user cần đổi mật khẩu
+   * @param changePasswordDto - DTO chứa currentPassword và newPassword
+   * @throws UnauthorizedException nếu password hiện tại không đúng
    */
-  async changePassword(userId: string, changePasswordDto: any): Promise<void> {
+  async changePassword(
+    userId: string,
+    changePasswordDto: { currentPassword: string; newPassword: string },
+  ): Promise<void> {
     // Lấy user với password
     const user = await this.userService.findOneById(userId);
     if (!user) {
@@ -149,7 +163,9 @@ export class AuthService {
 
     // Kiểm tra user có password không (OAuth users có thể không có)
     if (!user.password) {
-      throw new UnauthorizedException('Tài khoản này đăng nhập bằng Google/Facebook và không có password');
+      throw new UnauthorizedException(
+        'Tài khoản này đăng nhập bằng Google/Facebook và không có password',
+      );
     }
 
     // Verify current password với bcrypt.compare()

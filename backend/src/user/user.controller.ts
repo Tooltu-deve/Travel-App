@@ -1,35 +1,70 @@
-import { Controller, Get, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Request, UseGuards, Body, Patch, NotFoundException } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { UserService } from './user.service';
-import { Body, Patch } from '@nestjs/common';
 import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
 
 @Controller('users')
 export class UserController {
   constructor(private userService: UserService) { }
 
-  // Route này được bảo vệ, chỉ user đã login mới xem được
+  /**
+   * GET /users/me - Lấy profile của user hiện tại
+   * Chỉ trả về: email, fullName, emotionalTags
+   */
   @UseGuards(JwtAuthGuard)
   @Get('profile')
-  async getProfile(@Request() req) {
-    // req.user chứa payload từ JWT (vd: { userId: '...', email: '...' })
+  async getMe(@Request() req) {
     const user = await this.userService.findOneById(req.user.userId);
     if (!user) {
-      return null;
+      throw new NotFoundException('Không tìm thấy user');
     }
-    // Convert to plain object and remove password
-    const plain: any = typeof (user as any).toObject === 'function' ? (user as any).toObject() : { ...(user as any) };
-    delete plain.password;
-    return plain;
+    // Trả về field dạng snake_case, dùng preferencedTags
+    return {
+      email: user.email,
+      full_name: user.fullName,
+      preferenced_tags: user.preferencedTags || [],
+    };
   }
-  @Patch('profile/preferences')
-  async updatePreferences(
+
+  /**
+   * PATCH /users/profile - Cập nhật emotionalTags
+   * Input: { emotionalTags: string[] }
+   * Output: profile mới (email, fullName, emotionalTags)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Patch('profile')
+  async updateProfile(
     @Request() req,
     @Body() dto: UpdateUserPreferencesDto,
   ) {
     const userId = req.user.userId;
-    // req.user.userId được lấy từ JWT token
-    return this.userService.updatePreferences(userId, dto);
+
+    // Map preferencedTags để lưu vào DB
+    if (dto.preferencedTags !== undefined) {
+      const updateDto: UpdateUserPreferencesDto = {
+        preferencedTags: dto.preferencedTags,
+      };
+      const updatedUser = await this.userService.updatePreferences(userId, updateDto);
+
+      // Trả về profile mới với snake_case, dùng preferencedTags
+      return {
+        email: updatedUser.email,
+        full_name: updatedUser.fullName,
+        preferenced_tags: updatedUser.preferencedTags || [],
+      };
+    }
+
+    // Nếu không có gì để update, trả về profile hiện tại
+    const user = await this.userService.findOneById(userId);
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy user');
+    }
+    return {
+      email: user.email,
+      full_name: user.fullName,
+      preferenced_tags: user.preferencedTags || [],
+    };
   }
+
 
 }
