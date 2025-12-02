@@ -139,6 +139,13 @@ const MOOD_OPTIONS: readonly MoodOption[] = [
     colors: ['#FFFFFF', '#F5F5F5'],
   },
   {
+    id: 'historic_tradition',
+    label: 'Lịch sử & Truyền thống',
+    description: '',
+    image: require('../../../assets/images/moods/historic-tradition.jpg'),
+    colors: ['#FFFFFF', '#F5F5F5'],
+  },
+  {
     id: 'spiritual_religious',
     label: 'Tâm linh & Tôn giáo',
     description: '',

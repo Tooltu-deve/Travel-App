@@ -8,7 +8,7 @@ import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TextInpu
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/contexts/ThemeContext';
 
-// Danh sách mood tags có sẵn
+// Danh sách mood labels có sẵn
 const AVAILABLE_MOOD_TAGS = [
   'Yên tĩnh & Thư giãn',
   'Náo nhiệt & Xã hội',
@@ -19,6 +19,7 @@ const AVAILABLE_MOOD_TAGS = [
   'Mạo hiểm & Thú vị',
   'Gia đình & Thoải mái',
   'Hiện đại & Sáng tạo',
+  'Lịch sử & Truyền thống',
   'Tâm linh & Tôn giáo',
   'Địa phương & Đích thực',
   'Cảnh quan thiên nhiên',
@@ -81,9 +82,13 @@ const EditProfileScreen: React.FC = () => {
 
   const toggleTag = (tag: string) => {
     if (preferencedTags.includes(tag)) {
+      // Bỏ chọn tag
       setPreferencedTags(preferencedTags.filter(t => t !== tag));
     } else {
-      setPreferencedTags([...preferencedTags, tag]);
+      // Chỉ cho phép chọn tối đa 3 tags
+      if (preferencedTags.length < 3) {
+        setPreferencedTags([...preferencedTags, tag]);
+      }
     }
   };
 
@@ -159,29 +164,33 @@ const EditProfileScreen: React.FC = () => {
       {/* Emotional Tags Section */}
       <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Sở thích của bạn (Emotional Tags)</Text>
       <Text style={[styles.helperText, { color: darkMode ? '#9CA3AF' : '#6B7280' }]}>
-        Chọn các tâm trạng/sở thích yêu thích của bạn
+        Chọn tối đa 3 tâm trạng/sở thích yêu thích của bạn
       </Text>
       
       {/* Hiển thị tags để chọn */}
       <View style={styles.availableTagsContainer}>
         {AVAILABLE_MOOD_TAGS.map((tag, index) => {
           const isSelected = preferencedTags.includes(tag);
+          const isDisabled = !isSelected && preferencedTags.length >= 3;
           return (
             <TouchableOpacity
               key={index}
               style={[
                 styles.selectableTagChip,
                 isSelected && styles.selectableTagChipSelected,
+                isDisabled && styles.selectableTagChipDisabled,
                 { 
                   backgroundColor: isSelected 
                     ? (darkMode ? '#3b82f6' : '#2196F3')
                     : (darkMode ? '#27272a' : '#F3F4F6'),
                   borderColor: isSelected
                     ? (darkMode ? '#3b82f6' : '#2196F3')
-                    : (darkMode ? '#3f3f46' : '#E5E7EB')
+                    : (darkMode ? '#3f3f46' : '#E5E7EB'),
+                  opacity: isDisabled ? 0.4 : 1
                 }
               ]}
               onPress={() => toggleTag(tag)}
+              disabled={isDisabled}
             >
               <Text style={[
                 styles.selectableTagText,
@@ -201,7 +210,7 @@ const EditProfileScreen: React.FC = () => {
       {/* Hiển thị số lượng tags đã chọn */}
       {preferencedTags.length > 0 && (
         <Text style={[styles.selectedCountText, { color: darkMode ? '#60a5fa' : '#2196F3' }]}>
-          Đã chọn {preferencedTags.length} tâm trạng
+          Đã chọn {preferencedTags.length}/3 tâm trạng
         </Text>
       )}
 
@@ -326,6 +335,9 @@ const styles = StyleSheet.create({
   selectableTagChipSelected: {
     backgroundColor: '#2196F3',
     borderColor: '#2196F3',
+  },
+  selectableTagChipDisabled: {
+    opacity: 0.4,
   },
   selectableTagText: {
     fontSize: 14,
