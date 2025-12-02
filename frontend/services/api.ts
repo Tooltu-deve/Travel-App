@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Render Cloud URL
+const API_BASE_URL = 'http://192.168.2.92:3000'; // ⬅️ Changed back to IP for device testing
 
 // ============================================
 // TYPES
@@ -150,6 +150,7 @@ const makeRequest = async <T>(
 
     if (!response.ok) {
       console.error('❌ HTTP Error:', response.status, response.statusText);
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
     try {
@@ -506,9 +507,37 @@ export const getLikedPlacesAPI = async (
 export const getPlaceByIdAPI = async (
   id: string,
 ): Promise<any> => {
-  return makeRequest<any>(`/api/v1/places/${id}`, {
-    method: 'GET',
-  });
+  const url = `${API_BASE_URL}/api/v1/places/${id}`;
+
+  try {
+    console.log('🌐 API Request:', url);
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+        'User-Agent': 'ReactNative',
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.log('ℹ️ Place not found (404)');
+        return null;
+      }
+      console.error('❌ HTTP Error:', response.status, response.statusText);
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const text = await response.text();
+    console.log('📄 Response Text:', text.substring(0, 200));
+
+    const data = JSON.parse(text);
+    console.log('✅ API Response:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ API Error:', error);
+    throw error;
+  }
 };
 
 /**
