@@ -16,12 +16,13 @@ import {
   Animated,
   Clipboard,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { COLORS } from '../../constants';
 import { useAuth } from '../../contexts/AuthContext';
+import ItineraryDetailScreen from './ItineraryDetailScreen';
+import useLocation from '../../hooks/useLocation';
 
 const { width } = Dimensions.get('window');
 
@@ -167,99 +168,24 @@ const RenderMarkdownText = ({ text }: { text: string }) => {
 
 export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
   const { token, signOut, userData } = useAuth() as any;
+  const { location, requestLocation, loading: locationLoading, error: locationError } = useLocation();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [lastStage, setLastStage] = useState<string | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [itineraryId, setItineraryId] = useState<string | null>(null);
   const [itinerary, setItinerary] = useState<any>(null);
-  const [isConfirmingItinerary, setIsConfirmingItinerary] = useState(false);
+  const [showItineraryDetail, setShowItineraryDetail] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const buttonScale = useRef(new Animated.Value(0)).current;
-  const [isInitialized, setIsInitialized] = useState(false);
 
   const API_BASE_URL = 'http://192.168.2.92:3000/api/v1';
   const MAX_CHAT_RETRIES = 2;
   const RETRY_BASE_DELAY_MS = 1000;
-  const CHAT_STORAGE_KEY = 'chat_modal_state';
 
   const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
-
-  // Load conversation from AsyncStorage when modal opens
-  useEffect(() => {
-    if (visible && !isInitialized) {
-      loadChatState();
-    }
-  }, [visible]);
-
-  // Save conversation to AsyncStorage when it changes
-  useEffect(() => {
-    if (isInitialized && (messages.length > 0 || sessionId)) {
-      saveChatState();
-    }
-  }, [messages, sessionId, lastStage]);
-
-  // Cleanup: save state when modal closes or component unmounts
-  useEffect(() => {
-    return () => {
-      // Auto-save when component unmounts
-      if (isInitialized) {
-        saveChatState();
-      }
-    };
-  }, [isInitialized, messages, sessionId, lastStage]);
-
-  const loadChatState = async () => {
-    try {
-      const stored = await AsyncStorage.getItem(CHAT_STORAGE_KEY);
-      if (stored) {
-        const { messages: storedMessages, sessionId: storedSessionId, lastStage: storedStage, itineraryId: storedItineraryId, itinerary: storedItinerary } = JSON.parse(stored);
-        // Restore messages with Date objects
-        const restoredMessages = storedMessages.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp),
-        }));
-        setMessages(restoredMessages);
-        setSessionId(storedSessionId);
-        setLastStage(storedStage);
-        setItineraryId(storedItineraryId);
-        setItinerary(storedItinerary);
-        console.debug('[Load Chat] Loaded', restoredMessages.length, 'messages, itineraryId:', storedItineraryId);
-      }
-    } catch (err) {
-      console.error('[Load Chat] Error:', err);
-    } finally {
-      setIsInitialized(true);
-    }
-  };
-
-  const saveChatState = async () => {
-    try {
-      const state = {
-        messages,
-        sessionId,
-        lastStage,
-        itineraryId,
-        itinerary,
-      };
-      await AsyncStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(state));
-      console.debug('[Save Chat] Saved', messages.length, 'messages, itineraryId:', itineraryId);
-    } catch (err) {
-      console.error('[Save Chat] Error:', err);
-    }
-  };
-
-  const clearChatState = async () => {
-    try {
-      await AsyncStorage.removeItem(CHAT_STORAGE_KEY);
-      console.debug('[Clear Chat] Cleared storage');
-    } catch (err) {
-      console.error('[Clear Chat] Error:', err);
-    }
-  };
 
   useEffect(() => {
     Animated.timing(buttonScale, {
@@ -311,13 +237,39 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
     setInputText('');
     setIsLoading(true);
 
+    // Check if user is asking about nearby places and request location if needed
+    const isNearbyQuery = message.toLowerCase().includes('gần') || 
+                          message.toLowerCase().includes('quanh') ||
+                          message.toLowerCase().includes('xung quanh');
+
+    let currentLocation = location;
+    if (isNearbyQuery && !currentLocation) {
+      console.debug('[Chat] Nearby query detected, requesting location...');
+      currentLocation = await requestLocation();
+      if (currentLocation) {
+        console.debug('[Chat] Location obtained for nearby query:', currentLocation);
+      }
+    }
+
     try {
       let attempt = 0;
       let lastError: any = null;
 
       while (attempt <= MAX_CHAT_RETRIES) {
         try {
-          const requestBody = { message, sessionId };
+          const requestBody: any = { message, sessionId };
+          
+          // Add location in context if available
+          if (currentLocation) {
+            requestBody.context = {
+              current_location: {
+                lat: currentLocation.latitude,
+                lng: currentLocation.longitude,
+              },
+            };
+            console.debug('[Chat] Sending location in context:', requestBody.context.current_location);
+          }
+          
           console.debug('Sending chat request', requestBody);
           const response = await fetch(`${API_BASE_URL}/ai/chat`, {
             method: 'POST',
@@ -339,7 +291,6 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           try {
             data = await response.json();
             console.debug('Chat response (parsed):', data);
-            console.debug('[Full Response JSON]', JSON.stringify(data, null, 2));
           } catch (err) {
             console.debug('Chat response parse error', err);
             // ignore
@@ -388,31 +339,6 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             setSessionId(dataOk.sessionId);
           }
 
-          // Track stage to detect when itinerary is complete
-          if (dataOk.stage) {
-            setLastStage(dataOk.stage);
-            console.debug('[Stage Update]', dataOk.stage);
-          }
-
-          // Track itinerary if provided
-          if (dataOk.itineraryId) {
-            setItineraryId(dataOk.itineraryId);
-            console.debug('[Itinerary ID] Saved:', dataOk.itineraryId);
-          }
-
-          // Track itinerary data if provided
-          if (dataOk.itinerary) {
-            setItinerary(dataOk.itinerary);
-            console.debug('[Itinerary Data] Updated, items:', dataOk.itinerary.length);
-
-            // FALLBACK: If backend didn't send itineraryId but sent itinerary, generate one
-            if (!dataOk.itineraryId && dataOk.itinerary.length > 0 && sessionId) {
-              const generatedId = `${sessionId}_${Date.now()}`;
-              setItineraryId(generatedId);
-              console.debug('[Itinerary ID] Generated (fallback):', generatedId);
-            }
-          }
-
           // Coerce response into a safe string. Backend may return array/object.
           let resp: any = dataOk.response ?? dataOk.result ?? dataOk.output ?? '';
           if (Array.isArray(resp)) {
@@ -424,6 +350,20 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           }
           if (resp === null || resp === undefined || resp === '') {
             resp = 'Không có phản hồi từ server';
+          }
+
+          // Track itinerary from response
+          if (dataOk.itineraryId) {
+            setItineraryId(dataOk.itineraryId);
+          } else if (dataOk.metadata?.itinerary_id) {
+            // Fallback: get itinerary_id from metadata
+            setItineraryId(dataOk.metadata.itinerary_id);
+          }
+          if (dataOk.itinerary && Array.isArray(dataOk.itinerary)) {
+            setItinerary(dataOk.itinerary);
+          }
+          if (dataOk.stage) {
+            console.debug('[Chat Response] Stage:', dataOk.stage, '. ItineraryId:', dataOk.itineraryId || dataOk.metadata?.itinerary_id);
           }
 
           const assistantMessage: Message = {
@@ -513,10 +453,9 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
               if (response.ok) {
                 setMessages([]);
                 setSessionId(null);
-                setLastStage(null);
                 setItineraryId(null);
                 setItinerary(null);
-                await clearChatState();
+                setShowItineraryDetail(false);
                 Alert.alert('Thành công', 'Cuộc trò chuyện đã được xóa');
               } else {
                 const data = await response.json().catch(() => ({}));
@@ -536,77 +475,6 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             }
           },
           style: 'destructive',
-        },
-      ]
-    );
-  };
-
-  const confirmItinerary = async () => {
-    if (!itineraryId || !token) {
-      Alert.alert('Lỗi', 'Không có lộ trình để xác nhận');
-      return;
-    }
-
-    Alert.alert(
-      'Xác nhận lộ trình',
-      'Sau khi xác nhận, lộ trình không thể chỉnh sửa thêm. Bạn có chắc chắn?',
-      [
-        { text: 'Hủy', onPress: () => {}, style: 'cancel' },
-        {
-          text: 'Xác nhận',
-          onPress: async () => {
-            setIsConfirmingItinerary(true);
-            try {
-              console.debug('[Confirm Itinerary] Starting with ID:', itineraryId);
-              const response = await fetch(`${API_BASE_URL}/ai/itineraries/${itineraryId}/confirm`, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json',
-                },
-              });
-
-              if (response.status === 401) {
-                signOut();
-                return;
-              }
-
-              if (response.ok) {
-                const data = await response.json();
-                console.debug('[Confirm Itinerary] Success:', data);
-                Alert.alert(
-                  'Thành công',
-                  'Lộ trình đã được xác nhận!',
-                  [
-                    {
-                      text: 'OK',
-                      onPress: () => {
-                        // Clear state and close modal
-                        setMessages([]);
-                        setSessionId(null);
-                        setLastStage(null);
-                        setItineraryId(null);
-                        setItinerary(null);
-                        clearChatState();
-                        onClose();
-                      },
-                    },
-                  ]
-                );
-              } else {
-                const errData = await response.json().catch(() => ({}));
-                const errMsg = errData?.message || `Lỗi: ${response.status}`;
-                console.error('[Confirm Itinerary] Error:', errMsg);
-                Alert.alert('Lỗi', String(errMsg));
-              }
-            } catch (error: any) {
-              console.error('[Confirm Itinerary] Exception:', error);
-              Alert.alert('Lỗi', 'Không thể xác nhận lộ trình. Vui lòng thử lại.');
-            } finally {
-              setIsConfirmingItinerary(false);
-            }
-          },
-          style: 'default',
         },
       ]
     );
@@ -674,6 +542,21 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
       presentationStyle="fullScreen"
       onRequestClose={onClose}
     >
+      {/* Itinerary Detail Screen Modal */}
+      {showItineraryDetail && itinerary && itineraryId && (
+        <ItineraryDetailScreen
+          itinerary={itinerary}
+          itineraryId={itineraryId}
+          onClose={() => setShowItineraryDetail(false)}
+          onConfirmSuccess={() => {
+            // Optional: handle post-confirmation logic
+            setShowItineraryDetail(false);
+          }}
+        />
+      )}
+
+      {/* Main Chat Modal */}
+      {!showItineraryDetail && (
       <LinearGradient
         colors={[COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.bgLightBlue]}
         style={styles.gradientBackground}
@@ -769,12 +652,9 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
                         </View>
 
                         {[
-                          'Lên kế hoạch du lịch 5 ngày ở Hà Nội và Hạ Long',
-                          'Đề xuất các địa điểm du lịch nổi tiếng ở miền Nam Việt Nam',
-                          'Chia sẻ kinh nghiệm và lời khuyên du lịch tiết kiệm',
-                          'Những đặc sản và món ăn đặc biệt nên thử ở các tỉnh miền Trung',
-                          'Hôm nay thích đi đâu? Gợi ý cho tôi các điểm du lịch gần đây',
-                          'Cách du lịch tiết kiệm chi phí mà vẫn vui vẻ'
+                          'Gần đây có quán cà phê nào không?',
+                          'Tôi muốn du lịch Hà Nội, 4 người, 3 ngày, ngân sách 10 triệu đồng',
+                          'Gợi ý lộ trình du lịch Đà Nẵng - Hội An, 2 người, 2 ngày, 5 triệu đồng'
                         ].map((suggestion, index) => (
                           <TouchableOpacity 
                             key={index}
@@ -837,68 +717,46 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             </BlurView>
           )}
 
-          {/* Itinerary Preview when stage is complete or modified */}
-          {itinerary && itinerary.length > 0 && (lastStage === 'complete' || lastStage === 'modified') && (
-            <View style={styles.itineraryPreviewContainer}>
-              <LinearGradient
-                colors={[COLORS.primary + '15', COLORS.gradientSecondary + '15']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.itineraryPreviewGradient}
-              >
-                <View style={styles.itineraryPreviewHeader}>
-                  <MaterialCommunityIcons name="map-outline" size={20} color={COLORS.primary} />
-                  <Text style={styles.itineraryPreviewTitle}>Lộ trình: {itinerary.length} hoạt động</Text>
-                  <View style={styles.stageBadge}>
-                    <Text style={styles.stageBadgeText}>{lastStage === 'complete' ? 'Sẵn sàng' : 'Sửa đổi'}</Text>
-                  </View>
-                </View>
-                <ScrollView style={styles.itineraryItemsScroll} horizontal showsHorizontalScrollIndicator={false}>
-                  {itinerary.map((item: any, idx: number) => (
-                    <View key={idx} style={styles.itineraryQuickItem}>
-                      <Text style={styles.itineraryQuickDay}>Ngày {item.day}</Text>
-                      <Text style={styles.itineraryQuickTime}>{item.time}</Text>
-                      <Text style={styles.itineraryQuickPlace} numberOfLines={2}>{item.place?.name || 'Địa điểm'}</Text>
-                    </View>
-                  ))}
-                </ScrollView>
-                <View style={styles.itineraryPreviewFooter}>
-                  <TouchableOpacity 
-                    style={[styles.confirmButton, isConfirmingItinerary && styles.confirmButtonDisabled]}
-                    onPress={confirmItinerary}
-                    disabled={isConfirmingItinerary}
-                  >
-                    <LinearGradient
-                      colors={isConfirmingItinerary ? [COLORS.disabled, COLORS.disabled] : [COLORS.primary, COLORS.gradientSecondary]}
-                      style={styles.confirmButtonGradient}
-                    >
-                      {isConfirmingItinerary ? (
-                        <ActivityIndicator size="small" color={COLORS.textWhite} />
-                      ) : (
-                        <>
-                          <MaterialCommunityIcons name="check-circle" size={18} color={COLORS.textWhite} />
-                          <Text style={styles.confirmButtonText}>Xác nhận lộ trình</Text>
-                        </>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                  <Text style={styles.itineraryPreviewHint}>Có thể tiếp tục chat để chỉnh sửa trước khi xác nhận</Text>
-                </View>
-              </LinearGradient>
-            </View>
-          )}
-
           {/* Input Container with Glassmorphism */}
           <BlurView intensity={80} tint="light" style={styles.inputContainer}>
+            {/* Itinerary Quick View Button */}
+            {itinerary && itinerary.length > 0 && (
+              <TouchableOpacity
+                style={styles.itineraryQuickButton}
+                onPress={() => setShowItineraryDetail(true)}
+              >
+                <LinearGradient
+                  colors={[COLORS.primary + '25', COLORS.gradientSecondary + '15']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.itineraryQuickButtonGradient}
+                >
+                  <View style={styles.itineraryQuickButtonIconWrapper}>
+                    <MaterialCommunityIcons name="calendar-check" size={20} color={COLORS.textWhite} />
+                  </View>
+                  <View style={styles.itineraryQuickButtonText}>
+                    <Text style={styles.itineraryQuickButtonTitle}>
+                      Lộ trình của bạn
+                    </Text>
+                    <Text style={styles.itineraryQuickButtonSubtitle}>
+                      {itinerary.length} hoạt động • Nhấn để xem chi tiết
+                    </Text>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-right" size={22} color={COLORS.primary} />
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
+
             <View style={styles.inputWrapper}>
               <TextInput
                 style={styles.textInput}
                 value={inputText}
                 onChangeText={setInputText}
-                placeholder="Hỏi AI về kế hoạch du lịch của bạn..."
-                placeholderTextColor={COLORS.textSecondary}
+                placeholder="Hỏi AI về kế hoạch du lịch..."
+                placeholderTextColor={COLORS.textSecondary + '70'}
                 multiline
                 maxLength={500}
+                placeholderTextColor={COLORS.textSecondary}
               />
               <TouchableOpacity
                 style={[styles.sendButton, (!inputText.trim() || isLoading || !token) && styles.sendButtonDisabled]}
@@ -909,11 +767,13 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
                   colors={(!inputText.trim() || isLoading || !token) 
                     ? [COLORS.disabled, COLORS.disabled] 
                     : [COLORS.primary, COLORS.gradientSecondary]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
                   style={styles.sendButtonGradient}
                 >
                   <MaterialCommunityIcons
-                    name="send"
-                    size={20}
+                    name={isLoading ? "loading" : "send"}
+                    size={22}
                     color={COLORS.textWhite}
                   />
                 </LinearGradient>
@@ -922,6 +782,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           </BlurView>
         </KeyboardAvoidingView>
       </LinearGradient>
+      )}
     </Modal>
   );
 };
@@ -1025,6 +886,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 4,
+    flexShrink: 1,
   },
   userMessage: {
     backgroundColor: COLORS.bgMain,
@@ -1084,24 +946,28 @@ const styles = StyleSheet.create({
   },
   messageContent: {
     marginBottom: 8,
+    flexShrink: 1,
   },
   messageText: {
     fontSize: 15,
     lineHeight: 24,
     letterSpacing: 0.2,
     color: COLORS.textMain,
+    flexWrap: 'wrap',
   },
   messageTextContent: {
     fontSize: 15,
     lineHeight: 24,
     color: COLORS.textMain,
     fontWeight: '400',
+    flexWrap: 'wrap',
   },
   boldText: {
     fontSize: 15,
     lineHeight: 24,
     color: COLORS.textMain,
     fontWeight: '700',
+    flexWrap: 'wrap',
   },
   italicText: {
     fontSize: 15,
@@ -1109,6 +975,7 @@ const styles = StyleSheet.create({
     color: COLORS.textMain,
     fontStyle: 'italic',
     fontWeight: '400',
+    flexWrap: 'wrap',
   },
   codeInlineText: {
     fontSize: 14,
@@ -1318,45 +1185,47 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   inputContainer: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
     overflow: 'hidden',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 32 : 16,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    padding: 16,
-    paddingBottom: Platform.OS === 'ios' ? 32 : 16,
-    gap: 12,
+    gap: 10,
+    paddingBottom: 12,
   },
   textInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    paddingTop: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary + '30',
+    borderRadius: 28,
+    paddingHorizontal: 20,
+    paddingVertical: 13,
+    paddingTop: 13,
     maxHeight: 120,
     fontSize: 15,
     color: COLORS.textMain,
     backgroundColor: COLORS.bgMain,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
   sendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     overflow: 'hidden',
     shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 6,
   },
   sendButtonGradient: {
     width: '100%',
@@ -1365,111 +1234,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    shadowOpacity: 0.1,
-    elevation: 1,
+    shadowOpacity: 0.12,
+    elevation: 2,
   },
-  itineraryPreviewContainer: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 16,
+  itineraryQuickButton: {
+    marginBottom: 14,
+    borderRadius: 18,
     overflow: 'hidden',
   },
-  itineraryPreviewGradient: {
-    padding: 16,
+  itineraryQuickButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary + '40',
+    borderRadius: 18,
     gap: 12,
   },
-  itineraryPreviewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.primary + '30',
-  },
-  itineraryPreviewTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textMain,
-    flex: 1,
-    letterSpacing: 0.3,
-  },
-  stageBadge: {
-    backgroundColor: COLORS.primary + '20',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  stageBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.primary,
-  },
-  itineraryItemsScroll: {
-    maxHeight: 110,
-  },
-  itineraryQuickItem: {
-    minWidth: 120,
-    marginRight: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: COLORS.bgMain,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
+  itineraryQuickButtonIconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
     justifyContent: 'center',
-  },
-  itineraryQuickDay: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.primary,
-    marginBottom: 4,
-  },
-  itineraryQuickTime: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textMain,
-    marginBottom: 4,
-  },
-  itineraryQuickPlace: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    lineHeight: 16,
-  },
-  itineraryPreviewFooter: {
-    gap: 8,
-  },
-  confirmButton: {
-    borderRadius: 16,
-    overflow: 'hidden',
+    alignItems: 'center',
     shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  confirmButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    gap: 8,
+  itineraryQuickButtonText: {
+    flex: 1,
   },
-  confirmButtonText: {
+  itineraryQuickButtonTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textWhite,
+    color: COLORS.textMain,
+    marginBottom: 2,
     letterSpacing: 0.3,
   },
-  confirmButtonDisabled: {
-    shadowOpacity: 0.1,
-    elevation: 1,
-  },
-  itineraryPreviewHint: {
+  itineraryQuickButtonSubtitle: {
     fontSize: 12,
     color: COLORS.textSecondary,
-    textAlign: 'center',
-    fontStyle: 'italic',
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
 });
 
