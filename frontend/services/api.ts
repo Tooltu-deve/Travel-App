@@ -22,8 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://10.172.187.190:3000'; // ⬅️ Render Cloud URL
-
+const API_BASE_URL = 'http://10.0.2.2:3000';
 // ============================================
 // TYPES
 // ============================================
@@ -562,6 +561,43 @@ export const updateProfileAPI = async (
 };
 
 /**
+ * changePasswordAPI: Đổi mật khẩu cho user đang đăng nhập
+ * 
+ * @param token - JWT token
+ * @param data - Object chứa currentPassword và newPassword
+ * @returns Message từ backend
+ * 
+ * Endpoint: POST /api/v1/auth/change-password
+ * Headers: Authorization: Bearer <token>
+ * Request: { currentPassword, newPassword }
+ * Response: { message }
+ */
+export const changePasswordAPI = async (
+  token: string,
+  data: { currentPassword: string; newPassword: string },
+): Promise<{ message: string }> => {
+  const url = `${API_BASE_URL}/api/v1/auth/change-password`;
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  const result = await response.json();
+  
+  if (!response.ok) {
+    // Throw error với message từ backend
+    throw new Error(result.message || 'Lỗi đổi mật khẩu');
+  }
+  
+  return result;
+};
+
+/**
  * getPlaceByIdAPI: Lấy chi tiết place theo internal DB id (`placeId` / `_id`)
  * Public endpoint: GET /api/v1/places/:id
  */
@@ -602,4 +638,5 @@ export default {
   getLikedPlacesAPI,
   getProfileAPI,
   updateProfileAPI,
+  changePasswordAPI,
 };
