@@ -9,7 +9,6 @@ import { useTheme } from '@/contexts/ThemeContext';
 
 const ChangePasswordScreen: React.FC = () => {
   const [oldPassword, setOldPassword] = useState('');
-    const [oldPasswordValid, setOldPasswordValid] = useState<'unknown' | 'checking' | 'valid' | 'invalid'>('unknown');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,70 +20,46 @@ const ChangePasswordScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { darkMode } = useTheme();
 
-  // Kiểm tra mật khẩu hiện tại đúng hay không (gọi API đổi mật khẩu với newPassword random, không đổi thật)
-  const checkCurrentPassword = async (password: string) => {
-    if (!password) {
-      setOldPasswordValid('unknown');
-      return;
-    }
-    setOldPasswordValid('checking');
-    try {
-      const token = await AsyncStorage.getItem('userToken');
-      if (!token) throw new Error('No token');
-      await changePasswordAPI(token, { currentPassword: password, newPassword: '__dummy__not_used__' });
-      // Nếu không lỗi, coi là đúng (hiếm khi xảy ra)
-      setOldPasswordValid('valid');
-    } catch (error: any) {
-      const msg = error && error.message ? error.message : '';
-      if (msg.includes('Password hiện tại không đúng')) {
-        setOldPasswordValid('invalid');
-      } else if (msg.includes('Password mới') || msg.toLowerCase().includes('new password')) {
-        // Nếu lỗi do password mới không hợp lệ (thường là do currentPassword đúng, newPassword dummy không hợp lệ)
-        setOldPasswordValid('valid');
-      } else {
-        // Các lỗi khác đều coi là sai (invalid)
-        setOldPasswordValid('invalid');
-      }
-    }
-  };
-
-  const handleOldPasswordChange = (text: string) => {
-    setOldPassword(text);
-    setOldPasswordValid('unknown');
-  };
-
-  const handleOldPasswordBlur = () => {
-    if (oldPassword) checkCurrentPassword(oldPassword);
-  };
-
   const handleChangePassword = async () => {
     if (!oldPassword || !newPassword || !confirmPassword) {
       Alert.alert('Lỗi', 'Vui lòng nhập đầy đủ thông tin');
+      return;
+    }
+    if (newPassword.length < 6) {
+      Alert.alert('Lỗi', 'Mật khẩu mới phải có ít nhất 6 ký tự');
       return;
     }
     if (newPassword !== confirmPassword) {
       Alert.alert('Lỗi', 'Mật khẩu mới không khớp');
       return;
     }
+    if (oldPassword === newPassword) {
+      Alert.alert('Lỗi', 'Mật khẩu mới phải khác mật khẩu cũ');
+      return;
+    }
     setLoading(true);
     try {
       const token = await AsyncStorage.getItem('userToken');
-      if (!token) throw new Error('No token');
-      // Sửa key oldPassword -> currentPassword để đúng với backend
+      if (!token) {
+        Alert.alert('Lỗi', 'Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.');
+        router.replace('/(auth)/login');
+        return;
+      }
       await changePasswordAPI(token, { currentPassword: oldPassword, newPassword });
       // Đăng xuất sau khi đổi mật khẩu thành công
       await AsyncStorage.removeItem('userToken');
       Alert.alert('Thành công', 'Đã đổi mật khẩu thành công. Vui lòng đăng nhập lại.', [
         {
           text: 'OK',
-          onPress: () => router.replace({ pathname: '/auth/login' }),
+          onPress: () => router.replace('/(auth)/login'),
         },
       ]);
       setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
-    } catch (error) {
-      Alert.alert('Lỗi', 'Không thể đổi mật khẩu');
+    } catch (error: any) {
+      const errorMsg = error?.message || 'Không thể đổi mật khẩu';
+      Alert.alert('Lỗi', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -128,8 +103,6 @@ const ChangePasswordScreen: React.FC = () => {
       <View style={[
         styles.inputWrapper,
         dynamicStyles.inputWrapper,
-        oldPassword.length > 0 && oldPasswordValid === 'invalid' && styles.inputError,
-        oldPassword.length > 0 && oldPasswordValid === 'valid' && styles.inputSuccess,
       ]}>
         <TextInput
           style={[
@@ -138,19 +111,16 @@ const ChangePasswordScreen: React.FC = () => {
             focusField === 'old' && styles.inputFocused,
           ]}
           value={oldPassword}
-          onChangeText={handleOldPasswordChange}
+          onChangeText={setOldPassword}
           placeholder="Nhập mật khẩu hiện tại"
           secureTextEntry={!showOld}
           placeholderTextColor={darkMode ? '#6B7280' : '#A0A4AA'}
           onFocus={() => setFocusField('old')}
-          onBlur={() => { setFocusField(''); handleOldPasswordBlur(); }}
+          onBlur={() => setFocusField('')}
         />
         <TouchableOpacity onPress={() => setShowOld(v => !v)} style={styles.eyeIcon}>
           <MaterialCommunityIcons name={showOld ? 'eye-off' : 'eye'} size={22} color="#888" />
         </TouchableOpacity>
-        {oldPassword.length > 0 && oldPasswordValid === 'valid' && (
-          <MaterialCommunityIcons name="check-circle" size={22} color="#22C55E" style={{marginLeft: 2}} />
-        )}
       </View>
       <View style={{ height: 24 }} />
 
