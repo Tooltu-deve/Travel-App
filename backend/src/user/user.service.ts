@@ -46,18 +46,9 @@ export class UserService {
     userId: string,
     updateData: Partial<User>,
   ): Promise<UserDocument | null> {
-    // Nếu updateData có password, phải hash trước khi lưu (dùng .save() để chạy pre-save hook)
-    if (updateData.password !== undefined) {
-      const user = await this.userModel.findById(userId);
-      if (!user) return null;
-      user.set(updateData);
-      await user.save();
-      return user;
-    } else {
-      return this.userModel
-        .findByIdAndUpdate(userId, { $set: updateData }, { new: true })
-        .exec();
-    }
+    return this.userModel
+      .findByIdAndUpdate(userId, { $set: updateData }, { new: true })
+      .exec();
   }
 
   async updatePreferences(

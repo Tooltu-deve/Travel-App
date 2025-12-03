@@ -9,7 +9,7 @@ import Constants from 'expo-constants';
 import { COLORS } from '../../constants/colors';
 import { useTheme } from '@/contexts/ThemeContext';
 import { SPACING } from '../../constants/spacing';
-import { getMoodsAPI, getFavoritesByMoodAPI } from '../../services/api';
+import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI } from '../../services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { translatePlaceType } from '../../constants/placeTypes';
 
@@ -49,7 +49,7 @@ const renderStars = (rating?: number | null) => {
   return <View style={{ flexDirection: 'row', alignItems: 'center' }}>{stars}<Text style={styles.placeRating}>{ratingText}</Text></View>;
 };
 
-const normalizePlace = (p: any) => {
+  const normalizePlace = (p: any) => {
   // Build moods array from several possible backend shapes
   let moods: string[] = [];
   if (Array.isArray(p.moods) && p.moods.length) moods = p.moods;
@@ -93,7 +93,7 @@ const normalizePlace = (p: any) => {
   }
 
   return {
-    id: p.placeId || p.id || p._id || p.google_place_id || p.googlePlaceId || '',
+    id: p.placeId || p.id || p._id || p.place_id || p.google_place_id || p.googlePlaceId || '',
     name,
     address,
     moods,
@@ -155,7 +155,15 @@ const FavoritesScreen: React.FC = () => {
         const res = await getMoodsAPI(token);
         const raw = Array.isArray(res?.moods) ? res.moods : [];
         // translate mood/type keys to Vietnamese labels for UI and keep original keys
-        let translated = raw.map((m: string) => ({ key: String(m), label: translatePlaceType(m) }));
+        // Deduplicate by the raw key to avoid duplicate React keys when rendering chips
+        const map = new Map<string, { key: string; label: string }>();
+        raw.forEach((m: string) => {
+          const key = String(m);
+          if (!map.has(key)) {
+            map.set(key, { key, label: translatePlaceType(m) });
+          }
+        });
+        let translated = Array.from(map.values());
         // Sort alphabetically by translated label (Vietnamese collation). Keep the 'all' chip first.
         translated.sort((a, b) => a.label.localeCompare(b.label, 'vi'));
         const list = [{ key: 'all', label: 'Tất cả' }, ...translated];
@@ -177,7 +185,7 @@ const FavoritesScreen: React.FC = () => {
       try {
         if (selectedMood === 'all') {
           const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
-          const mapped = list.map(normalizePlace).sort((a, b) => a.id.localeCompare(b.id));
+          const mapped = list.map(normalizePlace).filter(p => p.name !== 'Không rõ').sort((a, b) => a.id.localeCompare(b.id));
           if (!mounted) return;
           setFavorites(mapped);
           return;
@@ -192,7 +200,25 @@ const FavoritesScreen: React.FC = () => {
         const remote = await getFavoritesByMoodAPI(token, selectedMood);
         if (!mounted) return;
         if (Array.isArray(remote)) {
-          const mapped = remote.map((p: any) => normalizePlace(p));
+          const mapped = await Promise.all(remote.map(async (p: any) => {
+            // Normalize first
+            let norm = normalizePlace(p);
+            // If we don't have a googlePlaceId (required by like API), try fetching full details by internal place_id
+            const hasGoogleId = !!norm.googlePlaceId;
+            const possibleId = p.place_id || p.placeId || p._id || p.id || norm.id;
+            if (!hasGoogleId && possibleId) {
+              try {
+                const detail = await getPlaceByIdAPI(possibleId);
+                if (detail) {
+                  // merge detail (which may contain google_place_id) with original
+                  norm = normalizePlace({ ...detail, ...p });
+                }
+              } catch (e) {
+                // ignore fetch failures and keep original normalized shape
+              }
+            }
+            return norm;
+          }));
           setFavorites(mapped);
         } else {
           setFavorites([]);
@@ -217,15 +243,22 @@ const FavoritesScreen: React.FC = () => {
       // refresh context in background
       refreshFavorites().catch(() => {});
     } catch (e: any) {
-      setError(e?.message || 'Không thể cập nhật yêu thích');
+      // If the place doesn't exist, still remove locally
+      if (e?.message?.includes('Place không tồn tại')) {
+        setFavorites((prev) => prev.filter((p) => p.id !== placeId));
+        refreshFavorites().catch(() => {});
+      } else {
+        setError(e?.message || 'Không thể cập nhật yêu thích');
+      }
     } finally {
       setIsLiking(null);
     }
   };
 
-  const renderPlaceCard = (place: any) => {
+  const renderPlaceCard = (place: any, index: number) => {
+    const key = place.id || place.googlePlaceId || `fav-${index}`;
     return (
-      <View key={place.id} style={styles.card}>
+      <View key={key} style={styles.card}>
         <View style={styles.cardInner}>
           <View style={{ flex: 1 }}>
             <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>

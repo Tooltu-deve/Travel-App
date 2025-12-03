@@ -25,7 +25,11 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-from tools import TOOLS, search_places, optimize_route, optimize_route_with_ecs, check_opening_status, check_weather, calculate_budget_estimate
+from tools import (
+    TOOLS, search_places, optimize_route, optimize_route_with_ecs, 
+    check_opening_status, check_weather, calculate_budget_estimate,
+    search_nearby_places, get_place_details, get_travel_tips, find_emergency_services
+)
 
 load_dotenv()
 
@@ -109,12 +113,14 @@ class TravelState(TypedDict):
     optimization_applied: bool
     weather_checked: bool
     budget_calculated: bool
-    session_stage: str  # "profiling", "planning", "optimizing", "finalizing", "off_topic"
+    session_stage: str  # "profiling", "planning", "optimizing", "finalizing", "off_topic", "companion_mode"
     user_location: Optional[str]
     travel_date: Optional[str]
-    intent: Optional[str]  # "travel_planning", "itinerary_modification", "general_question", "off_topic"
+    intent: Optional[str]  # "travel_planning", "itinerary_modification", "general_question", "off_topic", "companion_question"
     itinerary_status: Optional[str]  # "DRAFT", "CONFIRMED" - tracks if user is still editing
     itinerary_id: Optional[str]  # MongoDB _id of saved itinerary for modifications
+    current_location: Optional[Dict]  # {'lat': float, 'lng': float} - for live companion mode
+    active_place_id: Optional[str]  # Current place user is at (for companion questions)
 
 # =====================================
 # LLM INITIALIZATION
@@ -146,7 +152,30 @@ def intent_classifier_node(state: TravelState) -> TravelState:
     # Quick keyword-based classification (faster, no API call for obvious cases)
     user_text = last_message.lower()
     
-    # Check for modification intent first (if there's existing itinerary)
+    # PRIORITY 0: Check for COMPANION MODE questions (location-based, real-time help)
+    companion_keywords = [
+        "gần đây", "nearby", "xung quanh", "quanh đây",  # Nearby search
+        "ăn gì", "món gì", "đặc sản", "food",  # Food tips
+        "check-in", "chụp ảnh", "photo", "sống ảo",  # Photo tips
+        "địa điểm này", "chỗ này", "đây",  # Place info
+        "bệnh viện", "pharmacy", "nhà thuốc", "atm", "khẩn cấp"  # Emergency
+    ]
+    
+    has_companion_keywords = any(keyword in user_text for keyword in companion_keywords)
+    
+    if has_companion_keywords:
+        # User asking real-time travel questions
+        intent = "companion_question"
+        print(f"   → Quick detected intent: {intent} (companion keywords found)")
+        
+        updated_state = {
+            **state,
+            "intent": intent,
+            "session_stage": "companion_mode"
+        }
+        return updated_state
+    
+    # Check for modification intent (if there's existing itinerary)
     # IMPORTANT: Check both itinerary_id (saved) and current_itinerary (in-progress)
     has_itinerary = bool(state.get("itinerary_id")) or len(state.get("current_itinerary", [])) > 0
     modification_keywords = ["bỏ", "xóa", "thêm", "thay", "đổi", "sửa", "remove", "add", "replace", "change"]
@@ -1191,6 +1220,224 @@ def itinerary_modifier_node(state: TravelState) -> TravelState:
             "messages": state["messages"] + [AIMessage(content=error_msg)]
         }
 
+def live_companion_node(state: TravelState) -> TravelState:
+    """
+    Node: Live Travel Companion - Answer location-based questions
+    Handles: nearby search, travel tips, place info, emergency help
+    """
+    print("🧭 LiveCompanion: Handling real-time travel question...")
+    
+    messages = state["messages"]
+    last_message = messages[-1].content if messages else ""
+    user_text = last_message.lower()
+    
+    current_location = state.get("current_location")
+    active_place_id = state.get("active_place_id")
+    
+    print(f"   📍 Current location: {current_location}")
+    print(f"   🏛️ Active place: {active_place_id}")
+    
+    response_text = ""
+    
+    try:
+        # Classify companion question type
+        if any(word in user_text for word in ["gần đây", "nearby", "xung quanh", "quanh đây", "gần"]):
+            # NEARBY SEARCH
+            print("   🔍 Type: Nearby search")
+            
+            if not current_location:
+                response_text = "❌ Tôi cần biết vị trí hiện tại của bạn để tìm các địa điểm gần đây.\n\n💡 Vui lòng bật GPS hoặc cho tôi biết bạn đang ở đâu."
+            else:
+                # Detect category from query
+                category = None
+                if any(word in user_text for word in ["ăn", "quán ăn", "nhà hàng", "food", "restaurant"]):
+                    category = "restaurant"
+                elif any(word in user_text for word in ["cà phê", "cafe", "coffee"]):
+                    category = "cafe"
+                elif any(word in user_text for word in ["mua sắm", "shop", "chợ"]):
+                    category = "shopping"
+                elif any(word in user_text for word in ["tham quan", "du lịch", "attraction"]):
+                    category = "attraction"
+                
+                nearby_places = search_nearby_places.invoke({
+                    "current_location": current_location,
+                    "radius_km": 2.0,
+                    "category": category,
+                    "limit": 5
+                })
+                
+                if nearby_places:
+                    category_text = f" {category}" if category else ""
+                    response_text = f"📍 **Các địa điểm{category_text} gần bạn:**\n\n"
+                    for i, place in enumerate(nearby_places, 1):
+                        name = place.get('name', 'Unknown')
+                        distance = place.get('distance_km', 0)
+                        rating = place.get('rating', 'N/A')
+                        response_text += f"{i}. **{name}** ({distance:.1f}km)\n"
+                        response_text += f"   ⭐ {rating} | {place.get('type', '')}\n"
+                        if place.get('address'):
+                            response_text += f"   📍 {place.get('address')}\n"
+                        response_text += "\n"
+                else:
+                    response_text = f"😔 Không tìm thấy địa điểm{' ' + category if category else ''} nào trong bán kính 2km.\n\n💡 Thử mở rộng phạm vi hoặc hỏi loại địa điểm khác?"
+        
+        elif any(word in user_text for word in ["ăn gì", "món gì", "đặc sản", "food", "eat"]):
+            # FOOD TIPS
+            print("   🍽️ Type: Food tips")
+            
+            if active_place_id:
+                # Get current place details
+                place = get_place_details.invoke({"place_id": active_place_id})
+                tips = get_travel_tips.invoke({"place": place, "tip_type": "food"})
+            elif current_location:
+                # Find nearby restaurants
+                nearby = search_nearby_places.invoke({
+                    "current_location": current_location,
+                    "category": "restaurant",
+                    "radius_km": 1.0,
+                    "limit": 5
+                })
+                place = nearby[0] if nearby else {}
+                tips = get_travel_tips.invoke({"place": place, "tip_type": "food"})
+            else:
+                tips = {}
+            
+            if tips and tips.get('suggestions'):
+                response_text = "🍽️ **Gợi ý ẩm thực:**\n\n"
+                for suggestion in tips['suggestions']:
+                    response_text += f"• {suggestion}\n"
+                
+                if tips.get('warnings'):
+                    response_text += "\n⚠️ **Lưu ý:**\n"
+                    for warning in tips['warnings']:
+                        response_text += f"• {warning}\n"
+            else:
+                response_text = "🍽️ Tôi cần biết vị trí của bạn để gợi ý món ăn ngon gần đó!"
+        
+        elif any(word in user_text for word in ["check-in", "checkin", "chụp ảnh", "photo", "sống ảo"]):
+            # PHOTO TIPS
+            print("   📸 Type: Photo tips")
+            
+            if active_place_id:
+                place = get_place_details.invoke({"place_id": active_place_id})
+                tips = get_travel_tips.invoke({"place": place, "tip_type": "photo"})
+                
+                response_text = f"📸 **Góc check-in đẹp tại {tips.get('place_name', 'đây')}:**\n\n"
+                for suggestion in tips.get('suggestions', []):
+                    response_text += f"• {suggestion}\n"
+                
+                if tips.get('best_time'):
+                    response_text += f"\n⏰ **Thời gian đẹp nhất:** {tips['best_time']}\n"
+            else:
+                response_text = "📸 Bạn đang ở địa điểm nào? Cho tôi biết để gợi ý góc chụp đẹp nhé!"
+        
+        elif any(word in user_text for word in ["bệnh viện", "hospital", "pharmacy", "nhà thuốc", "atm", "khẩn cấp", "emergency"]):
+            # EMERGENCY SERVICES
+            print("   🚨 Type: Emergency services")
+            
+            service_type = "hospital"
+            if "pharmacy" in user_text or "nhà thuốc" in user_text:
+                service_type = "pharmacy"
+            elif "atm" in user_text:
+                service_type = "atm"
+            
+            if not current_location:
+                response_text = "🚨 Tôi cần biết vị trí của bạn để tìm dịch vụ gần nhất!\n\n💡 Vui lòng bật GPS."
+            else:
+                services = find_emergency_services.invoke({
+                    "current_location": current_location,
+                    "service_type": service_type
+                })
+                
+                if services:
+                    service_label = {
+                        "hospital": "Bệnh viện",
+                        "pharmacy": "Nhà thuốc",
+                        "atm": "ATM"
+                    }.get(service_type, "Dịch vụ")
+                    
+                    response_text = f"🚨 **{service_label} gần nhất:**\n\n"
+                    for i, service in enumerate(services, 1):
+                        name = service.get('name', 'Unknown')
+                        distance = service.get('distance_km', 0)
+                        response_text += f"{i}. **{name}** ({distance:.1f}km)\n"
+                        if service.get('address'):
+                            response_text += f"   📍 {service.get('address')}\n"
+                        if service.get('phone'):
+                            response_text += f"   📞 {service.get('phone')}\n"
+                        response_text += "\n"
+                else:
+                    response_text = f"😔 Không tìm thấy {service_type} gần đây.\n\n💡 Bạn có thể thử tìm kiếm trên Google Maps."
+        
+        elif any(word in user_text for word in ["địa điểm này", "chỗ này", "đây", "place", "here"]):
+            # PLACE INFO
+            print("   ℹ️ Type: Place info")
+            
+            if active_place_id:
+                place = get_place_details.invoke({"place_id": active_place_id})
+                
+                if place:
+                    response_text = f"ℹ️ **Thông tin về {place.get('name', 'địa điểm này')}:**\n\n"
+                    
+                    if place.get('description'):
+                        response_text += f"📝 {place['description']}\n\n"
+                    
+                    if place.get('rating'):
+                        response_text += f"⭐ **Đánh giá:** {place['rating']}/5 ({place.get('user_ratings_total', 0)} reviews)\n"
+                    
+                    if place.get('opening_hours'):
+                        response_text += f"🕐 **Giờ mở cửa:** Đang mở\n"
+                    
+                    if place.get('budget_range'):
+                        budget_label = {
+                            'budget': '💰 Bình dân',
+                            'mid-range': '💰💰 Trung bình',
+                            'expensive': '💰💰💰 Cao cấp'
+                        }.get(place['budget_range'], place['budget_range'])
+                        response_text += f"💵 **Mức giá:** {budget_label}\n"
+                    
+                    response_text += "\n💡 **Bạn muốn biết thêm gì?**\n"
+                    response_text += "• Ăn gì ngon?\n"
+                    response_text += "• Chụp ảnh ở đâu đẹp?\n"
+                    response_text += "• Nên làm gì tại đây?\n"
+                else:
+                    response_text = "❌ Không tìm thấy thông tin về địa điểm này."
+            else:
+                response_text = "📍 Bạn đang ở địa điểm nào? Cho tôi biết để tìm thông tin nhé!"
+        
+        else:
+            # DEFAULT - General companion question
+            print("   💬 Type: General companion question")
+            
+            system_prompt = f"""
+            Bạn là travel companion AI đang hỗ trợ du khách TRONG LÚC đi du lịch.
+            
+            Trả lời câu hỏi ngắn gọn, thực tế, hữu ích.
+            Nếu cần vị trí để trả lời chính xác → Hỏi user bật GPS.
+            
+            User location: {current_location or 'Unknown'}
+            Active place: {active_place_id or 'Unknown'}
+            
+            Trả lời bằng tiếng Việt, thân thiện.
+            """
+            
+            response = llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=last_message)
+            ])
+            
+            response_text = response.content
+    
+    except Exception as e:
+        print(f"   ❌ Error in companion mode: {e}")
+        response_text = "😔 Xin lỗi, tôi gặp lỗi khi xử lý câu hỏi.\n\n💡 Bạn có thể thử hỏi lại không?"
+    
+    return {
+        **state,
+        "messages": state["messages"] + [AIMessage(content=response_text)],
+        "session_stage": "companion_mode"
+    }
+
 def final_response_node(state: TravelState) -> TravelState:
     """
     Node 6: Format final response with complete itinerary
@@ -1287,6 +1534,7 @@ def create_travel_agent_graph():
     workflow.add_node("route_optimizer", route_optimizer_node)
     workflow.add_node("feasibility_checker", feasibility_checker_node)
     workflow.add_node("budget_calculator", budget_calculator_node)
+    workflow.add_node("live_companion", live_companion_node)  # NEW: Live Travel Companion
     workflow.add_node("final_response", final_response_node)
     
     # Define routing logic
@@ -1300,6 +1548,9 @@ def create_travel_agent_graph():
         
         if stage == "off_topic":
             return END  # End conversation for off-topic
+        elif stage == "companion_mode" or "companion_question" in intent:
+            print("   → Going to live_companion")
+            return "live_companion"  # Live travel companion mode
         elif stage == "answering_question":
             return "travel_question_answerer"
         elif "itinerary_modification" in intent and has_itinerary:
@@ -1347,6 +1598,7 @@ def create_travel_agent_graph():
     workflow.add_edge(START, "intent_classifier")
     workflow.add_conditional_edges("intent_classifier", route_after_intent_classification)
     workflow.add_edge("travel_question_answerer", END)
+    workflow.add_edge("live_companion", END)  # NEW: Companion mode ends after response
     workflow.add_edge("itinerary_modifier", END)  # After modification, show result and end
     workflow.add_conditional_edges("profile_collector", route_after_profiling)
     workflow.add_conditional_edges("itinerary_planner", route_after_planning)

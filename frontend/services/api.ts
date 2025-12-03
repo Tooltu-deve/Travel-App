@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
+const API_BASE_URL = 'http://10.172.187.190:3000'; // ⬅️ Render Cloud URL
 
 // ============================================
 // TYPES
