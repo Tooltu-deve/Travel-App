@@ -223,6 +223,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Clear AsyncStorage
       await AsyncStorage.removeItem('userToken');
       await AsyncStorage.removeItem('userData');
+      await AsyncStorage.removeItem('hasCompletedMoodSelection');
       
       // Reset state
       setUserData(null);
