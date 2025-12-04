@@ -6,7 +6,6 @@ import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COLORS } from '../../constants';
-import { useTheme } from '@/contexts/ThemeContext';
 
 // Custom Tab Icon Component with Animation
 const TabIcon: React.FC<{
@@ -59,39 +58,27 @@ const TabIcon: React.FC<{
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  const { darkMode } = useTheme();
-
-  // Màu dark mode
-  const darkColors = {
-    bg: '#181A20',
-    icon: '#fff',
-    iconInactive: '#6B7280',
-    label: '#fff',
-    border: '#23262F',
-  };
 
   return (
     <>
-      {/* Shadow gradient overlay above tab bar - chỉ hiện ở light mode */}
-      {!darkMode && (
-        <LinearGradient
-          colors={[COLORS.primaryTransparent, COLORS.primaryLight, COLORS.primaryMedium]}
-          style={[styles.shadowGradient, { bottom: 70 + insets.bottom + 2 }]}
-          pointerEvents="none"
-        />
-      )}
+      {/* Shadow gradient overlay above tab bar */}
+      <LinearGradient
+        colors={[COLORS.primaryTransparent, COLORS.primaryLight, COLORS.primaryMedium]}
+        style={[styles.shadowGradient, { bottom: 70 + insets.bottom + 2 }]}
+        pointerEvents="none"
+      />
 
       {/* Border line on top of tab bar */}
-      <View style={[styles.topBorderLine, { bottom: 70 + insets.bottom, backgroundColor: darkMode ? darkColors.border : COLORS.primary, shadowColor: darkMode ? darkColors.border : COLORS.primary }]} pointerEvents="none" />
+      <View style={[styles.topBorderLine, { bottom: 70 + insets.bottom }]} pointerEvents="none" />
 
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: darkMode ? COLORS.primary : COLORS.primary,
-          tabBarInactiveTintColor: darkMode ? darkColors.iconInactive : COLORS.iconInactive,
+          tabBarActiveTintColor: COLORS.primary,
+          tabBarInactiveTintColor: COLORS.iconInactive,
           tabBarShowLabel: true,
           tabBarStyle: {
-            backgroundColor: darkMode ? darkColors.bg : COLORS.bgMain,
+            backgroundColor: COLORS.bgMain,
             borderTopColor: 'transparent',
             borderTopWidth: 0,
             height: 70 + insets.bottom,
@@ -103,7 +90,7 @@ export default function TabLayout() {
             fontSize: 11,
             fontWeight: '600',
             marginTop: 4,
-            color: darkMode ? darkColors.label : COLORS.textMain,
+            color: COLORS.textMain,
           },
           tabBarIconStyle: {
             marginTop: 0,
@@ -168,7 +155,7 @@ export default function TabLayout() {
         />
       </Tabs>
       
-      <View style={[styles.safeAreaBottom, { height: insets.bottom, backgroundColor: darkMode ? darkColors.bg : COLORS.bgMain }]} />
+      <View style={[styles.safeAreaBottom, { height: insets.bottom }]} />
     </>
   );
 }
@@ -199,6 +186,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+    backgroundColor: COLORS.bgMain,
   },
   iconContainer: {
     alignItems: 'center',

@@ -1,11 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { changePasswordAPI } from '@/services/api';
-import { useTheme } from '@/contexts/ThemeContext';
 
 const ChangePasswordScreen: React.FC = () => {
   const [oldPassword, setOldPassword] = useState('');
@@ -18,7 +17,6 @@ const ChangePasswordScreen: React.FC = () => {
   const [focusField, setFocusField] = useState('');
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { darkMode } = useTheme();
 
   const handleChangePassword = async () => {
     if (!oldPassword || !newPassword || !confirmPassword) {
@@ -46,7 +44,6 @@ const ChangePasswordScreen: React.FC = () => {
         return;
       }
       await changePasswordAPI(token, { currentPassword: oldPassword, newPassword });
-      // Đăng xuất sau khi đổi mật khẩu thành công
       await AsyncStorage.removeItem('userToken');
       Alert.alert('Thành công', 'Đã đổi mật khẩu thành công. Vui lòng đăng nhập lại.', [
         {
@@ -65,56 +62,27 @@ const ChangePasswordScreen: React.FC = () => {
     }
   };
 
-  const dynamicStyles = {
-    container: {
-      backgroundColor: darkMode ? '#18181b' : '#F3F6FA',
-    },
-    title: {
-      color: darkMode ? '#60a5fa' : '#2196F3',
-    },
-    label: {
-      color: darkMode ? '#f1f5f9' : '#1E293B',
-    },
-    inputWrapper: {
-      backgroundColor: darkMode ? '#27272a' : '#F5F5F5',
-      borderColor: darkMode ? '#334155' : 'transparent',
-    },
-    input: {
-      color: darkMode ? '#f1f5f9' : '#222',
-    },
-    saveBtn: {
-      backgroundColor: darkMode ? '#60a5fa' : '#2196F3',
-    },
-  };
-
   return (
-    <ScrollView contentContainerStyle={[styles.container, dynamicStyles.container]}>
+    <ScrollView contentContainerStyle={styles.container}>
       {/* Header */}
       <View style={[styles.headerRow, { paddingTop: insets.top || 16 }]}> 
         <TouchableOpacity onPress={() => router.back()} style={{padding:4,marginRight:6}}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color={darkMode ? '#60a5fa' : '#2196F3'} />
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#2196F3" />
         </TouchableOpacity>
-        <Text style={[styles.title, dynamicStyles.title]}>Đổi mật khẩu</Text>
+        <Text style={styles.title}>Đổi mật khẩu</Text>
       </View>
       <View style={{ height: 32 }} />
 
-      <Text style={[styles.label, dynamicStyles.label]}>Mật khẩu hiện tại</Text>
+      <Text style={styles.label}>Mật khẩu hiện tại</Text>
       <View style={{ height: 8 }} />
-      <View style={[
-        styles.inputWrapper,
-        dynamicStyles.inputWrapper,
-      ]}>
+      <View style={styles.inputWrapper}>
         <TextInput
-          style={[
-            styles.input,
-            dynamicStyles.input,
-            focusField === 'old' && styles.inputFocused,
-          ]}
+          style={[styles.input, focusField === 'old' && styles.inputFocused]}
           value={oldPassword}
           onChangeText={setOldPassword}
           placeholder="Nhập mật khẩu hiện tại"
           secureTextEntry={!showOld}
-          placeholderTextColor={darkMode ? '#6B7280' : '#A0A4AA'}
+          placeholderTextColor="#A0A4AA"
           onFocus={() => setFocusField('old')}
           onBlur={() => setFocusField('')}
         />
@@ -124,23 +92,16 @@ const ChangePasswordScreen: React.FC = () => {
       </View>
       <View style={{ height: 24 }} />
 
-      <Text style={[styles.label, dynamicStyles.label]}>Mật khẩu mới</Text>
+      <Text style={styles.label}>Mật khẩu mới</Text>
       <View style={{ height: 8 }} />
-      <View style={[
-        styles.inputWrapper,
-        dynamicStyles.inputWrapper,
-      ]}>
+      <View style={styles.inputWrapper}>
         <TextInput
-          style={[
-            styles.input,
-            dynamicStyles.input,
-            focusField === 'new' && styles.inputFocused,
-          ]}
+          style={[styles.input, focusField === 'new' && styles.inputFocused]}
           value={newPassword}
           onChangeText={setNewPassword}
           placeholder="Nhập mật khẩu mới"
           secureTextEntry={!showNew}
-          placeholderTextColor={darkMode ? '#6B7280' : '#A0A4AA'}
+          placeholderTextColor="#A0A4AA"
           onFocus={() => setFocusField('new')}
           onBlur={() => setFocusField('')}
         />
@@ -150,25 +111,20 @@ const ChangePasswordScreen: React.FC = () => {
       </View>
       <View style={{ height: 24 }} />
 
-      <Text style={[styles.label, dynamicStyles.label]}>Xác nhận mật khẩu mới</Text>
+      <Text style={styles.label}>Xác nhận mật khẩu mới</Text>
       <View style={{ height: 8 }} />
       <View style={[
         styles.inputWrapper,
-        dynamicStyles.inputWrapper,
         confirmPassword.length > 0 && newPassword !== confirmPassword && styles.inputError,
         confirmPassword.length > 0 && newPassword === confirmPassword && styles.inputSuccess,
       ]}>
         <TextInput
-          style={[
-            styles.input,
-            dynamicStyles.input,
-            focusField === 'confirm' && styles.inputFocused,
-          ]}
+          style={[styles.input, focusField === 'confirm' && styles.inputFocused]}
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           placeholder="Nhập lại mật khẩu mới"
           secureTextEntry={!showConfirm}
-          placeholderTextColor={darkMode ? '#6B7280' : '#A0A4AA'}
+          placeholderTextColor="#A0A4AA"
           onFocus={() => setFocusField('confirm')}
           onBlur={() => setFocusField('')}
         />
@@ -180,7 +136,7 @@ const ChangePasswordScreen: React.FC = () => {
         )}
       </View>
       <View style={{ height: 40 }} />
-      <TouchableOpacity style={[styles.saveBtn, dynamicStyles.saveBtn]} onPress={handleChangePassword} disabled={loading}>
+      <TouchableOpacity style={styles.saveBtn} onPress={handleChangePassword} disabled={loading}>
         <Text style={styles.saveBtnText}>{loading ? 'Đang đổi...' : 'Đổi mật khẩu'}</Text>
       </TouchableOpacity>
     </ScrollView>
@@ -237,7 +193,6 @@ const styles = StyleSheet.create({
     minHeight: 50,
   },
   inputFocused: {
-    // Khi focus, border sẽ xanh đậm
     backgroundColor: '#F0F2F5',
   },
   inputError: {

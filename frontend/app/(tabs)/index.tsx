@@ -1,5 +1,4 @@
 // HomeScreen - Trang chủ với các điểm đến nổi bật, danh mục và đánh giá
-import { useTheme } from '@/contexts/ThemeContext';
 import { FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useRef, useState } from 'react';
@@ -15,12 +14,11 @@ import { SPACING } from '../../constants/spacing';
 import { featuredDestinations, reviews } from '../mockData';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
-const SNAP_INTERVAL = CARD_WIDTH; // Snap theo full width
+const CARD_WIDTH = SCREEN_WIDTH;
+const SNAP_INTERVAL = CARD_WIDTH;
 const INITIAL_REVIEWS_COUNT = 2;
 
 const HomeScreen: React.FC = () => {
-  const { darkMode } = useTheme();
   const insets = useSafeAreaInsets();
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [isCategoryExpanded, setIsCategoryExpanded] = useState(false);
@@ -111,13 +109,13 @@ const HomeScreen: React.FC = () => {
 
   return (
     <LinearGradient
-      colors={darkMode ? ['#121212', '#121212'] : ['#e6f6ff', '#ccecff']}
-      locations={darkMode ? [0, 1] : [0, 1]}
+      colors={['#e6f6ff', '#ccecff']}
+      locations={[0, 1]}
       style={homeStyles.gradientContainer}
     >
       <ScrollView 
         ref={scrollViewRef}
-        style={{flex:1, backgroundColor: darkMode ? '#121212' : 'transparent'}}
+        style={{flex:1}}
         showsVerticalScrollIndicator={false}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
@@ -131,29 +129,22 @@ const HomeScreen: React.FC = () => {
             ]}
             pointerEvents={isSearchExpanded ? 'none' : 'auto'}
           >
-            <Text style={[homeStyles.welcomeText, {color: darkMode ? '#E0E0E0' : '#1F2937'}]}>Welcome !</Text>
-            <Text style={[homeStyles.subtitleText, darkMode && {color:'#E0E0E0'}]}>Trần Minh Thanh</Text>
+            <Text style={homeStyles.welcomeText}>Welcome !</Text>
+            <Text style={homeStyles.subtitleText}>Trần Minh Thanh</Text>
           </Animated.View>
           <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}> 
             <SearchBar onExpandChange={setIsSearchExpanded} />
-            <TouchableOpacity style={[homeStyles.headerButton, { backgroundColor: '#fff', borderColor: COLORS.borderLight, shadowColor: COLORS.primary, shadowOpacity: 0.08, shadowRadius: 8, elevation: 4 }]}> 
+            <TouchableOpacity style={homeStyles.headerButton}> 
               <FontAwesome name="cog" size={22} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
         </View>
 
         <View style={homeStyles.featuredSection}>
-          <Text style={[homeStyles.featuredTitle, {
-            color: darkMode ? COLORS.primary : '#222',
-            backgroundColor: 'transparent',
-            fontWeight: 'bold',
-            textShadowColor: darkMode ? 'rgba(0,163,255,0.25)' : 'rgba(0,163,255,0.25)',
-            textShadowOffset: { width: 0, height: 4 },
-            textShadowRadius: 8,
-          }]}>Điểm đến nổi bật</Text>
+          <Text style={homeStyles.featuredTitle}>Điểm đến nổi bật</Text>
         </View>
 
-        <View style={[homeStyles.carouselWrapper, darkMode && {backgroundColor:'#1E1E1E'}]}>
+        <View style={homeStyles.carouselWrapper}>
           <ScrollView
             ref={carouselRef}
             horizontal
@@ -195,7 +186,7 @@ const HomeScreen: React.FC = () => {
 
         {/* Divider before categories */}
         <LinearGradient
-          colors={darkMode ? ['#23262F', '#23262F', '#23262F'] : [COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
+          colors={[COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={homeStyles.sectionDivider}
@@ -208,18 +199,15 @@ const HomeScreen: React.FC = () => {
 
         {/* Divider before reviews */}
         <LinearGradient
-          colors={darkMode ? ['#23262F', '#23262F', '#23262F'] : [COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
+          colors={[COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={homeStyles.sectionDivider}
         />
 
         <View style={homeStyles.reviewsSection}>
-          <Text style={[homeStyles.reviewsTitle, darkMode && {color:'#E0E0E0', textShadowColor:'transparent'}]}>Đánh giá</Text>
-          {/* Show a single ReviewCard section (places preview) */}
+          <Text style={homeStyles.reviewsTitle}>Đánh giá</Text>
           <ReviewCard />
-          
-          {/* Reviews header only — ReviewCard handles its own "load more" now */}
         </View>
 
         <View style={{ height: SPACING.xl }} />
@@ -258,21 +246,21 @@ const homeStyles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: COLORS.bgMain,
+    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: COLORS.bgLight,
-    shadowColor: '#000',
+    borderColor: COLORS.borderLight,
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
   },
   welcomeText: {
     fontSize: 32,
     fontWeight: '800',
-    color: COLORS.textDark,
+    color: '#1F2937',
     marginBottom: SPACING.xs / 2,
     letterSpacing: 0.5,
     textShadowColor: 'rgba(0, 163, 255, 0.15)',
@@ -303,7 +291,7 @@ const homeStyles = StyleSheet.create({
   featuredTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: COLORS.textDark,
+    color: '#222',
     paddingHorizontal: SPACING.xs,
     letterSpacing: 0.5,
     textShadowColor: 'rgba(0, 163, 255, 0.25)',
@@ -315,11 +303,11 @@ const homeStyles = StyleSheet.create({
     paddingVertical: 0,
     paddingTop: SPACING.md,
     marginHorizontal: 0,
-    marginTop: SPACING.lg, // Thêm khoảng cách để card không che tiêu đề
+    marginTop: SPACING.lg,
     position: 'relative',
   },
   carouselContent: { 
-    paddingHorizontal: 0, // Bỏ padding để card full width
+    paddingHorizontal: 0,
   },
   cardDotsContainer: {
     flexDirection: 'row',

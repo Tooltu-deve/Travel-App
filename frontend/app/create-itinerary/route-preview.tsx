@@ -63,7 +63,6 @@ export default function RoutePreviewScreen() {
   const router = useRouter();
   const params = useLocalSearchParams() as unknown as RoutePreviewParams;
   const insets = useSafeAreaInsets();
-  const { darkMode } = require('@/contexts/ThemeContext').useTheme();
   const mapRef = useRef<MapView>(null);
 
   const [selectedDay, setSelectedDay] = useState<number>(1);
@@ -353,23 +352,23 @@ export default function RoutePreviewScreen() {
 
   return (
     <LinearGradient
-      colors={darkMode ? ['#181A20', '#181A20'] : [COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={darkMode ? [0, 1] : [0, 0.3, 0.6, 1]}
+      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
+      locations={[0, 0.3, 0.6, 1]}
       style={styles.gradientContainer}
     >
       <View style={styles.container}>
         {/* Header */}
         <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}> 
           <TouchableOpacity 
-            style={[styles.backButton, darkMode && { backgroundColor: '#23262F', borderColor: '#363A45', shadowColor: 'transparent' }]}
+            style={styles.backButton}
             onPress={() => router.back()}
             activeOpacity={0.7}
           >
-            <FontAwesome name="arrow-left" size={20} color={darkMode ? '#fff' : COLORS.textDark} />
+            <FontAwesome name="arrow-left" size={20} color={COLORS.textDark} />
           </TouchableOpacity>
           <View style={styles.headerTextContainer}>
-            <Text style={[styles.headerTitle, darkMode && { color: '#fff', textShadowColor: 'transparent' }]}>Lộ Trình {destination}</Text>
-            <Text style={[styles.headerSubtitle, darkMode && { color: '#4DD0E1' }]}>{durationDays} Ngày</Text>
+            <Text style={styles.headerTitle}>Lộ Trình {destination}</Text>
+            <Text style={styles.headerSubtitle}>{durationDays} Ngày</Text>
           </View>
         </View>
 
@@ -934,4 +933,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-

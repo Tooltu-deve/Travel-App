@@ -1,5 +1,4 @@
 // ItineraryScreen - Trang lịch trình du lịch
-import { useTheme } from '@/contexts/ThemeContext';
 import { getRoutesAPI, TravelRoute } from '@/services/api';
 import { FontAwesome } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -21,7 +20,6 @@ import { SPACING } from '../../constants/spacing';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Mock data - sẽ được thay thế bằng dữ liệu thực từ API
 interface MockItinerary {
   id: string;
   title: string;
@@ -67,7 +65,6 @@ const mockItineraries: MockItinerary[] = [
 ];
 
 const ItineraryScreen: React.FC = () => {
-  const { darkMode } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [itineraries] = useState<MockItinerary[]>(mockItineraries);
@@ -76,6 +73,7 @@ const ItineraryScreen: React.FC = () => {
   const [routesError, setRoutesError] = useState<string | null>(null);
   
   const activeItinerary = itineraries.find(it => it.status === 'active');
+  
   useEffect(() => {
     let isMounted = true;
 
@@ -232,32 +230,32 @@ const ItineraryScreen: React.FC = () => {
 
   return (
     <LinearGradient
-      colors={darkMode ? ['#121212', '#121212'] : [COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={darkMode ? [0, 1] : [0, 0.3, 0.6, 1]}
+      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
+      locations={[0, 0.3, 0.6, 1]}
       style={styles.gradientContainer}
     >
       <ScrollView 
-        style={{flex:1, backgroundColor: darkMode ? '#121212' : '#fff'}}
+        style={{flex:1, backgroundColor: '#fff'}}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: SPACING.xxxl }}
       >
         {/* Header */}
         <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}> 
           <View style={styles.headerTextContainer}>
-            <Text style={{color: darkMode ? '#E0E0E0' : '#1F2937', fontWeight:'bold', fontSize:22}}>Lịch trình của bạn</Text>
-            <Text style={[styles.headerSubtitle, darkMode && {color:'#4DD0E1'}]}>Quản lý các hành trình du lịch</Text>
+            <Text style={styles.headerTitle}>Lịch trình của bạn</Text>
+            <Text style={styles.headerSubtitle}>Quản lý các hành trình du lịch</Text>
           </View>
         </View>
 
         {/* Create Button */}
-        <View style={[styles.createButtonContainer, {paddingHorizontal: 0, marginLeft: 0, marginRight: 0}]}> 
+        <View style={styles.createButtonContainer}> 
           <TouchableOpacity 
-            style={[styles.createButton, {marginHorizontal: SPACING.lg}]}
+            style={styles.createButton}
             onPress={handleCreateItinerary}
             activeOpacity={0.8}
           >
             <LinearGradient
-              colors={darkMode ? ['#4DD0E1', '#64B5F6'] : [COLORS.primary, COLORS.gradientSecondary]}
+              colors={[COLORS.primary, COLORS.gradientSecondary]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.createButtonGradient}
@@ -271,26 +269,20 @@ const ItineraryScreen: React.FC = () => {
         {/* Current Itinerary Section */}
         {activeItinerary && (
           <>
-            <Text style={[styles.sectionTitle, darkMode && {color:'#E0E0E0'}, {marginLeft: SPACING.lg}]}>Lộ trình hiện tại</Text>
+            <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>Lộ trình hiện tại</Text>
             <View style={{marginHorizontal: SPACING.lg}}>
-              <View style={[styles.currentItineraryCard, darkMode && {backgroundColor:'#23262F'}]}>
+              <View style={styles.currentItineraryCard}>
                 <LinearGradient
-                  colors={darkMode ? ['#23262F', '#23262F'] : [COLORS.primary, COLORS.gradientSecondary]}
+                  colors={[COLORS.primary, COLORS.gradientSecondary]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={styles.currentCardGradient}
                 >
                   <View style={styles.currentCardHeader}>
                     <View style={styles.currentCardTitleContainer}>
-                      <Text style={[styles.currentCardTitle, darkMode && {color:'#E0E0E0'}]}>{activeItinerary.title}</Text>
-                      <View style={[{
-                        backgroundColor: darkMode ? '#2196F326' : COLORS.bgMain,
-                        borderRadius: 12,
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        marginLeft: 8,
-                      }]}> 
-                        <Text style={{ color: darkMode ? '#64B5F6' : getStatusColor(activeItinerary.status), fontWeight:'700', fontSize:13 }}>
+                      <Text style={styles.currentCardTitle}>{activeItinerary.title}</Text>
+                      <View style={styles.statusBadge}> 
+                        <Text style={[styles.statusText, { color: getStatusColor(activeItinerary.status) }]}>
                           {getStatusText(activeItinerary.status)}
                         </Text>
                       </View>
@@ -298,23 +290,23 @@ const ItineraryScreen: React.FC = () => {
                   </View>
                   <View style={styles.currentCardContent}>
                     <View style={styles.currentCardRow}>
-                      <FontAwesome name="map-marker" size={16} color={darkMode ? '#4DD0E1' : COLORS.textWhite} />
-                      <Text style={[styles.currentCardText, darkMode && {color:'#E0E0E0'}]}>{activeItinerary.destination}</Text>
+                      <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
+                      <Text style={styles.currentCardText}>{activeItinerary.destination}</Text>
                     </View>
                     <View style={styles.currentCardRow}>
-                      <FontAwesome name="calendar" size={16} color={darkMode ? '#4DD0E1' : COLORS.textWhite} />
-                      <Text style={[styles.currentCardText, darkMode && {color:'#E0E0E0'}]}>
+                      <FontAwesome name="calendar" size={16} color={COLORS.textWhite} />
+                      <Text style={styles.currentCardText}>
                         {formatDate(activeItinerary.startDate)} - {formatDate(activeItinerary.endDate)}
                       </Text>
                     </View>
                     <View style={styles.currentCardInfoRow}>
                       <View style={styles.currentCardInfoItem}>
-                        <FontAwesome name="clock-o" size={14} color={darkMode ? '#4DD0E1' : COLORS.textWhite} />
-                        <Text style={[styles.currentCardInfoText, darkMode && {color:'#E0E0E0'}]}>{activeItinerary.duration} ngày</Text>
+                        <FontAwesome name="clock-o" size={14} color={COLORS.textWhite} />
+                        <Text style={styles.currentCardInfoText}>{activeItinerary.duration} ngày</Text>
                       </View>
                       <View style={styles.currentCardInfoItem}>
-                        <FontAwesome name="map-pin" size={14} color={darkMode ? '#4DD0E1' : COLORS.textWhite} />
-                        <Text style={[styles.currentCardInfoText, darkMode && {color:'#E0E0E0'}]}>{activeItinerary.places} địa điểm</Text>
+                        <FontAwesome name="map-pin" size={14} color={COLORS.textWhite} />
+                        <Text style={styles.currentCardInfoText}>{activeItinerary.places} địa điểm</Text>
                       </View>
                     </View>
                   </View>
@@ -326,7 +318,7 @@ const ItineraryScreen: React.FC = () => {
 
         {/* Other Itineraries Section */}
         <>
-          <Text style={[styles.sectionTitle, darkMode && {color:'#E0E0E0'}, {marginLeft: SPACING.lg}]}>
+          <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>
             {activeItinerary ? 'Lộ trình khác' : 'Các lộ trình đã lưu'}
           </Text>
           <View style={{marginHorizontal: SPACING.lg}}>
@@ -432,10 +424,10 @@ const ItineraryScreen: React.FC = () => {
 
         {/* Empty State */}
         {itineraries.length === 0 && (
-          <View style={{backgroundColor: darkMode ? '#1E1E1E' : '#fff', borderRadius: 16, borderWidth: 1, borderColor: darkMode ? '#333' : COLORS.border, alignItems:'center', padding: 32, margin: 24}}>
-            <FontAwesome name="map-o" size={64} color={darkMode ? '#9E9E9E' : COLORS.textSecondary} />
-            <Text style={{color: darkMode ? '#9E9E9E' : COLORS.textSecondary, fontSize:18, fontWeight:'700', marginTop: 12}}>Chưa có lộ trình nào</Text>
-            <Text style={{color: darkMode ? '#9E9E9E' : COLORS.textSecondary, fontSize:14, marginTop: 4, textAlign:'center'}}>
+          <View style={styles.emptyStateContainer}>
+            <FontAwesome name="map-o" size={64} color={COLORS.textSecondary} />
+            <Text style={styles.emptyStateText}>Chưa có lộ trình nào</Text>
+            <Text style={styles.emptyStateSubtext}>
               Tạo lộ trình đầu tiên của bạn để bắt đầu hành trình
             </Text>
           </View>
@@ -502,10 +494,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.textWhite,
     letterSpacing: 0.5,
-  },
-  sectionContainer: {
-    paddingHorizontal: SPACING.lg,
-    marginTop: SPACING.lg,
   },
   sectionTitle: {
     fontSize: 22,
@@ -584,9 +572,10 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   statusBadge: {
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.xs / 2,
+    backgroundColor: COLORS.bgMain,
     borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   statusText: {
     fontSize: 11,

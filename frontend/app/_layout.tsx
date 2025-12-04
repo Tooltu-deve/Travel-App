@@ -1,5 +1,4 @@
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
-import { ThemeProvider } from '@/contexts/ThemeContext';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import './global.css';
@@ -95,25 +94,23 @@ function NavigationHandler() {
  */
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <FavoritesProvider>
-          <NavigationHandler />
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen 
-              name="create-itinerary" 
-              options={{ 
-                headerShown: false,
-                presentation: 'card',
-                animation: 'slide_from_bottom'
-              }} 
-            />
-          </Stack>
-        </FavoritesProvider>
-      </AuthProvider>
-    </ThemeProvider>
+    <AuthProvider>
+      <FavoritesProvider>
+        <NavigationHandler />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen 
+            name="create-itinerary" 
+            options={{ 
+              headerShown: false,
+              presentation: 'card',
+              animation: 'slide_from_bottom'
+            }} 
+          />
+        </Stack>
+      </FavoritesProvider>
+    </AuthProvider>
   );
 }

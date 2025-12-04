@@ -1,12 +1,11 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { getProfileAPI, updateProfileAPI } from '@/services/api';
-import { FontAwesome5, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme } from '@/contexts/ThemeContext';
 
 // Danh sách mood labels có sẵn
 const AVAILABLE_MOOD_TAGS = [
@@ -34,7 +33,6 @@ const EditProfileScreen: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { darkMode } = useTheme();
 
   const fetchProfile = async () => {
     setLoading(true);
@@ -82,92 +80,49 @@ const EditProfileScreen: React.FC = () => {
 
   const toggleTag = (tag: string) => {
     if (preferencedTags.includes(tag)) {
-      // Bỏ chọn tag
       setPreferencedTags(preferencedTags.filter(t => t !== tag));
     } else {
-      // Chỉ cho phép chọn tối đa 3 tags
       if (preferencedTags.length < 3) {
         setPreferencedTags([...preferencedTags, tag]);
       }
     }
   };
 
-  const dynamicStyles = {
-    container: {
-      backgroundColor: darkMode ? '#18181b' : '#F3F6FA',
-    },
-    headerTitle: {
-      color: darkMode ? '#60a5fa' : '#2196F3',
-    },
-    sectionHeader: {
-      color: darkMode ? '#60a5fa' : '#2196F3',
-    },
-    inputRow: {
-      backgroundColor: darkMode ? '#27272a' : '#fff',
-      borderColor: darkMode ? '#334155' : '#E5E7EB',
-      color: darkMode ? '#f1f5f9' : '#1E293B',
-    },
-    inputDisabled: {
-      backgroundColor: darkMode ? '#23262f' : '#F3F4F6',
-      color: darkMode ? '#6B7280' : '#888',
-    },
-    genderBtn: {
-      backgroundColor: darkMode ? '#27272a' : '#F3F4F6',
-      borderColor: darkMode ? '#334155' : '#E5E7EB',
-    },
-    genderText: {
-      color: darkMode ? '#f1f5f9' : '#1E293B',
-    },
-    saveBtn: {
-      backgroundColor: darkMode ? '#60a5fa' : '#2196F3',
-    },
-  };
-
-  if (loading) return <ActivityIndicator style={{ marginTop: 40 }} size="large" color={darkMode ? '#60a5fa' : '#2196F3'} />;
+  if (loading) return <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#2196F3" />;
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, dynamicStyles.container]}>
-      {/* --- HEADER ĐÃ SỬA --- */}
+    <ScrollView contentContainerStyle={styles.container}>
+      {/* Header */}
       <View style={[styles.headerContainer, { paddingTop: insets.top || 16 }]}> 
-        {/* Nút Back nằm tuyệt đối bên trái */}
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <MaterialCommunityIcons name="arrow-left" size={28} color={darkMode ? '#60a5fa' : '#2196F3'} />
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <MaterialCommunityIcons name="arrow-left" size={28} color="#2196F3" />
         </TouchableOpacity>
-
-        {/* Tiêu đề nằm giữa */}
-        <Text style={[styles.headerTitle, dynamicStyles.headerTitle]}>Hồ sơ cá nhân</Text>
+        <Text style={styles.headerTitle}>Hồ sơ cá nhân</Text>
       </View>
-      {/* --------------------- */}
 
       {/* Thông tin cơ bản */}
-      <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Thông tin tài khoản</Text>
+      <Text style={styles.sectionHeader}>Thông tin tài khoản</Text>
       <View style={styles.fieldRow}>
-        <MaterialIcons name="person" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
+        <MaterialIcons name="person" size={20} color="#2196F3" style={styles.icon} />
         <TextInput
-          style={[styles.inputRow, dynamicStyles.inputDisabled]}
+          style={[styles.inputRow, styles.inputDisabled]}
           value={fullName}
           editable={false}
         />
       </View>
       <View style={styles.fieldRow}>
-        <MaterialIcons name="email" size={20} color={darkMode ? '#60a5fa' : '#2196F3'} style={styles.icon} />
+        <MaterialIcons name="email" size={20} color="#2196F3" style={styles.icon} />
         <TextInput
-          style={[styles.inputRow, dynamicStyles.inputDisabled]}
+          style={[styles.inputRow, styles.inputDisabled]}
           value={email}
           editable={false}
         />
       </View>
 
       {/* Emotional Tags Section */}
-      <Text style={[styles.sectionHeader, dynamicStyles.sectionHeader]}>Sở thích của bạn (Emotional Tags)</Text>
-      <Text style={[styles.helperText, { color: darkMode ? '#9CA3AF' : '#6B7280' }]}>
-        Chọn tối đa 3 tâm trạng/sở thích yêu thích của bạn
-      </Text>
+      <Text style={styles.sectionHeader}>Sở thích của bạn (Emotional Tags)</Text>
+      <Text style={styles.helperText}>Chọn tối đa 3 tâm trạng/sở thích yêu thích của bạn</Text>
       
-      {/* Hiển thị tags để chọn */}
       <View style={styles.availableTagsContainer}>
         {AVAILABLE_MOOD_TAGS.map((tag, index) => {
           const isSelected = preferencedTags.includes(tag);
@@ -179,15 +134,6 @@ const EditProfileScreen: React.FC = () => {
                 styles.selectableTagChip,
                 isSelected && styles.selectableTagChipSelected,
                 isDisabled && styles.selectableTagChipDisabled,
-                { 
-                  backgroundColor: isSelected 
-                    ? (darkMode ? '#3b82f6' : '#2196F3')
-                    : (darkMode ? '#27272a' : '#F3F4F6'),
-                  borderColor: isSelected
-                    ? (darkMode ? '#3b82f6' : '#2196F3')
-                    : (darkMode ? '#3f3f46' : '#E5E7EB'),
-                  opacity: isDisabled ? 0.4 : 1
-                }
               ]}
               onPress={() => toggleTag(tag)}
               disabled={isDisabled}
@@ -195,7 +141,6 @@ const EditProfileScreen: React.FC = () => {
               <Text style={[
                 styles.selectableTagText,
                 isSelected && styles.selectableTagTextSelected,
-                { color: isSelected ? '#fff' : (darkMode ? '#f1f5f9' : '#1E293B') }
               ]}>
                 {tag}
               </Text>
@@ -207,15 +152,13 @@ const EditProfileScreen: React.FC = () => {
         })}
       </View>
       
-      {/* Hiển thị số lượng tags đã chọn */}
       {preferencedTags.length > 0 && (
-        <Text style={[styles.selectedCountText, { color: darkMode ? '#60a5fa' : '#2196F3' }]}>
+        <Text style={styles.selectedCountText}>
           Đã chọn {preferencedTags.length}/3 tâm trạng
         </Text>
       )}
 
-      {/* Save button at the end */}
-      <TouchableOpacity style={[styles.saveBtn, dynamicStyles.saveBtn]} onPress={handleSave} disabled={saving}>
+      <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
         <Text style={styles.saveBtnText}>{saving ? 'Đang lưu...' : 'Lưu thay đổi'}</Text>
       </TouchableOpacity>
     </ScrollView>
@@ -227,9 +170,7 @@ const styles = StyleSheet.create({
     padding: 24,
     backgroundColor: '#F3F6FA',
     flexGrow: 1,
-    // Đã xóa alignItems: 'center' để layout linh hoạt hơn cho header
   },
-  // --- STYLES MỚI CHO HEADER ---
   headerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -250,31 +191,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#2196F3',
     textAlign: 'center',
-  },
-  // -----------------------------
-  avatarSection: {
-    alignItems: 'center',
-    marginBottom: 18,
-    alignSelf: 'stretch',
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#E3F2FD',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  editAvatarBtn: {
-    position: 'absolute',
-    bottom: 6,
-    right: 18,
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: '#E3F2FD',
-    elevation: 2,
   },
   sectionHeader: {
     alignSelf: 'flex-start',
@@ -305,15 +221,17 @@ const styles = StyleSheet.create({
     fontSize: 15,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    color: '#1E293B',
+  },
+  inputDisabled: {
+    backgroundColor: '#F3F4F6',
+    color: '#888',
   },
   helperText: {
     fontSize: 13,
     marginBottom: 8,
     marginLeft: 2,
-  },
-  tagsInput: {
-    minHeight: 60,
-    textAlignVertical: 'top',
+    color: '#6B7280',
   },
   availableTagsContainer: {
     flexDirection: 'row',
@@ -354,27 +272,6 @@ const styles = StyleSheet.create({
     color: '#2196F3',
     marginBottom: 8,
     textAlign: 'center',
-  },
-  tagsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  tagChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2196F3',
-    borderRadius: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    gap: 6,
-  },
-  tagChipText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
   },
   saveBtn: {
     marginTop: 32,

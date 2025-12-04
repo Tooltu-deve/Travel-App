@@ -1,7 +1,6 @@
 // ProfileScreen - Trang cá nhân
 import { SPACING } from '@/constants';
 import { useAuth } from '@/contexts/AuthContext';
-import { useTheme } from '@/contexts/ThemeContext';
 import { getProfileAPI } from '@/services/api';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,7 +11,6 @@ import {
   Image,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TouchableOpacity,
   View
@@ -25,7 +23,6 @@ const APP_VERSION = 'v1.0.2 (Build 2024)';
 const ProfileScreen: React.FC = () => {
   const router = useRouter();
   const { userData, signOut } = useAuth();
-  const { darkMode, setDarkMode } = useTheme();
   const insets = useSafeAreaInsets();
   const [fullName, setFullName] = useState(userData?.fullName || '');
   const [email, setEmail] = useState(userData?.email || '');
@@ -71,20 +68,10 @@ const ProfileScreen: React.FC = () => {
     );
   }, [signOut]);
 
-  // Dynamic styles for dark mode
-  const darkStyles = {
-    bg: darkMode ? { backgroundColor: '#181A20' } : undefined,
-    card: darkMode ? { backgroundColor: '#23262F', borderColor: '#363A45' } : undefined,
-    border: darkMode ? { borderBottomColor: '#363A45' } : undefined,
-    text: darkMode ? { color: '#fff' } : undefined,
-    icon: darkMode ? '#fff' : '#2196F3',
-    chevron: darkMode ? '#fff' : '#9CA3AF',
-  };
-
   return (
-    <ScrollView style={[styles.container, darkStyles.bg]} contentContainerStyle={styles.contentContainer}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       {/* Header */}
-      <View style={[styles.headerWrap, darkStyles.bg, { paddingTop: insets.top || 16 }]}>
+      <View style={[styles.headerWrap, { paddingTop: insets.top || 16 }]}>
         <View style={styles.headerRow}>
           <View style={styles.avatarWrap}>
             <Image
@@ -100,81 +87,46 @@ const ProfileScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Section: General Settings */}
-      <View style={[styles.cardSection, darkStyles.card]}>
-        <Text style={[styles.sectionTitle, darkStyles.text]}>Cài đặt chung</Text>
-        <View style={[styles.menuRow, darkStyles.border]}>
-          <MaterialCommunityIcons name="palette" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text, { flex: 1 }]}>Chế độ tối</Text>
-          <Switch
-            value={darkMode}
-            onValueChange={setDarkMode}
-            thumbColor={darkMode ? '#2196F3' : '#fff'}
-            trackColor={{ false: '#B0BEC5', true: '#2196F3' }}
-          />
-        </View>
-        <TouchableOpacity style={[styles.menuRow, darkStyles.border]} onPress={() => setShowLangModal(true)}>
-          <MaterialCommunityIcons name="translate" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>Ngôn ngữ</Text>
-          <View style={[styles.langBox, darkMode && { backgroundColor: '#23262F' }]}>
+      {/* Section: Cài đặt chung */}
+      <View style={styles.cardSection}>
+        <Text style={styles.sectionTitle}>Cài đặt chung</Text>
+        <TouchableOpacity style={styles.menuRow} onPress={() => setShowLangModal(true)}>
+          <MaterialCommunityIcons name="translate" size={22} color="#2196F3" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Ngôn ngữ</Text>
+          <View style={styles.langBox}>
             <Text style={styles.langText}>{language === 'vi' ? 'Tiếng Việt' : 'English'}</Text>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={darkStyles.chevron} />
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#9CA3AF" />
           </View>
         </TouchableOpacity>
-        <View style={[styles.menuRow, darkStyles.border]}>
-          <MaterialCommunityIcons name="bell" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>Thông báo</Text>
-          <MaterialCommunityIcons name="chevron-right" size={22} color={darkStyles.chevron} />
-        </View>
       </View>
 
-      {/* Section: Account */}
-      <View style={[styles.cardSection, darkStyles.card]}>
-        <Text style={[styles.sectionTitle, darkStyles.text]}>Tài khoản</Text>
-        <TouchableOpacity style={[styles.menuRow, darkStyles.border]} onPress={() => router.push('/(account)/edit-profile')}>
-          <MaterialCommunityIcons name="account-edit" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>Chỉnh sửa thông tin</Text>
-          <MaterialCommunityIcons name="chevron-right" size={22} color={darkStyles.chevron} />
+      {/* Section: Tài khoản */}
+      <View style={styles.cardSection}>
+        <Text style={styles.sectionTitle}>Tài khoản</Text>
+        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(account)/edit-profile')}>
+          <MaterialCommunityIcons name="account-edit" size={22} color="#2196F3" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Chỉnh sửa thông tin</Text>
+          <MaterialCommunityIcons name="chevron-right" size={22} color="#9CA3AF" />
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.menuRow, darkStyles.border]} onPress={() => router.push('/(account)/change-password')}>
-          <MaterialCommunityIcons name="shield-lock" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>Mật khẩu & Bảo mật</Text>
-          <MaterialCommunityIcons name="chevron-right" size={22} color={darkStyles.chevron} />
+        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(account)/change-password')}>
+          <MaterialCommunityIcons name="shield-lock" size={22} color="#2196F3" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Mật khẩu & Bảo mật</Text>
+          <MaterialCommunityIcons name="chevron-right" size={22} color="#9CA3AF" />
         </TouchableOpacity>
-        <View style={[styles.menuRow, darkStyles.border]}>
-          <MaterialCommunityIcons name="account-multiple" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>Tài khoản đã liên kết</Text>
-          <MaterialCommunityIcons name="chevron-right" size={22} color={darkStyles.chevron} />
-        </View>
       </View>
 
-      {/* Section: Support & Others */}
-      <View style={[styles.cardSection, darkStyles.card]}>
-        <Text style={[styles.sectionTitle, darkStyles.text]}>Hỗ trợ & Khác</Text>
-        <View style={[styles.menuRow, darkStyles.border]}>
-          <MaterialCommunityIcons name="star-outline" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>Đánh giá ứng dụng</Text>
-          <MaterialCommunityIcons name="chevron-right" size={22} color={darkStyles.chevron} />
-        </View>
-        <TouchableOpacity style={[styles.menuRow, darkStyles.border]} onPress={() => router.push('/(account)/faq-profile')}>
-          <MaterialCommunityIcons name="help-circle-outline" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>FAQ</Text>
-          <MaterialCommunityIcons name="chevron-right" size={22} color={darkStyles.chevron} />
+      {/* Section: Hỗ trợ */}
+      <View style={styles.cardSection}>
+        <Text style={styles.sectionTitle}>Hỗ trợ</Text>
+        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(account)/faq-profile')}>
+          <MaterialCommunityIcons name="help-circle-outline" size={22} color="#2196F3" style={styles.menuIcon} />
+          <Text style={styles.menuText}>FAQ</Text>
+          <MaterialCommunityIcons name="chevron-right" size={22} color="#9CA3AF" />
         </TouchableOpacity>
-        <View style={[styles.menuRow, darkStyles.border]}>
-          <MaterialCommunityIcons name="file-document-outline" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>Điều khoản sử dụng</Text>
-          <MaterialCommunityIcons name="chevron-right" size={22} color={darkStyles.chevron} />
-        </View>
-        <View style={[styles.menuRow, darkStyles.border]}>
-          <MaterialCommunityIcons name="shield-account-outline" size={22} color={darkStyles.icon} style={styles.menuIcon} />
-          <Text style={[styles.menuText, darkStyles.text]}>Chính sách & Quyền riêng tư</Text>
-          <MaterialCommunityIcons name="chevron-right" size={22} color={darkStyles.chevron} />
-        </View>
       </View>
 
-      {/* Section: Logout */}
-      <View style={[styles.cardSection, darkStyles.card]}>
+      {/* Section: Đăng xuất */}
+      <View style={styles.cardSection}>
         <TouchableOpacity style={styles.menuRow} onPress={handleLogout}>
           <MaterialCommunityIcons name="logout" size={22} color="#EF4444" style={styles.menuIcon} />
           <Text style={[styles.menuText, { color: '#EF4444' }]}>Đăng xuất</Text>
@@ -183,19 +135,19 @@ const ProfileScreen: React.FC = () => {
 
       {/* App version */}
       <View style={styles.versionBox}>
-        <Text style={[styles.versionText, darkMode && { color: '#6B7280' }]}>{APP_VERSION}</Text>
+        <Text style={styles.versionText}>{APP_VERSION}</Text>
       </View>
 
       {/* Modal chọn ngôn ngữ */}
       {showLangModal && (
         <View style={styles.langModalOverlay}>
-          <View style={[styles.langModalBox, darkMode && { backgroundColor: '#23262F' }]}>
+          <View style={styles.langModalBox}>
             <Text style={styles.langModalTitle}>Chọn ngôn ngữ</Text>
             <TouchableOpacity onPress={() => { setLanguage('vi'); setShowLangModal(false); }} style={styles.langModalOption}>
-              <Text style={[styles.langModalOptionText, language === 'vi' && { color: '#2196F3', fontWeight: '700' }, darkStyles.text]}>Tiếng Việt</Text>
+              <Text style={[styles.langModalOptionText, language === 'vi' && { color: '#2196F3', fontWeight: '700' }]}>Tiếng Việt</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => { setLanguage('en'); setShowLangModal(false); }} style={styles.langModalOption}>
-              <Text style={[styles.langModalOptionText, language === 'en' && { color: '#2196F3', fontWeight: '700' }, darkStyles.text]}>English</Text>
+              <Text style={[styles.langModalOptionText, language === 'en' && { color: '#2196F3', fontWeight: '700' }]}>English</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowLangModal(false)} style={styles.langModalCancel}>
               <Text style={styles.langModalCancelText}>Đóng</Text>

@@ -17,16 +17,13 @@ import { SPACING } from '../../constants/spacing';
 const CreateItineraryScreen: React.FC = () => {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { darkMode } = require('@/contexts/ThemeContext').useTheme();
 
   const handleSmartAgent = () => {
     router.push('/create-itinerary/smart-agent');
   };
 
   const handleManual = () => {
-    // TODO: Navigate to manual creation screen
     console.log('Create manually');
-    // router.push('/create-itinerary/manual');
   };
 
   const handleGoBack = () => {
@@ -35,8 +32,8 @@ const CreateItineraryScreen: React.FC = () => {
 
   return (
     <LinearGradient
-      colors={darkMode ? ['#181A20', '#181A20'] : [COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={darkMode ? [0, 1] : [0, 0.3, 0.6, 1]}
+      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
+      locations={[0, 0.3, 0.6, 1]}
       style={styles.gradientContainer}
     >
       <ScrollView 
@@ -47,15 +44,15 @@ const CreateItineraryScreen: React.FC = () => {
         {/* Header */}
         <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}> 
           <TouchableOpacity 
-            style={[styles.backButton, darkMode && { backgroundColor: '#23262F', borderColor: '#363A45', shadowColor: 'transparent' }]}
+            style={styles.backButton}
             onPress={handleGoBack}
             activeOpacity={0.7}
           >
-            <FontAwesome name="arrow-left" size={20} color={darkMode ? '#fff' : COLORS.textDark} />
+            <FontAwesome name="arrow-left" size={20} color={COLORS.textDark} />
           </TouchableOpacity>
           <View style={styles.headerTextContainer}>
-            <Text style={[styles.headerTitle, darkMode && { color: '#fff', textShadowColor: 'transparent' }]}>Tạo lộ trình mới</Text>
-            <Text style={[styles.headerSubtitle, darkMode && { color: '#4DD0E1' }]}>Chọn phương thức tạo lộ trình</Text>
+            <Text style={styles.headerTitle}>Tạo lộ trình mới</Text>
+            <Text style={styles.headerSubtitle}>Chọn phương thức tạo lộ trình</Text>
           </View>
         </View>
 
@@ -63,69 +60,69 @@ const CreateItineraryScreen: React.FC = () => {
         <View style={styles.optionsContainer}>
           {/* Smart Agent Option */}
           <TouchableOpacity 
-            style={[styles.optionCard, darkMode && { shadowColor: 'transparent', backgroundColor: '#23262F', borderColor: '#2196F3', borderWidth: 2 }]}
+            style={styles.optionCard}
             onPress={handleSmartAgent}
             activeOpacity={0.9}
           >
             <LinearGradient
-              colors={darkMode ? ['#23262F', '#23262F'] : [COLORS.primary, COLORS.gradientSecondary]}
+              colors={[COLORS.primary, COLORS.gradientSecondary]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.optionCardGradient}
             >
-              <View style={[styles.optionIconContainer, darkMode && { backgroundColor: '#181A20' }] }>
-                <FontAwesome name="magic" size={32} color={darkMode ? '#4DD0E1' : COLORS.textWhite} />
+              <View style={styles.optionIconContainer}>
+                <FontAwesome name="magic" size={32} color={COLORS.textWhite} />
               </View>
-              <Text style={[styles.optionTitle, darkMode && { color: '#fff', textShadowColor: 'transparent' }]}>Tạo với SmartAgent</Text>
-              <Text style={[styles.optionDescription, darkMode && { color: '#E0E0E0', textShadowColor: 'transparent' }] }>
+              <Text style={styles.optionTitle}>Tạo với SmartAgent</Text>
+              <Text style={styles.optionDescription}>
                 Sử dụng AI để tạo lộ trình tự động dựa trên sở thích và tâm trạng của bạn
               </Text>
               <View style={styles.optionFeatures}>
                 <View style={styles.featureItem}>
-                  <FontAwesome name="check-circle" size={14} color={darkMode ? '#4DD0E1' : COLORS.textWhite} />
-                  <Text style={[styles.featureText, darkMode && { color: '#E0E0E0' }]}>Tự động đề xuất địa điểm</Text>
+                  <FontAwesome name="check-circle" size={14} color={COLORS.textWhite} />
+                  <Text style={styles.featureText}>Tự động đề xuất địa điểm</Text>
                 </View>
                 <View style={styles.featureItem}>
-                  <FontAwesome name="check-circle" size={14} color={darkMode ? '#4DD0E1' : COLORS.textWhite} />
-                  <Text style={[styles.featureText, darkMode && { color: '#E0E0E0' }]}>Tối ưu hóa thời gian</Text>
+                  <FontAwesome name="check-circle" size={14} color={COLORS.textWhite} />
+                  <Text style={styles.featureText}>Tối ưu hóa thời gian</Text>
                 </View>
                 <View style={styles.featureItem}>
-                  <FontAwesome name="check-circle" size={14} color={darkMode ? '#4DD0E1' : COLORS.textWhite} />
-                  <Text style={[styles.featureText, darkMode && { color: '#E0E0E0' }]}>Cá nhân hóa theo tâm trạng</Text>
+                  <FontAwesome name="check-circle" size={14} color={COLORS.textWhite} />
+                  <Text style={styles.featureText}>Cá nhân hóa theo tâm trạng</Text>
                 </View>
               </View>
-              <View style={[styles.optionBadge, darkMode && { backgroundColor: '#4DD0E1', shadowColor: 'transparent' }] }>
-                <Text style={[styles.optionBadgeText, darkMode && { color: '#181A20' }]}>Đề xuất</Text>
+              <View style={styles.optionBadge}>
+                <Text style={styles.optionBadgeText}>Đề xuất</Text>
               </View>
             </LinearGradient>
           </TouchableOpacity>
 
           {/* Manual Option */}
           <TouchableOpacity 
-            style={[styles.optionCard, darkMode && { shadowColor: 'transparent', backgroundColor: '#23262F', borderColor: '#2196F3', borderWidth: 2 }]}
+            style={styles.optionCard}
             onPress={handleManual}
             activeOpacity={0.9}
           >
-            <View style={[styles.manualCard, darkMode && { backgroundColor: '#23262F', borderColor: '#2196F3' }] }>
-              <View style={[styles.optionIconContainerManual, darkMode && { backgroundColor: '#181A20' }] }>
-                <FontAwesome name="edit" size={32} color={darkMode ? '#4DD0E1' : COLORS.primary} />
+            <View style={styles.manualCard}>
+              <View style={styles.optionIconContainerManual}>
+                <FontAwesome name="edit" size={32} color={COLORS.primary} />
               </View>
-              <Text style={[styles.optionTitleManual, darkMode && { color: '#fff' }]}>Tạo lộ trình thủ công</Text>
-              <Text style={[styles.optionDescriptionManual, darkMode && { color: '#E0E0E0' }] }>
+              <Text style={styles.optionTitleManual}>Tạo lộ trình thủ công</Text>
+              <Text style={styles.optionDescriptionManual}>
                 Tự tay thiết kế lộ trình của bạn, chọn từng địa điểm và sắp xếp theo ý muốn
               </Text>
               <View style={styles.optionFeaturesManual}>
                 <View style={styles.featureItemManual}>
-                  <FontAwesome name="check-circle" size={14} color={darkMode ? '#4DD0E1' : COLORS.primary} />
-                  <Text style={[styles.featureTextManual, darkMode && { color: '#E0E0E0' }]}>Kiểm soát hoàn toàn</Text>
+                  <FontAwesome name="check-circle" size={14} color={COLORS.primary} />
+                  <Text style={styles.featureTextManual}>Kiểm soát hoàn toàn</Text>
                 </View>
                 <View style={styles.featureItemManual}>
-                  <FontAwesome name="check-circle" size={14} color={darkMode ? '#4DD0E1' : COLORS.primary} />
-                  <Text style={[styles.featureTextManual, darkMode && { color: '#E0E0E0' }]}>Chọn địa điểm yêu thích</Text>
+                  <FontAwesome name="check-circle" size={14} color={COLORS.primary} />
+                  <Text style={styles.featureTextManual}>Chọn địa điểm yêu thích</Text>
                 </View>
                 <View style={styles.featureItemManual}>
-                  <FontAwesome name="check-circle" size={14} color={darkMode ? '#4DD0E1' : COLORS.primary} />
-                  <Text style={[styles.featureTextManual, darkMode && { color: '#E0E0E0' }]}>Tùy chỉnh chi tiết</Text>
+                  <FontAwesome name="check-circle" size={14} color={COLORS.primary} />
+                  <Text style={styles.featureTextManual}>Tùy chỉnh chi tiết</Text>
                 </View>
               </View>
             </View>
@@ -311,4 +308,3 @@ const styles = StyleSheet.create({
 });
 
 export default CreateItineraryScreen;
-
