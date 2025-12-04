@@ -358,7 +358,7 @@ export default function RoutePreviewScreen() {
     >
       <View style={styles.container}>
         {/* Header */}
-        <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}>
+        <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}> 
           <TouchableOpacity 
             style={styles.backButton}
             onPress={() => router.back()}
@@ -933,4 +933,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-

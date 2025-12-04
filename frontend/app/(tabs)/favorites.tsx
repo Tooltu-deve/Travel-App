@@ -1,24 +1,20 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet, Animated } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
 import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI } from '../../services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { translatePlaceType } from '../../constants/placeTypes';
 
-// Small helper to render star icons for a rating (0-5) using gold color
 const renderStars = (rating?: number | null) => {
   const stars = [];
   let ratingText = '0.0';
-  // support decimal ratings (4.5 -> 4 full + 1 half)
   if (rating == null || Number.isNaN(rating)) {
-    // show 0 filled stars
     for (let i = 0; i < 5; i++) {
       stars.push(
         <FontAwesome key={`e-${i}`} name="star-o" size={14} color={COLORS.textSecondary} style={{ marginRight: 6 }} />,
@@ -48,14 +44,12 @@ const renderStars = (rating?: number | null) => {
   return <View style={{ flexDirection: 'row', alignItems: 'center' }}>{stars}<Text style={styles.placeRating}>{ratingText}</Text></View>;
 };
 
-  const normalizePlace = (p: any) => {
-  // Build moods array from several possible backend shapes
+const normalizePlace = (p: any) => {
   let moods: string[] = [];
   if (Array.isArray(p.moods) && p.moods.length) moods = p.moods;
   else if (p.mood) moods = [p.mood];
   else if (p.type) moods = [p.type];
 
-  // If still empty, try to derive top mood from emotionalTags (object or Map-like)
   if ((!moods || moods.length === 0) && p.emotionalTags) {
     try {
       const tagsObj: any = p.emotionalTags instanceof Map ? Object.fromEntries(p.emotionalTags) : p.emotionalTags;
@@ -66,24 +60,18 @@ const renderStars = (rating?: number | null) => {
           moods = [entries[0][0]];
         }
       }
-    } catch (e) {
-      // ignore and keep moods empty
-    }
+    } catch (e) {}
   }
 
-  // translate known backend keys to Vietnamese labels
   if (moods && moods.length) {
     moods = moods.map((m) => translatePlaceType(m));
   }
 
   const name = p.name || p.title || p.name_en || p.googlePlaceId || p.google_place_id || p.address || 'Không rõ';
-
-  // Ensure we only use string values for address (location may be GeoJSON object)
   const address = typeof p.address === 'string' && p.address
     ? p.address
     : (typeof p.location === 'string' ? p.location : '');
 
-  // coerce rating if string
   let ratingVal: number | null = null;
   if (typeof p.rating === 'number') ratingVal = p.rating;
   else if (typeof p.rating === 'string' && p.rating.trim() !== '') {
@@ -108,19 +96,15 @@ const FavoritesScreen: React.FC = () => {
   const moodScales = useRef<Record<string, Animated.Value>>({}).current;
   const prevSelectedRef = useRef<string | null>(null);
 
-  // ensure we have Animated.Value for each mood, initialize selected with slightly larger scale
   useEffect(() => {
     moods.forEach((m) => {
       if (!moodScales[m.key]) {
         moodScales[m.key] = new Animated.Value(m.key === selectedMood ? 1.06 : 1);
       }
     });
-    // ensure previous ref starts at selected
     prevSelectedRef.current = selectedMood;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moods]);
 
-  // animate whenever selectedMood changes
   useEffect(() => {
     const prev = prevSelectedRef.current;
     if (prev && moodScales[prev]) {
@@ -130,8 +114,8 @@ const FavoritesScreen: React.FC = () => {
       Animated.timing(moodScales[selectedMood], { toValue: 1.06, duration: 180, useNativeDriver: true }).start();
     }
     prevSelectedRef.current = selectedMood;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMood]);
+
   const { favorites: ctxFavorites, toggleLike, refreshFavorites } = useFavorites();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -147,13 +131,11 @@ const FavoritesScreen: React.FC = () => {
       try {
         const token = await AsyncStorage.getItem('userToken');
         if (!token) {
-           setMoods([{ key: 'all', label: 'Tất cả' }]);
+          setMoods([{ key: 'all', label: 'Tất cả' }]);
           return;
         }
         const res = await getMoodsAPI(token);
         const raw = Array.isArray(res?.moods) ? res.moods : [];
-        // translate mood/type keys to Vietnamese labels for UI and keep original keys
-        // Deduplicate by the raw key to avoid duplicate React keys when rendering chips
         const map = new Map<string, { key: string; label: string }>();
         raw.forEach((m: string) => {
           const key = String(m);
@@ -162,13 +144,12 @@ const FavoritesScreen: React.FC = () => {
           }
         });
         let translated = Array.from(map.values());
-        // Sort alphabetically by translated label (Vietnamese collation). Keep the 'all' chip first.
         translated.sort((a, b) => a.label.localeCompare(b.label, 'vi'));
         const list = [{ key: 'all', label: 'Tất cả' }, ...translated];
         setMoods(list);
       } catch (e: any) {
         setError(e?.message || 'Không thể tải danh sách thể loại');
-          setMoods([{ key: 'all', label: 'Tất cả' }]);
+        setMoods([{ key: 'all', label: 'Tất cả' }]);
       } finally {
         setIsLoading(false);
       }
@@ -176,7 +157,6 @@ const FavoritesScreen: React.FC = () => {
     fetch();
   }, []);
 
-  // derive displayed favorites from context + selectedMood
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -189,7 +169,6 @@ const FavoritesScreen: React.FC = () => {
           return;
         }
 
-        // call backend to get favorites filtered by mood key
         const token = await AsyncStorage.getItem('userToken');
         if (!token) {
           setFavorites([]);
@@ -199,21 +178,16 @@ const FavoritesScreen: React.FC = () => {
         if (!mounted) return;
         if (Array.isArray(remote)) {
           const mapped = await Promise.all(remote.map(async (p: any) => {
-            // Normalize first
             let norm = normalizePlace(p);
-            // If we don't have a googlePlaceId (required by like API), try fetching full details by internal place_id
             const hasGoogleId = !!norm.googlePlaceId;
             const possibleId = p.place_id || p.placeId || p._id || p.id || norm.id;
             if (!hasGoogleId && possibleId) {
               try {
                 const detail = await getPlaceByIdAPI(possibleId);
                 if (detail) {
-                  // merge detail (which may contain google_place_id) with original
                   norm = normalizePlace({ ...detail, ...p });
                 }
-              } catch (e) {
-                // ignore fetch failures and keep original normalized shape
-              }
+              } catch (e) {}
             }
             return norm;
           }));
@@ -236,12 +210,9 @@ const FavoritesScreen: React.FC = () => {
     setIsLiking(id);
     try {
       await toggleLike(id);
-      // remove locally to give immediate feedback
       setFavorites((prev) => prev.filter((p) => p.id !== placeId));
-      // refresh context in background
       refreshFavorites().catch(() => {});
     } catch (e: any) {
-      // If the place doesn't exist, still remove locally
       if (e?.message?.includes('Place không tồn tại')) {
         setFavorites((prev) => prev.filter((p) => p.id !== placeId));
         refreshFavorites().catch(() => {});
@@ -253,49 +224,14 @@ const FavoritesScreen: React.FC = () => {
     }
   };
 
-  const renderPlaceCard = (place: any, index: number) => {
-    const key = place.id || place.googlePlaceId || `fav-${index}`;
-    return (
-      <View key={key} style={styles.card}>
-        <View style={styles.cardInner}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
-            <View style={styles.rowSmall}>
-              <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
-              <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
-            </View>
-
-            <View style={[styles.rowSmall, { marginTop: 8, alignItems: 'center' }]}> 
-              {renderStars(place.rating)}
-            </View>
-
-            <View style={{ flexDirection: 'row', marginTop: 8, flexWrap: 'wrap' }}>
-              {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
-                <View key={i} style={styles.moodPill}><Text style={styles.moodPillText}>{m}</Text></View>
-              ))}
-              {place.moods && place.moods.length > 3 && (
-                <View style={styles.moodPill}><Text style={styles.moodPillText}>+{place.moods.length - 3}</Text></View>
-              )}
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={styles.heartFloat}
-            onPress={() => handleLikePlace(place.id, place.googlePlaceId)}
-            disabled={isLiking !== null}
-          >
-            <FontAwesome name="heart" size={18} color="#E53E3E" />
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
   return (
-    <LinearGradient colors={[COLORS.gradientStart, COLORS.gradientBlue1]} style={styles.container}>
+    <LinearGradient
+      colors={['#f8fafc', '#fff']}
+      style={styles.container}
+    >
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
-        <View style={[styles.headerContainer, { paddingTop: insets.top - SPACING.sm }]}>
+        <View style={[styles.headerContainer, { paddingTop: insets.top - SPACING.sm }]}> 
           <View style={styles.headerRow}>
             <View style={styles.headerTextContainer}>
               <Text style={styles.headerTitle}>Yêu thích của tôi</Text>
@@ -317,19 +253,16 @@ const FavoritesScreen: React.FC = () => {
           <View style={styles.moodsGrid}>
             {moods.map((mood) => {
               const scale = moodScales[mood.key] || new Animated.Value(1);
-              // ensure presence in map
               if (!moodScales[mood.key]) moodScales[mood.key] = scale;
               return (
                 <Animated.View key={mood.key} style={{ transform: [{ scale }] }}>
                   <TouchableOpacity
                     style={[styles.moodButton, selectedMood === mood.key && styles.moodButtonSelected]}
                     onPress={() => {
-                      // animate previous back to normal
                       const prev = prevSelectedRef.current;
                       if (prev && moodScales[prev]) {
                         Animated.timing(moodScales[prev], { toValue: 1, duration: 150, useNativeDriver: true }).start();
                       }
-                      // animate this one slightly larger
                       Animated.timing(scale, { toValue: 1.06, duration: 180, useNativeDriver: true }).start();
                       prevSelectedRef.current = mood.key;
                       setSelectedMood(mood.key);
@@ -381,7 +314,37 @@ const FavoritesScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
           )}
-          {favorites.map((p, i) => renderPlaceCard(p, i))}
+          {favorites.map((place) => (
+            <View key={place.id} style={styles.card}>
+              <View style={styles.cardInner}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
+                  <View style={styles.rowSmall}>
+                    <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
+                    <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
+                  </View>
+                  <View style={[styles.rowSmall, { marginTop: 8, alignItems: 'center' }]}> 
+                    {renderStars(place.rating)}
+                  </View>
+                  <View style={{ flexDirection: 'row', marginTop: 8, flexWrap: 'wrap' }}>
+                    {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
+                      <View key={i} style={styles.moodPill}><Text style={styles.moodPillText}>{m}</Text></View>
+                    ))}
+                    {place.moods && place.moods.length > 3 && (
+                      <View style={styles.moodPill}><Text style={styles.moodPillText}>+{place.moods.length - 3}</Text></View>
+                    )}
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.heartFloat}
+                  onPress={() => handleLikePlace(place.id, place.googlePlaceId)}
+                  disabled={isLiking !== null}
+                >
+                  <FontAwesome name="heart" size={18} color="#E53E3E" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
         </View>
       </ScrollView>
     </LinearGradient>
@@ -399,12 +362,9 @@ const styles = StyleSheet.create({
   moodText: { fontWeight: '700', color: COLORS.textDark },
   toggleButton: { padding: 8, marginLeft: SPACING.sm },
   moodsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: SPACING.sm, marginBottom: SPACING.md, paddingHorizontal: 4 },
-  chipsLoaderWrap: { marginTop: SPACING.sm, marginBottom: SPACING.md, alignItems: 'center' },
-  sectionLoaderWrap: { marginTop: SPACING.sm, marginBottom: SPACING.md, alignItems: 'center' },
   listContainer: { flexDirection: 'column', gap: SPACING.md },
   card: { backgroundColor: COLORS.textWhite, borderRadius: 12, padding: SPACING.md, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 4, borderWidth: 1, borderColor: COLORS.borderLight },
   cardInner: { flexDirection: 'row', alignItems: 'flex-start' },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm },
   placeName: { fontSize: 16, fontWeight: '800', color: COLORS.textDark, flex: 1 },
   placeAddress: { color: COLORS.textSecondary, marginLeft: 6, marginTop: 2 },
   rowSmall: { flexDirection: 'row', alignItems: 'center' },
@@ -412,11 +372,7 @@ const styles = StyleSheet.create({
   moodPillText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
   placeRating: { color: COLORS.ratingAlt, marginLeft: 8, fontWeight: '700' },
   heartFloat: { width: 38, height: 38, borderRadius: 20, backgroundColor: COLORS.textWhite, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 4, marginLeft: 12 },
-  topHeader: { paddingTop: (Constants.statusBarHeight || 0) + SPACING.lg, paddingBottom: SPACING.lg },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  titleIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,99,99,0.12)', justifyContent: 'center', alignItems: 'center' },
-  titleMain: { fontSize: 24, fontWeight: '900', color: COLORS.textDark },
-  titleSub: { fontSize: 14, color: COLORS.primary, marginTop: 6 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textDark, marginBottom: SPACING.sm, marginTop: SPACING.md },
   emptyWrap: { alignItems: 'center', paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md },
   emptyIcon: { marginBottom: SPACING.sm },

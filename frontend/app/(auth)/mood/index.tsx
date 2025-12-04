@@ -1,8 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from "axios";
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Dimensions,
   ImageBackground,
@@ -17,163 +17,48 @@ import { SPACING } from '../../../constants';
 
 const { width } = Dimensions.get('window');
 
-const BASE_URL = "https://travel-app-r9qu.onrender.com/api/v1";
-
-// Lấy danh sách mood có sẵn từ backend
-async function fetchAvailableMoods() {
-  try {
-    const url = `${BASE_URL}/places/available-moods`;
-    console.log('🔄 GET:', url);
-    const res = await axios.get(url);
-    console.log('✅ Available moods response:', res.data);
-    return res.data;
-  } catch (err: any) {
-    console.error("❌ fetchAvailableMoods error:", {
-      status: err?.response?.status,
-      url: err?.config?.url,
-      data: err?.response?.data,
-      message: err.message
-    });
-    return [];
-  }
-}
+// Sử dụng cùng BASE_URL với api.ts
+const API_BASE_URL = 'http://10.0.2.2:3000';
 
 // Lưu preferences của user
-async function saveUserPreferences(moods: string[], token?: string) {
+async function saveUserPreferences(moods: string[], token: string) {
   try {
-    const url = `${BASE_URL}/users/profile/preferences`;
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    console.log('🔄 PATCH:', url);
-    console.log('📦 Body:', { preferences: moods });
-    const res = await axios.patch(url, { preferences: moods }, { headers });
-    console.log('✅ Save preferences response:', res.data);
-    return res.data;
-  } catch (err: any) {
-    console.error("❌ saveUserPreferences error:", {
-      status: err?.response?.status,
-      url: err?.config?.url,
-      data: err?.response?.data,
-      message: err.message
-    });
-    throw err;
+    await axios.patch(
+      `${API_BASE_URL}/api/v1/users/profile`,
+      { preferencedTags: moods },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return true;
+  } catch (err) {
+    console.error("❌ saveUserPreferences error:", err);
+    return false;
   }
 }
-
-// -------------------- MOOD MAPPING --------------------
-const MOOD_TO_TAGS: Record<string, string[]> = {
-  'calm_relax': ['quiet', 'peaceful', 'relaxing'],
-  'social_energy': ['crowded', 'lively', 'vibrant'],
-  'romantic_private': ['romantic', 'good for couples'],
-  'luxury_premium': ['expensive', 'luxury'],
-  'budget_value': ['good value', 'cheap', 'affordable'],
-  'tourist_hotspot': ['touristy'],
-  'adventure_fun': ['adventurous', 'exciting'],
-  'family_cozy': ['family friendly'],
-  'modern_creative': ['trendy', 'instagrammable'],
-  'spiritual_religious': ['spiritual', 'serene'],
-  'local_authentic': ['local gem', 'authentic'],
-};
 
 // -------------------- TYPES --------------------
 interface MoodOption {
   id: string;
   label: string;
-  description: string;
-  icon?: keyof typeof MaterialCommunityIcons.glyphMap;
-  image?: any;
-  colors: [string, string];
+  image: any;
 }
 
 // -------------------- CONSTANTS --------------------
 const CARD_SIZE = (width - SPACING.lg * 3) / 2;
-const CARD_WIDTH = CARD_SIZE;
-const CARD_HEIGHT = CARD_SIZE;
 
 const MOOD_OPTIONS: readonly MoodOption[] = [
-  {
-    id: 'calm_relax',
-    label: 'Yên tĩnh & Thư giãn',
-    description: '',
-    image: require('../../../assets/images/moods/calm_relax.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'social_energy',
-    label: 'Náo nhiệt & Xã hội',
-    description: '',
-    image: require('../../../assets/images/moods/social_energy.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'romantic_private',
-    label: 'Lãng mạn & Riêng tư',
-    description: '',
-    image: require('../../../assets/images/moods/romantic_private.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'coastal_resort',
-    label: 'Ven biển & Nghỉ dưỡng',
-    description: '',
-    image: require('../../../assets/images/moods/coastal_resort.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'festive_vibrant',
-    label: 'Lễ hội & Sôi động',
-    description: '',
-    image: require('../../../assets/images/moods/festive_vibrant.png'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'tourist_hotspot',
-    label: 'Điểm thu hút khách du lịch',
-    description: '',
-    image: require('../../../assets/images/moods/tourist_hotspot.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'adventure_fun',
-    label: 'Mạo hiểm & Thú vị',
-    description: '',
-    image: require('../../../assets/images/moods/adventure_fun.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'family_cozy',
-    label: 'Gia đình & Thoải mái',
-    description: '',
-    image: require('../../../assets/images/moods/family_cozy.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'modern_creative',
-    label: 'Hiện đại & Sáng tạo',
-    description: '',
-    image: require('../../../assets/images/moods/modern_creative.png'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'spiritual_religious',
-    label: 'Tâm linh & Tôn giáo',
-    description: '',
-    image: require('../../../assets/images/moods/spiritual_religious.jpeg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'local_authentic',
-    label: 'Địa phương & Đích thực',
-    description: '',
-    image: require('../../../assets/images/moods/local_authentic.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  },
-  {
-    id: 'nature',
-    label: 'Cảnh quan thiên nhiên',
-    description: '',
-    image: require('../../../assets/images/moods/nature.jpg'),
-    colors: ['#FFFFFF', '#F5F5F5'],
-  }
+  { id: 'calm_relax', label: 'Yên tĩnh & Thư giãn', image: require('../../../assets/images/moods/calm_relax.jpg') },
+  { id: 'social_energy', label: 'Náo nhiệt & Xã hội', image: require('../../../assets/images/moods/social_energy.jpg') },
+  { id: 'romantic_private', label: 'Lãng mạn & Riêng tư', image: require('../../../assets/images/moods/romantic_private.jpg') },
+  { id: 'coastal_resort', label: 'Ven biển & Nghỉ dưỡng', image: require('../../../assets/images/moods/coastal_resort.jpg') },
+  { id: 'festive_vibrant', label: 'Lễ hội & Sôi động', image: require('../../../assets/images/moods/festive_vibrant.png') },
+  { id: 'tourist_hotspot', label: 'Điểm thu hút khách du lịch', image: require('../../../assets/images/moods/tourist_hotspot.jpg') },
+  { id: 'adventure_fun', label: 'Mạo hiểm & Thú vị', image: require('../../../assets/images/moods/adventure_fun.jpg') },
+  { id: 'family_cozy', label: 'Gia đình & Thoải mái', image: require('../../../assets/images/moods/family_cozy.jpg') },
+  { id: 'modern_creative', label: 'Hiện đại & Sáng tạo', image: require('../../../assets/images/moods/modern_creative.png') },
+  { id: 'historic_tradition', label: 'Lịch sử & Truyền thống', image: require('../../../assets/images/moods/historic-tradition.jpg') },
+  { id: 'spiritual_religious', label: 'Tâm linh & Tôn giáo', image: require('../../../assets/images/moods/spiritual_religious.jpeg') },
+  { id: 'local_authentic', label: 'Địa phương & Đích thực', image: require('../../../assets/images/moods/local_authentic.jpg') },
+  { id: 'nature', label: 'Cảnh quan thiên nhiên', image: require('../../../assets/images/moods/nature.jpg') },
 ] as const;
 
 // -------------------- COMPONENT: MoodCard --------------------
@@ -182,38 +67,10 @@ const MoodCard: React.FC<{
   isSelected: boolean;
   isDisabled: boolean;
   onPress: (moodId: string) => void;
-}> = ({ mood, isSelected, isDisabled, onPress }) => {
+}> = React.memo(({ mood, isSelected, isDisabled, onPress }) => {
   const handlePress = useCallback(() => {
-    if (!isDisabled) {
-      onPress(mood.id);
-    }
+    if (!isDisabled) onPress(mood.id);
   }, [mood.id, onPress, isDisabled]);
-
-  const contentView = (
-    <>
-      {isSelected && <View style={styles.selectedOverlay} />}
-      {mood.image && <View style={styles.imageOverlay} />}
-      {isDisabled && <View style={styles.disabledOverlay} />}
-
-      <View style={styles.iconTopRight}>
-        {isSelected ? (
-          <View style={styles.checkmarkCircle}>
-            <MaterialCommunityIcons name="check" size={18} color="#FFFFFF" />
-          </View>
-        ) : (
-          <View style={styles.dot} />
-        )}
-      </View>
-
-      <View style={styles.cardContent}>
-        <View style={styles.textContainer}>
-          <Text style={styles.moodLabel} numberOfLines={2} adjustsFontSizeToFit>
-            {mood.label.replace('&', '\n&')}
-          </Text>
-        </View>
-      </View>
-    </>
-  );
 
   return (
     <TouchableOpacity
@@ -222,100 +79,76 @@ const MoodCard: React.FC<{
       disabled={isDisabled}
       style={[styles.moodCard, isSelected && styles.selectedCard]}
     >
-      {mood.image ? (
-        <ImageBackground
-          source={mood.image}
-          style={{ flex: 1 }}
-          imageStyle={{
-            borderRadius: CARD_SIZE / 2,
-            width: '100%',
-            height: '100%',
-          }}
-          resizeMode="cover"
-        >
-          <View
-            style={[
-              styles.cardGradient,
-              { borderRadius: CARD_SIZE / 2 },
-            ]}
-          >
-            {contentView}
+      <ImageBackground
+        source={mood.image}
+        style={styles.cardImage}
+        imageStyle={{ borderRadius: CARD_SIZE / 2 }}
+        resizeMode="cover"
+      >
+        <View style={[styles.cardGradient, { borderRadius: CARD_SIZE / 2 }]}>
+          {isSelected && <View style={styles.selectedOverlay} />}
+          <View style={styles.imageOverlay} />
+          {isDisabled && <View style={styles.disabledOverlay} />}
+
+          <View style={styles.iconTopRight}>
+            {isSelected ? (
+              <View style={styles.checkmarkCircle}>
+                <MaterialCommunityIcons name="check" size={18} color="#FFFFFF" />
+              </View>
+            ) : (
+              <View style={styles.dot} />
+            )}
           </View>
-        </ImageBackground>
-      ) : (
-        <LinearGradient
-          colors={mood.colors}
-          style={[styles.cardGradient, { borderRadius: CARD_SIZE / 2 }]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-        >
-          {contentView}
-        </LinearGradient>
-      )}
+
+          <View style={styles.cardContent}>
+            <Text style={styles.moodLabel} numberOfLines={2} adjustsFontSizeToFit>
+              {mood.label.replace('&', '\n&')}
+            </Text>
+          </View>
+        </View>
+      </ImageBackground>
     </TouchableOpacity>
   );
-};
+});
 
 // -------------------- MAIN SCREEN --------------------
 export default function MoodSelectionScreen() {
   const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [availableMoods, setAvailableMoods] = useState<string[]>([]);
   const router = useRouter();
-
-  // Load available moods từ backend khi mount
-  useEffect(() => {
-    const loadMoods = async () => {
-      const moods = await fetchAvailableMoods();
-      if (moods.length > 0) {
-        setAvailableMoods(moods);
-        console.log('Available moods từ backend:', moods);
-      } else {
-        console.log('Sử dụng moods mặc định');
-      }
-    };
-    loadMoods();
-  }, []);
 
   const handleMoodSelect = useCallback((moodId: string) => {
     setSelectedMoods((prev) => {
-      // Nếu mood đã được chọn → bỏ chọn
-      if (prev.includes(moodId)) {
-        return prev.filter((id) => id !== moodId);
-      }
-      // Nếu đã chọn đủ 3 mood → không cho chọn thêm
-      if (prev.length >= 3) {
-        return prev;
-      }
-      // Chọn mood mới
+      if (prev.includes(moodId)) return prev.filter((id) => id !== moodId);
+      if (prev.length >= 3) return prev;
       return [...prev, moodId];
     });
   }, []);
 
-  const handleSkip = useCallback(() => {
-    console.log('⏭️ Bỏ qua chọn mood');
+  const handleSkip = useCallback(async () => {
+    await AsyncStorage.setItem('hasCompletedMoodSelection', 'true');
     router.replace('/(tabs)');
   }, [router]);
 
   const handleContinue = useCallback(async () => {
-    if (selectedMoods.length === 0) {
-      console.log('Chưa chọn tâm trạng nào');
-      return;
-    }
+    if (selectedMoods.length === 0) return;
 
+    setLoading(true);
     try {
-      setLoading(true);
+      const moodLabels = selectedMoods
+        .map(id => MOOD_OPTIONS.find(m => m.id === id)?.label)
+        .filter(Boolean) as string[];
 
-      console.log('✅ Selected moods:', selectedMoods);
-
-      // TODO: Lưu preferences khi backend có endpoint
-      // await saveUserPreferences(selectedMoods);
-
-      // Chuyển sang main app
+      const token = await AsyncStorage.getItem('userToken');
+      if (token) {
+        await saveUserPreferences(moodLabels, token);
+      }
+      await AsyncStorage.setItem('hasCompletedMoodSelection', 'true');
       router.replace('/(tabs)');
-
-    } catch (error: any) {
-      console.error('❌ Lỗi:', error?.response?.data || error.message);
+    } catch (error) {
+      // Vẫn chuyển trang dù lỗi
+      await AsyncStorage.setItem('hasCompletedMoodSelection', 'true');
+      router.replace('/(tabs)');
     } finally {
       setLoading(false);
     }
@@ -435,15 +268,17 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
   },
   moodCard: {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
+    width: CARD_SIZE,
+    height: CARD_SIZE,
     borderRadius: CARD_SIZE / 2,
     overflow: 'hidden',
-    borderWidth: 0,
   },
   selectedCard: {
     borderWidth: 2,
     borderColor: '#42A5F5',
+  },
+  cardImage: {
+    flex: 1,
   },
   cardGradient: {
     flex: 1,
@@ -485,9 +320,6 @@ const styles = StyleSheet.create({
   cardContent: {
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
-  },
-  textContainer: {
     alignItems: 'center',
   },
   moodLabel: {

@@ -1,21 +1,21 @@
 // HomeScreen - Trang chủ với các điểm đến nổi bật, danh mục và đánh giá
-import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Animated, TouchableOpacity, NativeSyntheticEvent, NativeScrollEvent, Dimensions } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Dimensions, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CategorySection } from '../../components/HomeScreen/CategorySection';
+import { ChatButton } from '../../components/HomeScreen/ChatButton';
+import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
+import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
+import { SearchBar } from '../../components/HomeScreen/SearchBar';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
 import { featuredDestinations, reviews } from '../mockData';
-import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
-import { CategorySection } from '../../components/HomeScreen/CategorySection';
-import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
-import { SearchBar } from '../../components/HomeScreen/SearchBar';
-import { ChatButton } from '../../components/HomeScreen/ChatButton';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
-const SNAP_INTERVAL = CARD_WIDTH; // Snap theo full width
+const CARD_WIDTH = SCREEN_WIDTH;
+const SNAP_INTERVAL = CARD_WIDTH;
 const INITIAL_REVIEWS_COUNT = 2;
 
 const HomeScreen: React.FC = () => {
@@ -109,13 +109,13 @@ const HomeScreen: React.FC = () => {
 
   return (
     <LinearGradient
-      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={[0, 0.3, 0.6, 1]}
+      colors={['#e6f6ff', '#ccecff']}
+      locations={[0, 1]}
       style={homeStyles.gradientContainer}
     >
       <ScrollView 
         ref={scrollViewRef}
-        style={homeStyles.container} 
+        style={{flex:1}}
         showsVerticalScrollIndicator={false}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
@@ -132,9 +132,9 @@ const HomeScreen: React.FC = () => {
             <Text style={homeStyles.welcomeText}>Welcome !</Text>
             <Text style={homeStyles.subtitleText}>Trần Minh Thanh</Text>
           </Animated.View>
-          <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}>
+          <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}> 
             <SearchBar onExpandChange={setIsSearchExpanded} />
-            <TouchableOpacity style={homeStyles.headerButton}>
+            <TouchableOpacity style={homeStyles.headerButton}> 
               <FontAwesome name="cog" size={22} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
@@ -207,10 +207,7 @@ const HomeScreen: React.FC = () => {
 
         <View style={homeStyles.reviewsSection}>
           <Text style={homeStyles.reviewsTitle}>Đánh giá</Text>
-          {/* Show a single ReviewCard section (places preview) */}
           <ReviewCard />
-          
-          {/* Reviews header only — ReviewCard handles its own "load more" now */}
         </View>
 
         <View style={{ height: SPACING.xl }} />
@@ -249,21 +246,21 @@ const homeStyles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: COLORS.bgMain,
+    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: COLORS.bgLight,
-    shadowColor: '#000',
+    borderColor: COLORS.borderLight,
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
   },
   welcomeText: {
     fontSize: 32,
     fontWeight: '800',
-    color: COLORS.textDark,
+    color: '#1F2937',
     marginBottom: SPACING.xs / 2,
     letterSpacing: 0.5,
     textShadowColor: 'rgba(0, 163, 255, 0.15)',
@@ -294,7 +291,7 @@ const homeStyles = StyleSheet.create({
   featuredTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: COLORS.textDark,
+    color: '#222',
     paddingHorizontal: SPACING.xs,
     letterSpacing: 0.5,
     textShadowColor: 'rgba(0, 163, 255, 0.25)',
@@ -306,11 +303,11 @@ const homeStyles = StyleSheet.create({
     paddingVertical: 0,
     paddingTop: SPACING.md,
     marginHorizontal: 0,
-    marginTop: 0,
+    marginTop: SPACING.lg,
     position: 'relative',
   },
   carouselContent: { 
-    paddingHorizontal: 0, // Bỏ padding để card full width
+    paddingHorizontal: 0,
   },
   cardDotsContainer: {
     flexDirection: 'row',

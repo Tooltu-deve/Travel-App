@@ -709,12 +709,6 @@ const styles = StyleSheet.create({
   section: {
     gap: SPACING.sm,
   },
-  label: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textDark,
-    marginBottom: SPACING.xs,
-  },
   input: {
     backgroundColor: COLORS.bgMain,
     borderRadius: 12,
@@ -730,11 +724,11 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  hint: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    fontStyle: 'italic',
-    marginTop: SPACING.xs / 2,
+  label: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: SPACING.xs,
   },
   optionsRow: {
     flexDirection: 'row',
@@ -797,6 +791,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: COLORS.textMain,
+  },
+  hint: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontStyle: 'italic',
+    marginTop: SPACING.xs / 2,
   },
   submitButton: {
     borderRadius: 16,

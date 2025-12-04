@@ -8,7 +8,9 @@ import React, { createContext, ReactNode, useContext, useEffect, useState } from
 interface UserData {
   id: string;
   email: string;
-  fullName: string;
+  fullName: string; // tên đầy đủ
+  name?: string; // alias cho fullName, dùng cho UI
+  avatar?: string; // url avatar, nếu có
 }
 
 interface AuthContextType {
@@ -221,6 +223,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Clear AsyncStorage
       await AsyncStorage.removeItem('userToken');
       await AsyncStorage.removeItem('userData');
+      await AsyncStorage.removeItem('hasCompletedMoodSelection');
       
       // Reset state
       setUserData(null);

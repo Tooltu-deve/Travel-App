@@ -98,8 +98,15 @@ const LoginScreen: React.FC = () => {
         // Lấy token từ response (có thể là access_token hoặc token)
         const token = response.access_token || response.token;
         
+        // Chuyển đổi format từ backend (full_name) sang frontend (fullName)
+        const userData = {
+          id: response.user.id || response.user._id,
+          email: response.user.email,
+          fullName: response.user.fullName || response.user.full_name || '',
+        };
+        
         // Gọi signIn từ AuthContext để lưu token và userData
-        await signIn(token as string, response.user);
+        await signIn(token as string, userData);
         
         // RootNavigator sẽ tự động chuyển sang Main App
         // Không cần navigation.navigate('Main')

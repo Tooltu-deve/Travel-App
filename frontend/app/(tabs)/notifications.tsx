@@ -1,7 +1,7 @@
 // NotificationScreen - Trang thông báo
-import React from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Text, StyleSheet } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text } from 'react-native';
 import { COLORS } from '../../constants/colors';
 
 const simpleStyles = StyleSheet.create({
