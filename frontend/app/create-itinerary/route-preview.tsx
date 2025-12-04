@@ -19,7 +19,9 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import polyline from '@mapbox/polyline';
 import { COLORS } from '@/constants/colors';
 import { SPACING } from '@/constants/spacing';
-import { deleteRouteAPI, updateRouteStatusAPI } from '@/services/api';
+import { deleteRouteAPI, updateRouteStatusAPI, enrichPlaceAPI } from '@/services/api';
+import { POIDetailBottomSheet } from '@/components/place/POIDetailBottomSheet';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ROUTE_COLORS = {
   glow: 'rgba(255, 99, 132, 0.25)',
@@ -73,6 +75,9 @@ export default function RoutePreviewScreen() {
   const [isTitleModalVisible, setIsTitleModalVisible] = useState(false);
   const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
+  const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
+  const [isEnriching, setIsEnriching] = useState(false);
   const [mapRegion, setMapRegion] = useState<{
     latitude: number;
     longitude: number;
@@ -166,15 +171,6 @@ export default function RoutePreviewScreen() {
   };
 
   // Format emotional tags
-  const formatTags = (tags?: Record<string, number>) => {
-    if (!tags) return [];
-    return Object.entries(tags)
-      .filter(([_, score]) => score > 0.2) // Chỉ hiển thị tags có score > 0.2
-      .sort(([_, a], [__, b]) => b - a)
-      .slice(0, 3) // Chỉ lấy top 3
-      .map(([tag, score]) => `${tag} (${score.toFixed(2)})`);
-  };
-
   const handleConfirm = async (titleValue?: string) => {
     if (!params.routeId) {
       Alert.alert('Lỗi', 'Không tìm thấy ID lộ trình.');
@@ -285,6 +281,88 @@ export default function RoutePreviewScreen() {
         onPress: handleDeleteRoute,
       },
     ]);
+  };
+
+  // Handle click vào activity card - enrich POI và hiển thị bottom sheet
+  const handleActivityPress = async (activity: Activity) => {
+    if (!activity.google_place_id) {
+      Alert.alert('Thông báo', 'Địa điểm này chưa có Google Place ID.');
+      return;
+    }
+
+    setIsEnriching(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để xem chi tiết địa điểm.');
+        router.replace('/(auth)/login');
+        return;
+      }
+
+      // Gọi enrich API để cập nhật thông tin POI
+      // Force refresh để đảm bảo lấy dữ liệu mới bằng tiếng Việt từ Google Places API
+      const response = await enrichPlaceAPI(token, activity.google_place_id, true);
+      
+      // Map dữ liệu từ enriched response sang format mà bottom sheet hiểu
+      const enrichedData = response?.data || response;
+      const mappedPlaceData = {
+        _id: enrichedData.googlePlaceId,
+        googlePlaceId: enrichedData.googlePlaceId,
+        name: enrichedData.name,
+        address: enrichedData.address,
+        formatted_address: enrichedData.address,
+        description: enrichedData.description || enrichedData.editorialSummary,
+        editorialSummary: enrichedData.editorialSummary,
+        rating: enrichedData.rating,
+        user_ratings_total: enrichedData.reviews?.length || 0,
+        contactNumber: enrichedData.contactNumber,
+        phone: enrichedData.contactNumber,
+        websiteUri: enrichedData.websiteUri,
+        website: enrichedData.websiteUri,
+        photos: enrichedData.photos || [],
+        reviews: enrichedData.reviews?.map((review: any) => {
+          // Debug: Log review data để kiểm tra
+          console.log('[RoutePreview] Review data:', JSON.stringify(review, null, 2));
+          
+          // Lấy tên tác giả từ authorAttributions
+          let authorName = 'Người dùng ẩn danh';
+          if (review.authorAttributions) {
+            if (Array.isArray(review.authorAttributions) && review.authorAttributions.length > 0) {
+              const firstAttr = review.authorAttributions[0];
+              authorName = firstAttr?.displayName || firstAttr?.name || 'Người dùng ẩn danh';
+            } else if (typeof review.authorAttributions === 'object') {
+              authorName = review.authorAttributions.displayName || review.authorAttributions.name || 'Người dùng ẩn danh';
+            }
+          }
+          
+          return {
+            authorName,
+            rating: review.rating,
+            text: review.text,
+            relativePublishTimeDescription: review.relativePublishTimeDescription,
+            publishTime: review.relativePublishTimeDescription, // Giữ lại để backward compatible
+            authorAttributions: review.authorAttributions, // Giữ lại để có thể fallback
+          };
+        }) || [],
+        type: enrichedData.type,
+        types: enrichedData.types,
+        location: enrichedData.location,
+        openingHours: enrichedData.openingHours,
+        emotionalTags: enrichedData.emotionalTags,
+        budgetRange: enrichedData.budgetRange,
+      };
+
+      setSelectedPlaceData(mappedPlaceData);
+      setIsBottomSheetVisible(true);
+    } catch (error: any) {
+      console.error('❌ Error enriching POI:', error);
+      Alert.alert(
+        'Lỗi',
+        error.message || 'Không thể tải thông tin chi tiết địa điểm. Vui lòng thử lại.'
+      );
+    } finally {
+      setIsEnriching(false);
+    }
   };
 
   // Get current day activities
@@ -504,11 +582,16 @@ export default function RoutePreviewScreen() {
                 activity.estimated_arrival,
                 activity.estimated_departure
               );
-              const tags = formatTags(activity.emotional_tags);
               const hasTravelTime = index > 0 && activity.travel_duration_minutes;
 
               return (
-                <View key={activity.google_place_id || index} style={styles.activityCard}>
+                <TouchableOpacity
+                  key={activity.google_place_id || index}
+                  style={styles.activityCard}
+                  onPress={() => handleActivityPress(activity)}
+                  disabled={isEnriching}
+                  activeOpacity={0.7}
+                >
                   {/* Activity Number and Name */}
                   <View style={styles.activityHeader}>
                     <View style={styles.activityNumber}>
@@ -516,6 +599,9 @@ export default function RoutePreviewScreen() {
                     </View>
                     <View style={styles.activityInfo}>
                       <Text style={styles.activityName}>{activity.name}</Text>
+                      {isEnriching && activity.google_place_id === selectedPlaceData?.googlePlaceId && (
+                        <ActivityIndicator size="small" color={COLORS.primary} style={{ marginTop: 4 }} />
+                      )}
                     </View>
                   </View>
 
@@ -536,15 +622,7 @@ export default function RoutePreviewScreen() {
                     </Text>
                     <Text style={styles.durationText}>({duration} phút)</Text>
                   </View>
-
-                  {/* Tags */}
-                  {tags.length > 0 && (
-                    <View style={styles.tagsContainer}>
-                      <Text style={styles.tagsLabel}>Tags: </Text>
-                      <Text style={styles.tagsText}>{tags.join(', ')}</Text>
-                    </View>
-                  )}
-                </View>
+                </TouchableOpacity>
               );
             })
           )}
@@ -618,6 +696,16 @@ export default function RoutePreviewScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* POI Detail Bottom Sheet */}
+      <POIDetailBottomSheet
+        visible={isBottomSheetVisible}
+        placeData={selectedPlaceData}
+        onClose={() => {
+          setIsBottomSheetVisible(false);
+          setSelectedPlaceData(null);
+        }}
+      />
     </LinearGradient>
   );
 }
@@ -828,21 +916,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.textSecondary,
     marginLeft: SPACING.xs,
-  },
-  tagsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: SPACING.xs,
-  },
-  tagsLabel: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    fontWeight: '500',
-  },
-  tagsText: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    flex: 1,
   },
   footer: {
     flexDirection: 'row',

@@ -610,6 +610,33 @@ export const getPlaceByIdAPI = async (
 };
 
 /**
+ * enrichPlaceAPI: Enrich POI với thông tin chi tiết từ Google Places API
+ * Protected endpoint: POST /api/v1/places/enrich
+ * Requires: Bearer token
+ * 
+ * @param token - JWT token
+ * @param googlePlaceId - Google Place ID của địa điểm
+ * @param forceRefresh - Force refresh dữ liệu (optional, default: false)
+ * @returns Enriched POI data
+ */
+export const enrichPlaceAPI = async (
+  token: string,
+  googlePlaceId: string,
+  forceRefresh: boolean = false
+): Promise<any> => {
+  return makeRequest<any>('/api/v1/places/enrich', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      googlePlaceId,
+      forceRefresh,
+    }),
+  });
+};
+
+/**
  * getPlacesAPI: Lấy danh sách địa điểm từ server
  * Public endpoint: GET /api/v1/places
  */
@@ -639,4 +666,7 @@ export default {
   getProfileAPI,
   updateProfileAPI,
   changePasswordAPI,
+  getPlaceByIdAPI,
+  enrichPlaceAPI,
+  getPlacesAPI,
 };

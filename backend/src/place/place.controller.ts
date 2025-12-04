@@ -4,6 +4,7 @@ import {
     Delete,
     Get,
     HttpCode,
+    HttpException,
     HttpStatus,
     Param,
     ParseFloatPipe,
@@ -12,6 +13,8 @@ import {
     Post,
     Query,
     UseGuards,
+    Res,
+    ParseIntPipe as ParseIntQueryPipe,
 } from '@nestjs/common';
 import { PlaceService } from './place.service';
 import { CreatePlaceDto } from './dto/create-place.dto';
@@ -19,6 +22,7 @@ import { UpdatePlaceDto } from './dto/update-place.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SearchPlaceDto } from './dto/search-place.dto';
 import { EnrichPoiDto } from './dto/enrich-poi.dto';
+import type { Response } from 'express';
 
 @Controller('places') // Tất cả API sẽ bắt đầu bằng /api/v1/places
 export class PlaceController {
@@ -60,6 +64,37 @@ export class PlaceController {
             message: 'Enrich POI thành công',
             data,
         };
+    }
+
+    // GET /places/photo?name=places/.../photos/...&maxWidthPx=1600
+    // Proxy endpoint để lấy ảnh từ Google Places Photo API v1
+    // Photo name format: "places/PLACE_ID/photos/PHOTO_ID"
+    @Get('photo')
+    async getPlacePhoto(
+        @Query('name') photoName: string,
+        @Query('maxWidthPx', new ParseIntQueryPipe({ optional: true })) maxWidthPx?: number,
+        @Res() res?: Response,
+    ) {
+        if (!photoName) {
+            throw new HttpException(
+                'Photo name (name) là tham số bắt buộc.',
+                HttpStatus.BAD_REQUEST,
+            );
+        }
+
+        try {
+            const imageBuffer = await this.placeService.getPlacePhoto(
+                photoName,
+                maxWidthPx || 1600,
+            );
+
+            // Set headers để trả về ảnh
+            res?.setHeader('Content-Type', 'image/jpeg');
+            res?.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache 1 năm
+            res?.send(imageBuffer);
+        } catch (error: any) {
+            throw error;
+        }
     }
 
     // GET /places/near?lon=...&lat=...&dist=...

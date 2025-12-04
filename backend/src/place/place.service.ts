@@ -400,4 +400,57 @@ export class PlaceService {
       );
     }
   }
+
+  /**
+   * Lấy ảnh từ Google Places Photo API v1
+   * Photo name format: "places/PLACE_ID/photos/PHOTO_ID"
+   * Endpoint: https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=1600&key=API_KEY
+   */
+  async getPlacePhoto(photoName: string, maxWidthPx: number = 1600): Promise<Buffer> {
+    if (!this.googlePlacesApiKey) {
+      throw new HttpException(
+        'Google Places API key chưa được cấu hình.',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    if (!photoName) {
+      throw new HttpException(
+        'Photo name không được để trống.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Endpoint media của Google Places API v1
+    // Format: https://places.googleapis.com/v1/places/{place_id}/photos/{photo_id}/media
+    const mediaUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${maxWidthPx}&key=${this.googlePlacesApiKey}`;
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(mediaUrl, {
+          responseType: 'arraybuffer', // Lấy dữ liệu binary (ảnh)
+          timeout: 10000,
+        }),
+      );
+
+      // Trả về Buffer của ảnh
+      return Buffer.from(response.data);
+    } catch (error: any) {
+      console.error('Error fetching photo from Google Places API:', error);
+      
+      if (error.response) {
+        // Lỗi từ Google Places API
+        throw new HttpException(
+          `Không thể lấy ảnh từ Google Places API: ${error.response.status} ${error.response.statusText}`,
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      // Các lỗi khác (network, timeout, ...)
+      throw new HttpException(
+        `Không thể kết nối tới Google Places Photo API: ${error.message}`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+  }
 }
