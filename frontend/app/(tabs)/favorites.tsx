@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -7,9 +7,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI } from '../../services/api';
+import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI, enrichPlaceAPI } from '../../services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { translatePlaceType } from '../../constants/placeTypes';
+import { POIDetailBottomSheet } from '@/components/place/POIDetailBottomSheet';
 
 const renderStars = (rating?: number | null) => {
   const stars = [];
@@ -123,6 +124,9 @@ const FavoritesScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLiking, setIsLiking] = useState<string | null>(null);
+  const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
+  const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
+  const [isEnriching, setIsEnriching] = useState(false);
 
   useEffect(() => {
     const fetch = async () => {
@@ -161,43 +165,78 @@ const FavoritesScreen: React.FC = () => {
     let mounted = true;
     (async () => {
       try {
-        if (selectedMood === 'all') {
-          const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
-          const mapped = list.map(normalizePlace).filter(p => p.name !== 'Không rõ').sort((a, b) => a.id.localeCompare(b.id));
-          if (!mounted) return;
-          setFavorites(mapped);
-          return;
-        }
-
+        setIsLoading(true);
         const token = await AsyncStorage.getItem('userToken');
         if (!token) {
           setFavorites([]);
+          setIsLoading(false);
           return;
         }
-        const remote = await getFavoritesByMoodAPI(token, selectedMood);
-        if (!mounted) return;
-        if (Array.isArray(remote)) {
-          const mapped = await Promise.all(remote.map(async (p: any) => {
-            let norm = normalizePlace(p);
-            const hasGoogleId = !!norm.googlePlaceId;
-            const possibleId = p.place_id || p.placeId || p._id || p.id || norm.id;
-            if (!hasGoogleId && possibleId) {
-              try {
-                const detail = await getPlaceByIdAPI(possibleId);
-                if (detail) {
-                  norm = normalizePlace({ ...detail, ...p });
-                }
-              } catch (e) {}
-            }
-            return norm;
-          }));
-          setFavorites(mapped);
+
+        let places: any[] = [];
+        if (selectedMood === 'all') {
+          const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
+          places = list.map(normalizePlace).filter(p => p.name !== 'Không rõ');
         } else {
-          setFavorites([]);
+          const remote = await getFavoritesByMoodAPI(token, selectedMood);
+          if (Array.isArray(remote)) {
+            places = await Promise.all(remote.map(async (p: any) => {
+              let norm = normalizePlace(p);
+              const hasGoogleId = !!norm.googlePlaceId;
+              const possibleId = p.place_id || p.placeId || p._id || p.id || norm.id;
+              if (!hasGoogleId && possibleId) {
+                try {
+                  const detail = await getPlaceByIdAPI(possibleId);
+                  if (detail) {
+                    norm = normalizePlace({ ...detail, ...p });
+                  }
+                } catch (e) {}
+              }
+              return norm;
+            }));
+          }
         }
+
+        if (!mounted) return;
+
+        // Enrich từng place có googlePlaceId để lấy thông tin mới nhất
+        const enrichedPlaces = await Promise.all(
+          places.map(async (place) => {
+            if (!place.googlePlaceId) {
+              return place; // Giữ nguyên nếu không có googlePlaceId
+            }
+
+            try {
+              // Enrich để lấy thông tin mới nhất (không force refresh để tránh tốn API calls)
+              const response = await enrichPlaceAPI(token, place.googlePlaceId, false);
+              const enrichedData = response?.data || response;
+
+              if (enrichedData) {
+                // Cập nhật thông tin từ enriched data
+                return {
+                  ...place,
+                  name: enrichedData.name || place.name,
+                  address: enrichedData.address || place.address,
+                  rating: enrichedData.rating ?? place.rating,
+                  // Giữ lại các thông tin khác
+                };
+              }
+            } catch (error: any) {
+              console.warn(`[Favorites] Failed to enrich place ${place.googlePlaceId}:`, error.message);
+              // Nếu enrich thất bại, giữ nguyên thông tin cũ
+            }
+
+            return place;
+          })
+        );
+
+        if (!mounted) return;
+        setFavorites(enrichedPlaces.sort((a, b) => a.id.localeCompare(b.id)));
       } catch (e: any) {
         setError(e?.message || 'Không thể tải địa điểm yêu thích');
         setFavorites([]);
+      } finally {
+        setIsLoading(false);
       }
     })();
     return () => {
@@ -221,6 +260,89 @@ const FavoritesScreen: React.FC = () => {
       }
     } finally {
       setIsLiking(null);
+    }
+  };
+
+  // Handle click vào POI card - enrich POI và hiển thị bottom sheet
+  const handlePlacePress = async (place: any) => {
+    const googlePlaceId = place.googlePlaceId;
+    if (!googlePlaceId) {
+      Alert.alert('Thông báo', 'Địa điểm này chưa có Google Place ID.');
+      return;
+    }
+
+    setIsEnriching(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để xem chi tiết địa điểm.');
+        router.push('/(auth)/login');
+        return;
+      }
+
+      // Gọi enrich API để cập nhật thông tin POI
+      // Force refresh để đảm bảo lấy dữ liệu mới bằng tiếng Việt từ Google Places API
+      const response = await enrichPlaceAPI(token, googlePlaceId, true);
+      
+      // Map dữ liệu từ enriched response sang format mà bottom sheet hiểu
+      const enrichedData = response?.data || response;
+      const mappedPlaceData = {
+        _id: enrichedData.googlePlaceId,
+        googlePlaceId: enrichedData.googlePlaceId,
+        name: enrichedData.name,
+        address: enrichedData.address,
+        formatted_address: enrichedData.address,
+        description: enrichedData.description || enrichedData.editorialSummary,
+        editorialSummary: enrichedData.editorialSummary,
+        rating: enrichedData.rating,
+        user_ratings_total: enrichedData.reviews?.length || 0,
+        contactNumber: enrichedData.contactNumber,
+        phone: enrichedData.contactNumber,
+        websiteUri: enrichedData.websiteUri,
+        website: enrichedData.websiteUri,
+        photos: enrichedData.photos || [],
+        reviews: enrichedData.reviews?.map((review: any) => {
+          // Debug: Log review data để kiểm tra
+          console.log('[Favorites] Review data:', JSON.stringify(review, null, 2));
+          
+          // Lấy tên tác giả từ authorAttributions
+          let authorName = 'Người dùng ẩn danh';
+          if (review.authorAttributions) {
+            if (Array.isArray(review.authorAttributions) && review.authorAttributions.length > 0) {
+              const firstAttr = review.authorAttributions[0];
+              authorName = firstAttr?.displayName || firstAttr?.name || 'Người dùng ẩn danh';
+            } else if (typeof review.authorAttributions === 'object') {
+              authorName = review.authorAttributions.displayName || review.authorAttributions.name || 'Người dùng ẩn danh';
+            }
+          }
+          
+          return {
+            authorName,
+            rating: review.rating,
+            text: review.text,
+            relativePublishTimeDescription: review.relativePublishTimeDescription,
+            publishTime: review.relativePublishTimeDescription, // Giữ lại để backward compatible
+            authorAttributions: review.authorAttributions, // Giữ lại để có thể fallback
+          };
+        }) || [],
+        type: enrichedData.type,
+        types: enrichedData.types,
+        location: enrichedData.location,
+        openingHours: enrichedData.openingHours,
+        emotionalTags: enrichedData.emotionalTags,
+        budgetRange: enrichedData.budgetRange,
+      };
+
+      setSelectedPlaceData(mappedPlaceData);
+      setIsBottomSheetVisible(true);
+    } catch (error: any) {
+      console.error('❌ Error enriching POI:', error);
+      Alert.alert(
+        'Lỗi',
+        error.message || 'Không thể tải thông tin chi tiết địa điểm. Vui lòng thử lại.'
+      );
+    } finally {
+      setIsEnriching(false);
     }
   };
 
@@ -315,7 +437,13 @@ const FavoritesScreen: React.FC = () => {
             </View>
           )}
           {favorites.map((place) => (
-            <View key={place.id} style={styles.card}>
+            <TouchableOpacity
+              key={place.id}
+              style={styles.card}
+              onPress={() => handlePlacePress(place)}
+              disabled={isEnriching}
+              activeOpacity={0.7}
+            >
               <View style={styles.cardInner}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
@@ -334,19 +462,35 @@ const FavoritesScreen: React.FC = () => {
                       <View style={styles.moodPill}><Text style={styles.moodPillText}>+{place.moods.length - 3}</Text></View>
                     )}
                   </View>
+                  {isEnriching && place.googlePlaceId === selectedPlaceData?.googlePlaceId && (
+                    <ActivityIndicator size="small" color={COLORS.primary} style={{ marginTop: 8 }} />
+                  )}
                 </View>
                 <TouchableOpacity
                   style={styles.heartFloat}
-                  onPress={() => handleLikePlace(place.id, place.googlePlaceId)}
+                  onPress={(e) => {
+                    e.stopPropagation(); // Ngăn trigger handlePlacePress
+                    handleLikePlace(place.id, place.googlePlaceId);
+                  }}
                   disabled={isLiking !== null}
                 >
                   <FontAwesome name="heart" size={18} color="#E53E3E" />
                 </TouchableOpacity>
               </View>
-            </View>
+            </TouchableOpacity>
           ))}
         </View>
       </ScrollView>
+
+      {/* POI Detail Bottom Sheet */}
+      <POIDetailBottomSheet
+        visible={isBottomSheetVisible}
+        placeData={selectedPlaceData}
+        onClose={() => {
+          setIsBottomSheetVisible(false);
+          setSelectedPlaceData(null);
+        }}
+      />
     </LinearGradient>
   );
 };
