@@ -235,7 +235,7 @@ const ItineraryScreen: React.FC = () => {
       style={styles.gradientContainer}
     >
       <ScrollView 
-        style={{flex:1, backgroundColor: '#fff'}}
+        style={{flex:1}}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: SPACING.xxxl }}
       >
