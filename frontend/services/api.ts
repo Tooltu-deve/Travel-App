@@ -22,10 +22,13 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Your Local URL
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
 // ============================================
 // TYPES
 // ============================================
+
+// Export API_BASE_URL để các component khác có thể dùng
+export { API_BASE_URL };
 interface LoginRequest {
   email: string;
   password: string;
@@ -392,6 +395,32 @@ export const getRoutesAPI = async (
   const query = status ? `?status=${status}` : '';
   return makeRequest<{ message: string; routes: TravelRoute[]; total: number }>(
     `/api/v1/itineraries${query}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
+ * getItineraryAPI: Lấy chi tiết một itinerary cụ thể
+ *
+ * @param token JWT token
+ * @param itineraryId ID của itinerary
+ * @returns Chi tiết itinerary bao gồm status
+ *
+ * Endpoint: GET /api/v1/itineraries/:id
+ * Headers: Authorization: Bearer <token>
+ * Response: { message, status, ... }
+ */
+export const getItineraryAPI = async (
+  token: string,
+  itineraryId: string,
+): Promise<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'; [key: string]: any }> => {
+  return makeRequest<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'; [key: string]: any }>(
+    `/api/v1/itineraries/${itineraryId}`,
     {
       method: 'GET',
       headers: {
@@ -813,6 +842,90 @@ export const deleteAllNotificationsAPI = async (
   });
 };
 
+/**
+ * chatWithAIAPI: Gửi tin nhắn tới AI Travel Agent
+ * 
+ * @param token JWT token
+ * @param message Tin nhắn gửi tới AI
+ * @param sessionId Session ID (nếu có)
+ * @param context Ngữ cảnh bổ sung (vị trí hiện tại, v.v.)
+ * 
+ * Endpoint: POST /api/v1/ai/chat
+ * Headers: Authorization: Bearer <token>
+ * Response: { response, sessionId, itineraryId, metadata, ... }
+ */
+export const chatWithAIAPI = async (
+  token: string,
+  message: string,
+  sessionId?: string | null,
+  context?: any,
+): Promise<any> => {
+  const requestBody: any = { message };
+  if (sessionId) {
+    requestBody.sessionId = sessionId;
+  }
+  if (context) {
+    requestBody.context = context;
+  }
+  
+  return makeRequest<any>('/api/v1/ai/chat', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+};
+
+/**
+ * resetConversationAPI: Reset cuộc trò chuyện với AI
+ * 
+ * @param token JWT token
+ * @param userId User ID
+ * @param sessionId Session ID (nếu có)
+ * 
+ * Endpoint: POST /api/v1/ai/reset
+ * Headers: Authorization: Bearer <token>
+ * Response: { message, ... }
+ */
+export const resetConversationAPI = async (
+  token: string,
+  userId: string,
+  sessionId?: string | null,
+): Promise<any> => {
+  const requestBody: any = { userId };
+  if (sessionId) {
+    requestBody.sessionId = sessionId;
+  }
+  
+  return makeRequest<any>('/api/v1/ai/reset', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+};
+
+/**
+ * getPlacePhotoAPI: Lấy ảnh của địa điểm từ Google Places API
+ * 
+ * @param photoName Photo name từ Google Places API (format: places/{place_id}/photos/{photo_reference})
+ * @param maxWidthPx Chiều rộng tối đa của ảnh (mặc định 1600)
+ * 
+ * Endpoint: GET /api/v1/places/photo?name=...&maxWidthPx=...
+ * Response: Image data
+ */
+export const getPlacePhotoAPI = (
+  photoName: string,
+  maxWidthPx: number = 1600,
+): string => {
+  const encodedPhotoName = encodeURIComponent(photoName);
+  return `${API_BASE_URL}/api/v1/places/photo?name=${encodedPhotoName}&maxWidthPx=${maxWidthPx}`;
+};
+
 // ============================================
 // EXPORT
 // ============================================
@@ -842,4 +955,6 @@ export default {
   getPlaceByIdAPI,
   enrichPlaceAPI,
   getPlacesAPI,
+  chatWithAIAPI,
+  resetConversationAPI,
 };

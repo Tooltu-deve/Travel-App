@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { COLORS } from '../../constants';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../services/api';
 
 interface ItineraryItem {
   day: number;
@@ -34,6 +35,8 @@ interface ItineraryItem {
 interface ItineraryDetailScreenProps {
   itinerary: ItineraryItem[];
   itineraryId: string;
+  itineraryStatus?: 'DRAFT' | 'CONFIRMED' | null;
+  setItineraryStatus?: (status: 'DRAFT' | 'CONFIRMED') => void;
   onClose: () => void;
   onConfirmSuccess?: () => void;
   onSendMessage?: (message: string) => void;
@@ -42,14 +45,17 @@ interface ItineraryDetailScreenProps {
 export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
   itinerary,
   itineraryId,
+  itineraryStatus: parentItineraryStatus,
+  setItineraryStatus: setParentItineraryStatus,
   onClose,
   onConfirmSuccess,
   onSendMessage,
 }) => {
   const { token, signOut } = useAuth();
   const [isConfirming, setIsConfirming] = useState(false);
-  const [itineraryStatus, setItineraryStatus] = useState<'DRAFT' | 'CONFIRMED' | null>(null);
-  const API_BASE_URL = 'http://192.168.2.92:3000/api/v1';
+  // Sử dụng state từ parent nếu có, nếu không thì sử dụng local state
+  const itineraryStatus = parentItineraryStatus ?? null;
+  const setItineraryStatus = setParentItineraryStatus || (() => {});
 
   // Debug: Log when component mounts or props change
   React.useEffect(() => {
@@ -58,30 +64,35 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
       itineraryId,
       itineraryLength: itinerary?.length,
       hasToken: !!token,
+      itineraryStatus,
     });
 
-    // Fetch itinerary status from API
-    const fetchItineraryStatus = async () => {
-      if (!itineraryId || !token) return;
-      try {
-        const response = await fetch(`${API_BASE_URL}/ai/itineraries/${itineraryId}`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          console.debug('[ItineraryDetailScreen] Fetched status:', data?.status);
-          setItineraryStatus(data?.status || 'DRAFT');
+    // Nếu không có itineraryStatus từ parent, fetch từ API
+    if (!parentItineraryStatus) {
+      const fetchItineraryStatus = async () => {
+        if (!itineraryId || !token) return;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/v1/ai/itineraries/${itineraryId}`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+          if (response.ok) {
+            const data = await response.json();
+            console.debug('[ItineraryDetailScreen] Fetched status:', data?.status);
+            if (setParentItineraryStatus) {
+              setParentItineraryStatus(data?.status || 'DRAFT');
+            }
+          }
+        } catch (error) {
+          console.error('[ItineraryDetailScreen] Error fetching status:', error);
         }
-      } catch (error) {
-        console.error('[ItineraryDetailScreen] Error fetching status:', error);
-      }
-    };
+      };
 
-    fetchItineraryStatus();
-  }, [itinerary, itineraryId, token, API_BASE_URL]);
+      fetchItineraryStatus();
+    }
+  }, [itinerary, itineraryId, token, API_BASE_URL, parentItineraryStatus, setParentItineraryStatus]);
 
   const confirmItinerary = async () => {
     console.debug('[Confirm Itinerary] Button pressed. itineraryId:', itineraryId, ', status:', itineraryStatus);
@@ -110,6 +121,8 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
               // Gửi tin nhắn "xác nhận lộ trình" tới chatbot
               if (onSendMessage) {
                 onSendMessage('xác nhận lộ trình');
+                // Cập nhật status thành CONFIRMED ngay lập tức để disable nút
+                setItineraryStatus('CONFIRMED');
                 console.debug('[Confirm Itinerary] Message sent, closing detail screen');
                 // Đóng detail screen và để chatbot xử lý
                 setTimeout(() => {

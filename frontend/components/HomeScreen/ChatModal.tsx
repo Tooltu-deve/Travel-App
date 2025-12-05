@@ -21,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { COLORS } from '../../constants';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../services/api';
 import ItineraryDetailScreen from './ItineraryDetailScreen';
 import useLocation from '../../hooks/useLocation';
 
@@ -176,12 +177,12 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [itineraryId, setItineraryId] = useState<string | null>(null);
   const [itinerary, setItinerary] = useState<any>(null);
+  const [itineraryStatus, setItineraryStatus] = useState<'DRAFT' | 'CONFIRMED' | null>(null);
   const [showItineraryDetail, setShowItineraryDetail] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const buttonScale = useRef(new Animated.Value(0)).current;
 
-  const API_BASE_URL = 'http://192.168.2.92:3000/api/v1';
   const MAX_CHAT_RETRIES = 2;
   const RETRY_BASE_DELAY_MS = 1000;
 
@@ -271,7 +272,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           }
           
           console.debug('Sending chat request', requestBody);
-          const response = await fetch(`${API_BASE_URL}/ai/chat`, {
+          const response = await fetch(`${API_BASE_URL}/api/v1/ai/chat`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -446,7 +447,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
               
               console.debug('Sending reset request', resetBody);
               
-              const response = await fetch(`${API_BASE_URL}/ai/reset`, {
+              const response = await fetch(`${API_BASE_URL}/api/v1/ai/reset`, {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${token}`,
@@ -557,6 +558,8 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
         <ItineraryDetailScreen
           itinerary={itinerary}
           itineraryId={itineraryId}
+          itineraryStatus={itineraryStatus}
+          setItineraryStatus={setItineraryStatus}
           onClose={() => setShowItineraryDetail(false)}
           onConfirmSuccess={() => {
             // Optional: handle post-confirmation logic
