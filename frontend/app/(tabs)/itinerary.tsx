@@ -1,26 +1,25 @@
 // ItineraryScreen - Trang lịch trình du lịch
-import React, { useEffect, useState } from 'react';
-import { LinearGradient } from 'expo-linear-gradient';
-import { 
-  Text, 
-  StyleSheet, 
-  View, 
-  ScrollView, 
-  TouchableOpacity,
-  Dimensions,
-  ActivityIndicator,
-} from 'react-native';
+import { getRoutesAPI, TravelRoute } from '@/services/api';
 import { FontAwesome } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { getRoutesAPI, TravelRoute } from '@/services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Mock data - sẽ được thay thế bằng dữ liệu thực từ API
 interface MockItinerary {
   id: string;
   title: string;
@@ -74,6 +73,7 @@ const ItineraryScreen: React.FC = () => {
   const [routesError, setRoutesError] = useState<string | null>(null);
   
   const activeItinerary = itineraries.find(it => it.status === 'active');
+  
   useEffect(() => {
     let isMounted = true;
 
@@ -235,20 +235,20 @@ const ItineraryScreen: React.FC = () => {
       style={styles.gradientContainer}
     >
       <ScrollView 
-        style={styles.container}
+        style={{flex:1, backgroundColor: '#fff'}}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: SPACING.xxxl }}
       >
         {/* Header */}
-        <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}>
+        <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}> 
           <View style={styles.headerTextContainer}>
-            <Text style={styles.headerTitle}>Lịch trình của tôi</Text>
+            <Text style={styles.headerTitle}>Lịch trình của bạn</Text>
             <Text style={styles.headerSubtitle}>Quản lý các hành trình du lịch</Text>
           </View>
         </View>
 
         {/* Create Button */}
-        <View style={styles.createButtonContainer}>
+        <View style={styles.createButtonContainer}> 
           <TouchableOpacity 
             style={styles.createButton}
             onPress={handleCreateItinerary}
@@ -268,159 +268,159 @@ const ItineraryScreen: React.FC = () => {
 
         {/* Current Itinerary Section */}
         {activeItinerary && (
-          <View style={styles.sectionContainer}>
-            <Text style={styles.sectionTitle}>Lộ trình hiện tại</Text>
-            <View style={styles.currentItineraryCard}>
-              <LinearGradient
-                colors={[COLORS.primary, COLORS.gradientSecondary]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.currentCardGradient}
-              >
-                <View style={styles.currentCardHeader}>
-                  <View style={styles.currentCardTitleContainer}>
-                    <Text style={styles.currentCardTitle}>{activeItinerary.title}</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: COLORS.bgMain }]}>
-                      <Text style={[styles.statusText, { color: getStatusColor(activeItinerary.status) }]}>
-                        {getStatusText(activeItinerary.status)}
+          <>
+            <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>Lộ trình hiện tại</Text>
+            <View style={{marginHorizontal: SPACING.lg}}>
+              <View style={styles.currentItineraryCard}>
+                <LinearGradient
+                  colors={[COLORS.primary, COLORS.gradientSecondary]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.currentCardGradient}
+                >
+                  <View style={styles.currentCardHeader}>
+                    <View style={styles.currentCardTitleContainer}>
+                      <Text style={styles.currentCardTitle}>{activeItinerary.title}</Text>
+                      <View style={styles.statusBadge}> 
+                        <Text style={[styles.statusText, { color: getStatusColor(activeItinerary.status) }]}>
+                          {getStatusText(activeItinerary.status)}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  <View style={styles.currentCardContent}>
+                    <View style={styles.currentCardRow}>
+                      <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
+                      <Text style={styles.currentCardText}>{activeItinerary.destination}</Text>
+                    </View>
+                    <View style={styles.currentCardRow}>
+                      <FontAwesome name="calendar" size={16} color={COLORS.textWhite} />
+                      <Text style={styles.currentCardText}>
+                        {formatDate(activeItinerary.startDate)} - {formatDate(activeItinerary.endDate)}
                       </Text>
                     </View>
-                  </View>
-                </View>
-                
-                <View style={styles.currentCardContent}>
-                  <View style={styles.currentCardRow}>
-                    <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
-                    <Text style={styles.currentCardText}>{activeItinerary.destination}</Text>
-                  </View>
-                  
-                  <View style={styles.currentCardRow}>
-                    <FontAwesome name="calendar" size={16} color={COLORS.textWhite} />
-                    <Text style={styles.currentCardText}>
-                      {formatDate(activeItinerary.startDate)} - {formatDate(activeItinerary.endDate)}
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.currentCardInfoRow}>
-                    <View style={styles.currentCardInfoItem}>
-                      <FontAwesome name="clock-o" size={14} color={COLORS.textWhite} />
-                      <Text style={styles.currentCardInfoText}>{activeItinerary.duration} ngày</Text>
-                    </View>
-                    <View style={styles.currentCardInfoItem}>
-                      <FontAwesome name="map-pin" size={14} color={COLORS.textWhite} />
-                      <Text style={styles.currentCardInfoText}>{activeItinerary.places} địa điểm</Text>
+                    <View style={styles.currentCardInfoRow}>
+                      <View style={styles.currentCardInfoItem}>
+                        <FontAwesome name="clock-o" size={14} color={COLORS.textWhite} />
+                        <Text style={styles.currentCardInfoText}>{activeItinerary.duration} ngày</Text>
+                      </View>
+                      <View style={styles.currentCardInfoItem}>
+                        <FontAwesome name="map-pin" size={14} color={COLORS.textWhite} />
+                        <Text style={styles.currentCardInfoText}>{activeItinerary.places} địa điểm</Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-              </LinearGradient>
+                </LinearGradient>
+              </View>
             </View>
-          </View>
+          </>
         )}
 
         {/* Other Itineraries Section */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>
+        <>
+          <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>
             {activeItinerary ? 'Lộ trình khác' : 'Các lộ trình đã lưu'}
           </Text>
+          <View style={{marginHorizontal: SPACING.lg}}>
+            {isLoadingRoutes && (
+              <View style={styles.dataStateContainer}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+                <Text style={styles.dataStateText}>Đang tải lộ trình...</Text>
+              </View>
+            )}
 
-          {isLoadingRoutes && (
-            <View style={styles.dataStateContainer}>
-              <ActivityIndicator size="small" color={COLORS.primary} />
-              <Text style={styles.dataStateText}>Đang tải lộ trình...</Text>
-            </View>
-          )}
+            {!isLoadingRoutes && routesError && (
+              <View style={styles.dataStateContainer}>
+                <FontAwesome name="exclamation-circle" size={18} color={COLORS.error} />
+                <Text style={[styles.dataStateText, styles.errorText]}>
+                  {routesError}
+                </Text>
+              </View>
+            )}
 
-          {!isLoadingRoutes && routesError && (
-            <View style={styles.dataStateContainer}>
-              <FontAwesome name="exclamation-circle" size={18} color={COLORS.error} />
-              <Text style={[styles.dataStateText, styles.errorText]}>
-                {routesError}
-              </Text>
-            </View>
-          )}
+            {!isLoadingRoutes && !routesError && confirmedRoutes.length === 0 && (
+              <View style={styles.dataStateContainer}>
+                <FontAwesome name="info-circle" size={18} color={COLORS.textSecondary} />
+                <Text style={styles.dataStateText}>
+                  Chưa có lộ trình nào được xác nhận.
+                </Text>
+              </View>
+            )}
 
-          {!isLoadingRoutes && !routesError && confirmedRoutes.length === 0 && (
-            <View style={styles.dataStateContainer}>
-              <FontAwesome name="info-circle" size={18} color={COLORS.textSecondary} />
-              <Text style={styles.dataStateText}>
-                Chưa có lộ trình nào được xác nhận.
-              </Text>
-            </View>
-          )}
-
-          {!isLoadingRoutes && !routesError && confirmedRoutes.length > 0 && (
-            confirmedRoutes.map((route, index) => (
-              <TouchableOpacity
-                key={route.route_id}
-                style={styles.itineraryCard}
-                activeOpacity={0.9}
-              >
-                <View style={styles.cardContent}>
-                  <View style={styles.cardHeader}>
-                    <View style={styles.cardTitleContainer}>
-                      <Text style={styles.cardTitle} numberOfLines={2}>
-                        {getRouteTitle(route, index)}
-                      </Text>
-                      <View
-                        style={[
-                          styles.statusBadgeSmall,
-                          { backgroundColor: getStatusColor('confirmed') + '20' },
-                        ]}
-                      >
-                        <Text
+            {!isLoadingRoutes && !routesError && confirmedRoutes.length > 0 && (
+              confirmedRoutes.map((route, index) => (
+                <TouchableOpacity
+                  key={route.route_id}
+                  style={styles.itineraryCard}
+                  activeOpacity={0.9}
+                >
+                  <View style={styles.cardContent}>
+                    <View style={styles.cardHeader}>
+                      <View style={styles.cardTitleContainer}>
+                        <Text style={styles.cardTitle} numberOfLines={2}>
+                          {getRouteTitle(route, index)}
+                        </Text>
+                        <View
                           style={[
-                            styles.statusTextSmall,
-                            { color: getStatusColor('confirmed') },
+                            styles.statusBadgeSmall,
+                            { backgroundColor: getStatusColor('confirmed') + '20' },
                           ]}
                         >
-                          {getStatusText('confirmed')}
+                          <Text
+                            style={[
+                              styles.statusTextSmall,
+                              { color: getStatusColor('confirmed') },
+                            ]}
+                          >
+                            {getStatusText('confirmed')}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.cardBody}>
+                      <View style={styles.cardRow}>
+                        <FontAwesome name="map-marker" size={14} color={COLORS.primary} />
+                        <Text style={styles.cardText}>{getRouteDestination(route)}</Text>
+                      </View>
+
+                      <View style={styles.cardRow}>
+                        <FontAwesome name="calendar" size={14} color={COLORS.textSecondary} />
+                        <Text style={styles.cardTextSecondary}>
+                          {(() => {
+                            const start = getRouteStartDate(route);
+                            const end = getRouteEndDate(route);
+                            if (!start && !end) return 'Chưa xác định';
+                            if (start && !end) return formatDate(start);
+                            if (start && end) {
+                              return `${formatDate(start)} - ${formatDate(end)}`;
+                            }
+                            return 'Chưa xác định';
+                          })()}
                         </Text>
+                      </View>
+
+                      <View style={styles.cardFooter}>
+                        <View style={styles.cardInfoItem}>
+                          <FontAwesome name="clock-o" size={12} color={COLORS.textSecondary} />
+                          <Text style={styles.cardInfoText}>
+                            {getRouteDuration(route) || '?'} ngày
+                          </Text>
+                        </View>
+                        <View style={styles.cardInfoItem}>
+                          <FontAwesome name="map-pin" size={12} color={COLORS.textSecondary} />
+                          <Text style={styles.cardInfoText}>
+                            {getRoutePlaces(route)} địa điểm
+                          </Text>
+                        </View>
                       </View>
                     </View>
                   </View>
-
-                  <View style={styles.cardBody}>
-                    <View style={styles.cardRow}>
-                      <FontAwesome name="map-marker" size={14} color={COLORS.primary} />
-                      <Text style={styles.cardText}>{getRouteDestination(route)}</Text>
-                    </View>
-
-                    <View style={styles.cardRow}>
-                      <FontAwesome name="calendar" size={14} color={COLORS.textSecondary} />
-                      <Text style={styles.cardTextSecondary}>
-                        {(() => {
-                          const start = getRouteStartDate(route);
-                          const end = getRouteEndDate(route);
-                          if (!start && !end) return 'Chưa xác định';
-                          if (start && !end) return formatDate(start);
-                          if (start && end) {
-                            return `${formatDate(start)} - ${formatDate(end)}`;
-                          }
-                          return 'Chưa xác định';
-                        })()}
-                      </Text>
-                    </View>
-
-                    <View style={styles.cardFooter}>
-                      <View style={styles.cardInfoItem}>
-                        <FontAwesome name="clock-o" size={12} color={COLORS.textSecondary} />
-                        <Text style={styles.cardInfoText}>
-                          {getRouteDuration(route) || '?'} ngày
-                        </Text>
-                      </View>
-                      <View style={styles.cardInfoItem}>
-                        <FontAwesome name="map-pin" size={12} color={COLORS.textSecondary} />
-                        <Text style={styles.cardInfoText}>
-                          {getRoutePlaces(route)} địa điểm
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            ))
-          )}
-        </View>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        </>
 
         {/* Empty State */}
         {itineraries.length === 0 && (
@@ -494,10 +494,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.textWhite,
     letterSpacing: 0.5,
-  },
-  sectionContainer: {
-    paddingHorizontal: SPACING.lg,
-    marginTop: SPACING.lg,
   },
   sectionTitle: {
     fontSize: 22,
@@ -576,9 +572,10 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   statusBadge: {
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.xs / 2,
+    backgroundColor: COLORS.bgMain,
     borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   statusText: {
     fontSize: 11,

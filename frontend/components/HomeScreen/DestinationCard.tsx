@@ -2,6 +2,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useRef, useState } from 'react';
 import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { COLORS, SPACING } from '../../constants';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -102,9 +103,9 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
           <View style={styles.amenitiesWithFavoriteRow}>
             <View style={styles.amenitiesRow}>
               {destination.amenities.map((amenity, idx) => (
-                <View key={idx} style={styles.amenityTag}>
+                <BlurView key={idx} intensity={30} tint="dark" style={styles.amenityTag}>
                   <Text style={styles.amenityText}>{amenity}</Text>
-                </View>
+                </BlurView>
               ))}
             </View>
 
@@ -369,9 +370,12 @@ const styles = StyleSheet.create({
 
   bookButton: {
     backgroundColor: COLORS.primary,
-    paddingHorizontal: SPACING.lg + SPACING.sm,
-    paddingVertical: SPACING.sm + 2,
-    borderRadius: 25,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
     shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,

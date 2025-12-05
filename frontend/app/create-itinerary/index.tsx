@@ -23,9 +23,7 @@ const CreateItineraryScreen: React.FC = () => {
   };
 
   const handleManual = () => {
-    // TODO: Navigate to manual creation screen
     console.log('Create manually');
-    // router.push('/create-itinerary/manual');
   };
 
   const handleGoBack = () => {
@@ -44,7 +42,7 @@ const CreateItineraryScreen: React.FC = () => {
         contentContainerStyle={{ paddingBottom: SPACING.xxxl }}
       >
         {/* Header */}
-        <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}>
+        <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}> 
           <TouchableOpacity 
             style={styles.backButton}
             onPress={handleGoBack}
@@ -310,4 +308,3 @@ const styles = StyleSheet.create({
 });
 
 export default CreateItineraryScreen;
-

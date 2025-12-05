@@ -22,8 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://192.168.2.92:3000'; // ⬅️ Render Cloud URL
-
+const API_BASE_URL = 'http://192.168.2.92:3000'; // ⬅️ Your Local URL
 // ============================================
 // TYPES
 // ============================================
@@ -529,6 +528,105 @@ export const getLikedPlacesAPI = async (
 };
 
 /**
+ * getProfileAPI: Lấy thông tin profile của user hiện tại
+ * 
+ * @param token - JWT token
+ * @returns Profile với email, full_name, preferenced_tags
+ * 
+ * Endpoint: GET /users/profile
+ * Headers: Authorization: Bearer <token>
+ * Response: { email, full_name, preferenced_tags }
+ */
+export const getProfileAPI = async (
+  token: string,
+): Promise<{
+  email: string;
+  full_name: string;
+  preferenced_tags: string[];
+}> => {
+  return makeRequest<{
+    email: string;
+    full_name: string;
+    preferenced_tags: string[];
+  }>('/api/v1/users/profile', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * updateProfileAPI: Cập nhật emotional tags của user
+ * 
+ * @param token - JWT token
+ * @param preferencedTags - Array các emotional tags
+ * @returns Profile đã cập nhật
+ * 
+ * Endpoint: PATCH /users/profile
+ * Headers: Authorization: Bearer <token>
+ * Request: { preferencedTags: string[] }
+ * Response: { email, full_name, preferenced_tags }
+ */
+export const updateProfileAPI = async (
+  token: string,
+  preferencedTags: string[],
+): Promise<{
+  email: string;
+  full_name: string;
+  preferenced_tags: string[];
+}> => {
+  return makeRequest<{
+    email: string;
+    full_name: string;
+    preferenced_tags: string[];
+  }>('/api/v1/users/profile', {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ preferencedTags }),
+  });
+};
+
+/**
+ * changePasswordAPI: Đổi mật khẩu cho user đang đăng nhập
+ * 
+ * @param token - JWT token
+ * @param data - Object chứa currentPassword và newPassword
+ * @returns Message từ backend
+ * 
+ * Endpoint: POST /api/v1/auth/change-password
+ * Headers: Authorization: Bearer <token>
+ * Request: { currentPassword, newPassword }
+ * Response: { message }
+ */
+export const changePasswordAPI = async (
+  token: string,
+  data: { currentPassword: string; newPassword: string },
+): Promise<{ message: string }> => {
+  const url = `${API_BASE_URL}/api/v1/auth/change-password`;
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  const result = await response.json();
+  
+  if (!response.ok) {
+    // Throw error với message từ backend
+    throw new Error(result.message || 'Lỗi đổi mật khẩu');
+  }
+  
+  return result;
+};
+
+/**
  * getPlaceByIdAPI: Lấy chi tiết place theo internal DB id (`placeId` / `_id`)
  * Public endpoint: GET /api/v1/places/:id
  */
@@ -537,6 +635,33 @@ export const getPlaceByIdAPI = async (
 ): Promise<any> => {
   return makeRequest<any>(`/api/v1/places/${id}`, {
     method: 'GET',
+  });
+};
+
+/**
+ * enrichPlaceAPI: Enrich POI với thông tin chi tiết từ Google Places API
+ * Protected endpoint: POST /api/v1/places/enrich
+ * Requires: Bearer token
+ * 
+ * @param token - JWT token
+ * @param googlePlaceId - Google Place ID của địa điểm
+ * @param forceRefresh - Force refresh dữ liệu (optional, default: false)
+ * @returns Enriched POI data
+ */
+export const enrichPlaceAPI = async (
+  token: string,
+  googlePlaceId: string,
+  forceRefresh: boolean = false
+): Promise<any> => {
+  return makeRequest<any>('/api/v1/places/enrich', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      googlePlaceId,
+      forceRefresh,
+    }),
   });
 };
 
@@ -711,4 +836,10 @@ export default {
   markAllNotificationsAsReadAPI,
   deleteNotificationAPI,
   deleteAllNotificationsAPI,
+  getProfileAPI,
+  updateProfileAPI,
+  changePasswordAPI,
+  getPlaceByIdAPI,
+  enrichPlaceAPI,
+  getPlacesAPI,
 };

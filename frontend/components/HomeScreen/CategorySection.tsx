@@ -29,7 +29,6 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
 
   useEffect(() => {
     if (isExpanded) {
-      // Khi mở rộng: render trước, sau đó animate
       setShouldRender(true);
       expandAnimation.setValue(0);
       Animated.timing(expandAnimation, {
@@ -38,7 +37,6 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
         useNativeDriver: true,
       }).start();
     } else {
-      // Khi thu gọn: animate trước, sau đó unmount
       Animated.timing(expandAnimation, {
         toValue: 0,
         duration: 300,
@@ -60,11 +58,9 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
   });
 
   return (
-    <View style={styles.categorySection}>
+    <View style={styles.categorySection}> 
       <Text style={styles.categoryTitle}>Danh mục</Text>
-
       <View style={styles.categoryGrid}>
-        {/* Hiển thị 4 danh mục đầu tiên */}
         {categories.slice(0, 4).map((category) => (
           <View key={category.id} style={styles.categoryItem}>
             <TouchableOpacity style={styles.categoryItemInner}>
@@ -79,8 +75,6 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
             </TouchableOpacity>
           </View>
         ))}
-
-        {/* Nút Xem thêm (chỉ hiện khi chưa mở rộng) */}
         {!isExpanded && (
           <View style={styles.categoryItem}>
             <TouchableOpacity 
@@ -94,8 +88,6 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
             </TouchableOpacity>
           </View>
         )}
-
-        {/* Hiển thị các danh mục còn lại khi mở rộng */}
         {shouldRender && categories.slice(4).map((category, index) => (
           <Animated.View 
             key={category.id} 
@@ -120,7 +112,6 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
           </Animated.View>
         ))}
       </View>
-
       {shouldRender && (
         <Animated.View style={{ opacity: expandedOpacity }}>
           <TouchableOpacity 
