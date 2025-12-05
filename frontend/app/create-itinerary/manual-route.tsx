@@ -48,7 +48,7 @@ const VIETNAM_CITIES = [
 const STEPS = [
   { id: 0, title: 'Ngày đi', icon: 'calendar' },
   { id: 1, title: 'Ngày về', icon: 'calendar-check-o' },
-  { id: 2, title: 'Vị trí hiện tại', icon: 'map-marker' },
+  { id: 2, title: 'Vị trí xuất phát', icon: 'map-marker' },
   { id: 3, title: 'Điểm đến', icon: 'flag' },
 ];
 
@@ -203,12 +203,12 @@ const ManualRouteScreen: React.FC = () => {
 
   const validateAndContinue = () => {
     if (!currentLocationText.trim()) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng nhập vị trí hiện tại');
+      Alert.alert('Thiếu thông tin', 'Vui lòng nhập vị trí xuất phát');
       animateStepChange(2);
       return;
     }
     if (!currentLocationCoords) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng xác nhận vị trí hiện tại bằng cách nhấn nút tìm kiếm');
+      Alert.alert('Thiếu thông tin', 'Vui lòng xác nhận vị trí xuất phát bằng cách nhấn nút tìm kiếm');
       animateStepChange(2);
       return;
     }
@@ -285,7 +285,7 @@ const ManualRouteScreen: React.FC = () => {
           </View>
         );
 
-      case 2: // Vị trí hiện tại
+      case 2: // Vị trí xuất phát
         return (
           <View style={styles.stepContent}>
             <View style={styles.stepIconContainer}>
@@ -296,7 +296,7 @@ const ManualRouteScreen: React.FC = () => {
                 <FontAwesome name="map-marker" size={40} color={COLORS.textWhite} />
               </LinearGradient>
             </View>
-            <Text style={styles.stepTitle}>Vị trí hiện tại</Text>
+            <Text style={styles.stepTitle}>Vị trí xuất phát</Text>
             <Text style={styles.stepDescription}>Bạn sẽ xuất phát từ đâu?</Text>
             
             <View style={styles.locationInputContainer}>
