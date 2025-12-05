@@ -36,6 +36,7 @@ interface ItineraryDetailScreenProps {
   itineraryId: string;
   onClose: () => void;
   onConfirmSuccess?: () => void;
+  onSendMessage?: (message: string) => void;
 }
 
 export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
@@ -43,13 +44,54 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
   itineraryId,
   onClose,
   onConfirmSuccess,
+  onSendMessage,
 }) => {
   const { token, signOut } = useAuth();
   const [isConfirming, setIsConfirming] = useState(false);
+  const [itineraryStatus, setItineraryStatus] = useState<'DRAFT' | 'CONFIRMED' | null>(null);
   const API_BASE_URL = 'http://192.168.2.92:3000/api/v1';
 
+  // Debug: Log when component mounts or props change
+  React.useEffect(() => {
+    console.debug('[ItineraryDetailScreen] Mounted/Updated:', {
+      hasItinerary: !!itinerary,
+      itineraryId,
+      itineraryLength: itinerary?.length,
+      hasToken: !!token,
+    });
+
+    // Fetch itinerary status from API
+    const fetchItineraryStatus = async () => {
+      if (!itineraryId || !token) return;
+      try {
+        const response = await fetch(`${API_BASE_URL}/ai/itineraries/${itineraryId}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          console.debug('[ItineraryDetailScreen] Fetched status:', data?.status);
+          setItineraryStatus(data?.status || 'DRAFT');
+        }
+      } catch (error) {
+        console.error('[ItineraryDetailScreen] Error fetching status:', error);
+      }
+    };
+
+    fetchItineraryStatus();
+  }, [itinerary, itineraryId, token, API_BASE_URL]);
+
   const confirmItinerary = async () => {
-    if (!itineraryId || !token) {
+    console.debug('[Confirm Itinerary] Button pressed. itineraryId:', itineraryId, ', status:', itineraryStatus);
+    
+    if (itineraryStatus === 'CONFIRMED') {
+      Alert.alert('Thông báo', 'Lộ trình này đã được xác nhận rồi!');
+      return;
+    }
+
+    if (!itineraryId) {
       Alert.alert('Lỗi', 'Không có lộ trình để xác nhận');
       return;
     }
@@ -64,41 +106,17 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
           onPress: async () => {
             setIsConfirming(true);
             try {
-              console.debug('[Confirm Itinerary] Starting with ID:', itineraryId);
-              const response = await fetch(`${API_BASE_URL}/ai/itineraries/${itineraryId}/confirm`, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json',
-                },
-              });
-
-              if (response.status === 401) {
-                signOut();
-                return;
-              }
-
-              if (response.ok) {
-                const data = await response.json();
-                console.debug('[Confirm Itinerary] Success:', data);
-                Alert.alert(
-                  'Thành công',
-                  'Lộ trình đã được xác nhận!',
-                  [
-                    {
-                      text: 'OK',
-                      onPress: () => {
-                        onConfirmSuccess?.();
-                        onClose();
-                      },
-                    },
-                  ]
-                );
+              console.debug('[Confirm Itinerary] Sending confirm message to chatbot');
+              // Gửi tin nhắn "xác nhận lộ trình" tới chatbot
+              if (onSendMessage) {
+                onSendMessage('xác nhận lộ trình');
+                console.debug('[Confirm Itinerary] Message sent, closing detail screen');
+                // Đóng detail screen và để chatbot xử lý
+                setTimeout(() => {
+                  onClose();
+                }, 500);
               } else {
-                const errData = await response.json().catch(() => ({}));
-                const errMsg = errData?.message || `Lỗi: ${response.status}`;
-                console.error('[Confirm Itinerary] Error:', errMsg);
-                Alert.alert('Lỗi', String(errMsg));
+                Alert.alert('Lỗi', 'Không thể gửi message. Vui lòng thử lại.');
               }
             } catch (error: any) {
               console.error('[Confirm Itinerary] Exception:', error);
@@ -259,16 +277,28 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
         {/* Confirm Button */}
         <BlurView intensity={80} tint="light" style={styles.bottomContainer}>
           <TouchableOpacity
-            style={[styles.confirmButton, isConfirming && styles.confirmButtonDisabled]}
+            style={[
+              styles.confirmButton,
+              (isConfirming || itineraryStatus === 'CONFIRMED') && styles.confirmButtonDisabled,
+            ]}
             onPress={confirmItinerary}
-            disabled={isConfirming}
+            disabled={isConfirming || itineraryStatus === 'CONFIRMED'}
           >
             <LinearGradient
-              colors={isConfirming ? [COLORS.disabled, COLORS.disabled] : [COLORS.primary, COLORS.gradientSecondary]}
+              colors={
+                isConfirming || itineraryStatus === 'CONFIRMED'
+                  ? [COLORS.disabled, COLORS.disabled]
+                  : [COLORS.primary, COLORS.gradientSecondary]
+              }
               style={styles.confirmButtonGradient}
             >
               {isConfirming ? (
                 <ActivityIndicator size="small" color={COLORS.textWhite} />
+              ) : itineraryStatus === 'CONFIRMED' ? (
+                <>
+                  <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.textWhite} />
+                  <Text style={styles.confirmButtonText}>Đã xác nhận</Text>
+                </>
               ) : (
                 <>
                   <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.textWhite} />

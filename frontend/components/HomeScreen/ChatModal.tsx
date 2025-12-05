@@ -354,17 +354,27 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
           // Track itinerary from response
           if (dataOk.itineraryId) {
+            console.debug('[Chat Response] Setting itineraryId from dataOk.itineraryId:', dataOk.itineraryId);
             setItineraryId(dataOk.itineraryId);
           } else if (dataOk.metadata?.itinerary_id) {
             // Fallback: get itinerary_id from metadata
+            console.debug('[Chat Response] Setting itineraryId from metadata:', dataOk.metadata.itinerary_id);
             setItineraryId(dataOk.metadata.itinerary_id);
+          } else if (dataOk.itinerary_id) {
+            // Fallback: get itinerary_id from top level (snake_case)
+            console.debug('[Chat Response] Setting itineraryId from dataOk.itinerary_id:', dataOk.itinerary_id);
+            setItineraryId(dataOk.itinerary_id);
           }
           if (dataOk.itinerary && Array.isArray(dataOk.itinerary)) {
+            console.debug('[Chat Response] Setting itinerary with', dataOk.itinerary.length, 'items');
             setItinerary(dataOk.itinerary);
           }
           if (dataOk.stage) {
             console.debug('[Chat Response] Stage:', dataOk.stage, '. ItineraryId:', dataOk.itineraryId || dataOk.metadata?.itinerary_id);
           }
+
+          console.debug('[Chat Response] Full response object keys:', Object.keys(dataOk));
+          console.debug('[Chat Response] Final itineraryId state:', itineraryId);
 
           const assistantMessage: Message = {
             id: (Date.now() + 1).toString(),
@@ -552,6 +562,11 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             // Optional: handle post-confirmation logic
             setShowItineraryDetail(false);
           }}
+          onSendMessage={(message) => {
+            console.debug('[ItineraryDetailScreen] Sending message:', message);
+            sendMessage(message);
+            setShowItineraryDetail(false);
+          }}
         />
       )}
 
@@ -723,7 +738,14 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             {itinerary && itinerary.length > 0 && (
               <TouchableOpacity
                 style={styles.itineraryQuickButton}
-                onPress={() => setShowItineraryDetail(true)}
+                onPress={() => {
+                  console.debug('[ChatModal] Itinerary button pressed:', {
+                    hasItinerary: !!itinerary,
+                    itineraryLength: itinerary?.length,
+                    itineraryId,
+                  });
+                  setShowItineraryDetail(true);
+                }}
               >
                 <LinearGradient
                   colors={[COLORS.primary + '25', COLORS.gradientSecondary + '15']}
