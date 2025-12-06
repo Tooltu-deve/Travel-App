@@ -29,7 +29,7 @@ db = client[DB_NAME]
 places_collection = db["places"]
 
 # Load embedding model for similarity search
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+# embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Commented out to save RAM
 
 @tool
 def search_places(query: str, location_filter: Optional[str] = None, category_filter: Optional[str] = None, limit: int = 10) -> List[Dict]:
@@ -64,22 +64,22 @@ def search_places(query: str, location_filter: Optional[str] = None, category_fi
         if not places:
             return []
             
-        # If query is provided, use semantic search
+        # If query is provided, use keyword-based search (semantic search disabled to save RAM)
         if query.strip():
-            # Create embeddings for search
-            query_embedding = embedding_model.encode(query)
+            # Use keyword matching instead of embeddings
+            query_lower = query.lower()
+            query_keywords = set(query_lower.split())
             
-            # Calculate similarity for each place
+            # Calculate similarity for each place based on keyword matching
             scored_places = []
             for place in places:
                 # Create text representation of place
-                place_text = f"{place.get('name', '')} {place.get('description', '')} {place.get('type', '')}"
-                place_embedding = embedding_model.encode(place_text)
+                place_text = f"{place.get('name', '')} {place.get('description', '')} {place.get('type', '')}".lower()
+                place_keywords = set(place_text.split())
                 
-                # Calculate cosine similarity
-                similarity = np.dot(query_embedding, place_embedding) / (
-                    np.linalg.norm(query_embedding) * np.linalg.norm(place_embedding)
-                )
+                # Calculate keyword overlap similarity
+                common_keywords = query_keywords & place_keywords
+                similarity = len(common_keywords) / len(query_keywords) if query_keywords else 0
                 
                 place['similarity_score'] = float(similarity)
                 scored_places.append(place)
@@ -258,14 +258,23 @@ def optimize_route_with_ecs(
             # Format opening hours
             opening_hours = place.get('openingHours') or place.get('regularOpeningHours') or {}
             
-            poi = {
+            # Keep all original fields from place
+            poi = place.copy()
+            
+            # Convert any datetime objects to ISO strings (for JSON serialization)
+            for key, value in poi.items():
+                if hasattr(value, 'isoformat'):
+                    poi[key] = value.isoformat()
+            
+            # Update/override specific fields for AI Optimizer
+            poi.update({
                 'google_place_id': place.get('googlePlaceId') or str(place.get('_id')),
                 'name': place.get('name', 'Unknown'),
                 'emotional_tags': emotional_tags,
                 'location': {'lat': lat, 'lng': lng},
                 'opening_hours': opening_hours,
                 'visit_duration_minutes': place.get('visit_duration_minutes', 90)
-            }
+            })
             poi_list.append(poi)
         
         if not poi_list:
@@ -273,12 +282,17 @@ def optimize_route_with_ecs(
             return {'optimized_route': []}
         
         # Prepare request payload
+        # Convert datetime to ISO string if it's not already a string
+        start_datetime_str = start_datetime
+        if hasattr(start_datetime, 'isoformat'):
+            start_datetime_str = start_datetime.isoformat()
+        
         payload = {
             'poi_list': poi_list,
             'user_mood': user_mood,
             'duration_days': duration_days,
             'current_location': current_location,
-            'start_datetime': start_datetime,
+            'start_datetime': start_datetime_str,
             'ecs_score_threshold': ecs_score_threshold
         }
         

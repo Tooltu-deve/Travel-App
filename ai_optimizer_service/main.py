@@ -369,9 +369,23 @@ async def optimize_route_endpoint(request: OptimizerRequest):
         return list({t for t in result if t})
 
     def is_restaurant_poi(poi: Dict[str, Any]) -> bool:
+        """
+        Kiểm tra POI có phải là nhà hàng không.
+        CHÚ Ý: Cafe/Coffee shop thường là điểm du lịch văn hóa, KHÔNG nên loại!
+        Chỉ loại POI có type CHÍNH là restaurant hoặc food establishment.
+        """
         types = get_poi_types(poi)
-        restaurant_keywords = {'restaurant', 'food', 'dining', 'cafe', 'coffee', 'bakery'}
-        return any(keyword in types for keyword in restaurant_keywords)
+        
+        # CHỈ loại nếu POI có các type này và KHÔNG có type du lịch/văn hóa
+        strict_restaurant_keywords = {'restaurant', 'food', 'dining', 'meal_takeaway', 'meal_delivery'}
+        tourist_keywords = {'tourist_attraction', 'point_of_interest', 'cultural', 'museum', 'park'}
+        
+        # Nếu có type du lịch/văn hóa → KHÔNG loại (dù có cafe/coffee)
+        if any(keyword in types for keyword in tourist_keywords):
+            return False
+        
+        # Chỉ loại nếu có strict restaurant keywords
+        return any(keyword in types for keyword in strict_restaurant_keywords)
 
     def within_start_radius(poi: Dict[str, Any], max_distance_km: float) -> bool:
         location = poi.get('location', {}) or {}
@@ -414,11 +428,11 @@ async def optimize_route_endpoint(request: OptimizerRequest):
         scored_pois.append(poi_with_score)
     print(f"  → Đã tính ECS cho {len(scored_pois)} POI")
 
-    # BƯỚC 3: Lọc POI có ecs_score > threshold
-    print(f"Bước 3: Lọc POI có ecs_score > {request.ecs_score_threshold}...")
+    # BƯỚC 3: Lọc POI có ecs_score >= threshold (đổi từ > thành >= để bao gồm threshold=0.0)
+    print(f"Bước 3: Lọc POI có ecs_score >= {request.ecs_score_threshold}...")
     high_score_pois: List[Dict[str, Any]] = []
     for poi in scored_pois:
-        if poi.get('ecs_score', 0) > request.ecs_score_threshold:
+        if poi.get('ecs_score', 0) >= request.ecs_score_threshold:
             high_score_pois.append(poi)
     print(f"  → Còn lại {len(high_score_pois)} POI sau khi lọc theo ECS threshold")
 
@@ -431,118 +445,40 @@ async def optimize_route_endpoint(request: OptimizerRequest):
     candidates = sorted(high_score_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
     print(f"Bước 4: Sắp xếp {len(candidates)} POI theo ECS score...")
 
-    # BƯỚC 5: Chọn toàn bộ POI và gom nhóm bằng K-means
-    print(f"Bước 5: Gom nhóm tất cả {len(candidates)} POI bằng K-means sau khi áp dụng ECS threshold...")
-    pois_per_day = 3
-    total_pois_needed = request.duration_days * pois_per_day
-    radius_limit_km = 10.0
-
-    # Lọc POI theo bán kính 10km từ vị trí bắt đầu
-    pois_within_radius: List[Dict[str, Any]] = []
-    for poi in candidates:
-        if within_start_radius(poi, radius_limit_km):
-            pois_within_radius.append(poi)
-    print(f"  → {len(pois_within_radius)} POI nằm trong bán kính {radius_limit_km}km từ vị trí bắt đầu.")
-
-    if not pois_within_radius:
-        print("❌ Không có POI nào trong bán kính yêu cầu. Không thể tạo lộ trình.")
-        return {"optimized_route": []}
-
-    selected_pois = pois_within_radius
-
-    poi_coordinates: List[List[float]] = []
-    poi_indices: List[int] = []
-    for idx, poi in enumerate(selected_pois):
-        location = poi.get('location', {})
-        lat = location.get('lat')
-        lng = location.get('lng')
-        if lat is not None and lng is not None:
-            poi_coordinates.append([lat, lng])
-            poi_indices.append(idx)
-
-    if not poi_coordinates:
-        print("❌ Không có POI nào có tọa độ hợp lệ sau khi lọc bán kính.")
-        return {"optimized_route": []}
-
-    num_clusters = min(max(request.duration_days, 1), len(poi_coordinates))
-    print(f"  → Thực hiện K-means với {num_clusters} cluster.")
-    kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
-    cluster_labels = kmeans.fit_predict(np.array(poi_coordinates))
-
-    clusters: Dict[int, List[Dict[str, Any]]] = {}
-    for cluster_id, poi_idx in zip(cluster_labels, poi_indices):
-        clusters.setdefault(cluster_id, []).append(selected_pois[poi_idx])
-
-    sorted_clusters = sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)
-
-    cluster_sequences: List[Tuple[int, List[Dict[str, Any]]]] = []
-    for cluster_id, cluster_pois in sorted_clusters:
-        non_restaurant_pois = [p for p in cluster_pois if not is_restaurant_poi(p)]
-        if not non_restaurant_pois:
-            print(f"  ⚠️  Cluster {cluster_id} chỉ toàn nhà hàng. Bỏ qua.")
-            continue
-        sorted_list = sorted(non_restaurant_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
-        cluster_sequences.append((cluster_id, sorted_list))
-        print(f"  → Cluster {cluster_id} có {len(sorted_list)} POI (loại nhà hàng).")
-
-    global_pool = sorted(
-        [p for p in selected_pois if not is_restaurant_poi(p)],
-        key=lambda p: p.get('ecs_score', 0),
-        reverse=True,
-    )
-    global_pointer = 0
-    used_poi_ids: set = set()
-
-    def pick_from_global() -> Optional[Dict[str, Any]]:
-        nonlocal global_pointer
-        while global_pointer < len(global_pool):
-            poi = global_pool[global_pointer]
-            global_pointer += 1
-            pid = get_poi_id(poi)
-            if pid and pid not in used_poi_ids:
-                return poi
-        return None
-
-    cluster_pointers: Dict[int, int] = {cluster_id: 0 for cluster_id, _ in cluster_sequences}
-    daily_poi_groups: List[List[Dict[str, Any]]] = []
-    cluster_count = len(cluster_sequences)
-
-    for day in range(request.duration_days):
-        day_pois: List[Dict[str, Any]] = []
-        if cluster_count > 0:
-            attempts = 0
-            start_idx = day % cluster_count
-            while len(day_pois) < pois_per_day and attempts < cluster_count * pois_per_day:
-                cluster_id, cluster_list = cluster_sequences[(start_idx + attempts) % cluster_count]
-                ptr = cluster_pointers[cluster_id]
-                while ptr < len(cluster_list):
-                    poi = cluster_list[ptr]
-                    ptr += 1
-                    pid = get_poi_id(poi)
-                    if pid and pid not in used_poi_ids:
-                        day_pois.append(poi)
-                        used_poi_ids.add(pid)
-                        break
-                cluster_pointers[cluster_id] = ptr
-                if len(day_pois) >= pois_per_day:
-                    break
-                attempts += 1
-
-        while len(day_pois) < pois_per_day:
-            fallback_poi = pick_from_global()
-            if not fallback_poi:
-                break
-            pid = get_poi_id(fallback_poi)
-            if pid and pid not in used_poi_ids:
-                day_pois.append(fallback_poi)
-                used_poi_ids.add(pid)
-
-        if day_pois:
-            daily_poi_groups.append(day_pois)
-            print(f"  → Ngày {day + 1}: {len(day_pois)} POI được chọn.")
+    # BƯỚC 5: Phân bổ POI đều cho các ngày (đơn giản và hiệu quả)
+    print(f"Bước 5: Phân bổ {len(candidates)} POI đều cho {request.duration_days} ngày...")
+    
+    # Lọc ra POI không phải nhà hàng
+    non_restaurant_pois = []
+    restaurants_removed = []
+    for p in candidates:
+        if is_restaurant_poi(p):
+            restaurants_removed.append(p.get('name', 'Unknown'))
         else:
-            print(f"  ⚠️  Ngày {day + 1}: Không có POI nào được phân bổ.")
-            daily_poi_groups.append([])
+            non_restaurant_pois.append(p)
+    
+    print(f"  → {len(non_restaurant_pois)} POI sau khi loại nhà hàng (loại {len(restaurants_removed)} POI)")
+    if restaurants_removed:
+        print(f"  → Nhà hàng đã loại: {', '.join(restaurants_removed[:3])}...")
+    
+    if not non_restaurant_pois:
+        print(f"❌ Không có POI nào sau khi loại nhà hàng. Tất cả {len(candidates)} POI đều là nhà hàng.")
+        # Debug: in ra types của một vài POI
+        for poi in candidates[:3]:
+            types = get_poi_types(poi)
+            print(f"  → POI '{poi.get('name')}' có types: {types}")
+        return {"optimized_route": []}
+    
+    # Phân bổ đều POI cho các ngày (round-robin)
+    daily_poi_groups: List[List[Dict[str, Any]]] = [[] for _ in range(request.duration_days)]
+    
+    for idx, poi in enumerate(non_restaurant_pois):
+        day_idx = idx % request.duration_days
+        daily_poi_groups[day_idx].append(poi)
+    
+    # In ra thông tin phân bổ
+    for day_idx, day_pois in enumerate(daily_poi_groups, start=1):
+        print(f"  → Ngày {day_idx}: {len(day_pois)} POI được phân bổ")
 
     # Hàm helper để tính ETA giữa 2 POI
     def eta_between(a_id: str, b_id: str, fallback_list: Optional[List[Dict[str, Any]]] = None) -> float:

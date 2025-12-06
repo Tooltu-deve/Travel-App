@@ -55,7 +55,7 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
   const [isConfirming, setIsConfirming] = useState(false);
   // Sử dụng state từ parent nếu có, nếu không thì sử dụng local state
   const itineraryStatus = parentItineraryStatus ?? null;
-  const setItineraryStatus = setParentItineraryStatus || (() => {});
+  const setItineraryStatus = setParentItineraryStatus || (() => { });
 
   // Debug: Log when component mounts or props change
   React.useEffect(() => {
@@ -96,7 +96,7 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
 
   const confirmItinerary = async () => {
     console.debug('[Confirm Itinerary] Button pressed. itineraryId:', itineraryId, ', status:', itineraryStatus);
-    
+
     if (itineraryStatus === 'CONFIRMED') {
       Alert.alert('Thông báo', 'Lộ trình này đã được xác nhận rồi!');
       return;
@@ -111,25 +111,56 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
       'Xác nhận lộ trình',
       'Sau khi xác nhận, lộ trình không thể chỉnh sửa thêm. Bạn có chắc chắn?',
       [
-        { text: 'Hủy', onPress: () => {}, style: 'cancel' },
+        { text: 'Hủy', onPress: () => { }, style: 'cancel' },
         {
           text: 'Xác nhận',
           onPress: async () => {
             setIsConfirming(true);
             try {
-              console.debug('[Confirm Itinerary] Sending confirm message to chatbot');
-              // Gửi tin nhắn "xác nhận lộ trình" tới chatbot
-              if (onSendMessage) {
-                onSendMessage('xác nhận lộ trình');
-                // Cập nhật status thành CONFIRMED ngay lập tức để disable nút
+              console.debug('[Confirm Itinerary] Starting with ID:', itineraryId);
+
+              // Add timeout using AbortController
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds
+
+              const response = await fetch(`${API_BASE_URL}/api/v1/ai/itineraries/${itineraryId}/confirm`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                signal: controller.signal,
+              });
+
+              clearTimeout(timeoutId);
+
+              if (response.status === 401) {
+                signOut();
+                return;
+              }
+
+              if (response.ok) {
+                const data = await response.json();
+                console.debug('[Confirm Itinerary] Success:', data);
                 setItineraryStatus('CONFIRMED');
-                console.debug('[Confirm Itinerary] Message sent, closing detail screen');
-                // Đóng detail screen và để chatbot xử lý
-                setTimeout(() => {
-                  onClose();
-                }, 500);
+                Alert.alert(
+                  'Thành công',
+                  'Lộ trình đã được xác nhận!',
+                  [
+                    {
+                      text: 'OK',
+                      onPress: () => {
+                        onConfirmSuccess?.();
+                        onClose();
+                      },
+                    },
+                  ]
+                );
               } else {
-                Alert.alert('Lỗi', 'Không thể gửi message. Vui lòng thử lại.');
+                const errData = await response.json().catch(() => ({}));
+                const errMsg = errData?.message || `Lỗi: ${response.status}`;
+                console.error('[Confirm Itinerary] Error:', errMsg);
+                Alert.alert('Lỗi', String(errMsg));
               }
             } catch (error: any) {
               console.error('[Confirm Itinerary] Exception:', error);
