@@ -2,8 +2,7 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { CustomItineraryController } from './custom-itinerary.controller';
-import { WeatherService } from './services/weather.service';
-import { DirectionsService } from './services/directions.service';
+import { CustomItineraryService } from './custom-itinerary.service';
 
 /**
  * Module quản lý custom itinerary (lộ trình tùy chỉnh)
@@ -12,7 +11,7 @@ import { DirectionsService } from './services/directions.service';
 @Module({
   imports: [HttpModule, ConfigModule],
   controllers: [CustomItineraryController],
-  providers: [WeatherService, DirectionsService],
-  exports: [WeatherService, DirectionsService],
+  providers: [CustomItineraryService],
+  exports: [CustomItineraryService],
 })
 export class CustomItineraryModule {}

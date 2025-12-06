@@ -25,7 +25,7 @@ export class PlaceDto {
   @ValidateNested()
   @Type(() => LocationDto)
   location: LocationDto;
-
+  
   travelMode?: string; // driving, walking, bicycling, transit
 }
 
@@ -55,4 +55,6 @@ export class CalculateRoutesDto {
   @ValidateNested({ each: true })
   @Type(() => DayDto)
   days: DayDto[];
+
+  optimize?: boolean; // Tối ưu hóa lộ trình (waypoints)
 }

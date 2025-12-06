@@ -1,6 +1,5 @@
 import { Controller, Post, Body } from '@nestjs/common';
-import { WeatherService } from './services/weather.service';
-import { DirectionsService } from './services/directions.service';
+import { CustomItineraryService } from './custom-itinerary.service';
 import { CheckWeatherDto } from './dto/check-weather.dto';
 import { CalculateRoutesDto } from './dto/calculate-routes.dto';
 
@@ -12,8 +11,7 @@ import { CalculateRoutesDto } from './dto/calculate-routes.dto';
 @Controller('custom-itinerary')
 export class CustomItineraryController {
   constructor(
-    private readonly weatherService: WeatherService,
-    private readonly directionsService: DirectionsService,
+    private readonly customItineraryService: CustomItineraryService,
   ) {}
 
   /**
@@ -22,7 +20,7 @@ export class CustomItineraryController {
    */
   @Post('weather-check')
   async checkWeather(@Body() dto: CheckWeatherDto) {
-    return this.weatherService.checkWeather(
+    return this.customItineraryService.checkWeather(
       dto.departureDate,
       dto.returnDate,
       dto.destination,
@@ -35,6 +33,6 @@ export class CustomItineraryController {
    */
   @Post('calculate-routes')
   async calculateRoutes(@Body() dto: CalculateRoutesDto) {
-    return this.directionsService.calculateRoutes(dto);
+    return this.customItineraryService.calculateRoutes(dto);
   }
 }
