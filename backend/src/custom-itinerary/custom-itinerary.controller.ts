@@ -1,4 +1,5 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CustomItineraryService } from './custom-itinerary.service';
 import { CheckWeatherDto } from './dto/check-weather.dto';
 import { CalculateRoutesDto } from './dto/calculate-routes.dto';
@@ -8,6 +9,7 @@ import { CalculateRoutesDto } from './dto/calculate-routes.dto';
  * Tuân thủ MVC pattern, RESTful API conventions
  * Dùng snake_case trực tiếp (nhất quán với itinerary, place, user modules)
  */
+@UseGuards(JwtAuthGuard)
 @Controller('custom-itinerary')
 export class CustomItineraryController {
   constructor(
