@@ -44,4 +44,5 @@ export class DayWithRoutesDto {
  */
 export class CalculateRoutesResponseDto {
   days: DayWithRoutesDto[];
+  optimize?: boolean;
 }

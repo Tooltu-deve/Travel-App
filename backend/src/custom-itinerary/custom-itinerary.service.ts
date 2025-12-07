@@ -25,7 +25,7 @@ export class CustomItineraryService {
   }
 
   // --- Directions Logic ---
-  private async getDirections(origin: string, destination: string, mode: string = 'driving', optimize?: boolean): Promise<GoogleDirectionsResponse> {
+  private async getDirections(origin: string, destination: string, mode: string, optimize?: boolean): Promise<GoogleDirectionsResponse> {
     try {
       const url = 'https://maps.googleapis.com/maps/api/directions/json';
       const params: any = { origin, destination, mode, key: this.googleDirectionsApiKey };
@@ -50,10 +50,13 @@ export class CustomItineraryService {
       let placeWithRoute: PlaceWithRouteDto;
       if (i < places.length - 1) {
         const nextPlace = places[i + 1];
+        if (!currentPlace.travelMode) {
+          throw new BadRequestException('travelMode is required for each place and must be provided by the frontend');
+        }
         const directionsData = await this.getDirections(
           `${currentPlace.location.lat},${currentPlace.location.lng}`,
           `${nextPlace.location.lat},${nextPlace.location.lng}`,
-          currentPlace.travelMode || 'driving',
+          currentPlace.travelMode,
           optimize,
         );
         const route = directionsData.routes[0];
@@ -62,7 +65,7 @@ export class CustomItineraryService {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           location: currentPlace.location,
-          travelMode: currentPlace.travelMode || 'driving',
+          travelMode: currentPlace.travelMode as string,
           encoded_polyline: route.overview_polyline.points,
           travel_duration_minutes: Math.round(leg.duration.value / 60),
         };
@@ -71,7 +74,7 @@ export class CustomItineraryService {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           location: currentPlace.location,
-          travelMode: currentPlace.travelMode || 'driving',
+          travelMode: currentPlace.travelMode as string,
           encoded_polyline: null,
           travel_duration_minutes: null,
         };
@@ -96,7 +99,7 @@ export class CustomItineraryService {
         processedDays.push({ dayNumber: day.dayNumber, places: processedPlaces });
       }
       this.logger.log(`Successfully calculated routes for ${days.length} days`);
-      return { days: processedDays };
+      return { days: processedDays, optimize: itineraryData.optimize };
     } catch (error) {
       this.logger.error(`Lỗi khi tính toán routes: ${error.message}`);
       throw error;

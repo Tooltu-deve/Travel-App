@@ -26,7 +26,8 @@ export class PlaceDto {
   @Type(() => LocationDto)
   location: LocationDto;
   
-  travelMode?: string; // driving, walking, bicycling, transit
+  @IsNotEmpty()
+  travelMode: string; // driving, walking, bicycling, transit
 }
 
 /**
