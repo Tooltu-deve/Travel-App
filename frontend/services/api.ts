@@ -405,6 +405,28 @@ export const getRoutesAPI = async (
 };
 
 /**
+ * getRouteByIdAPI: Lấy chi tiết đầy đủ một lộ trình
+ *
+ * @param token JWT token
+ * @param routeId ID của lộ trình
+ * @returns Chi tiết đầy đủ lộ trình
+ */
+export const getRouteByIdAPI = async (
+  token: string,
+  routeId: string,
+): Promise<{ route: TravelRoute }> => {
+  return makeRequest<{ route: TravelRoute }>(
+    `/api/v1/itineraries/${routeId}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
  * getItineraryAPI: Lấy chi tiết một itinerary cụ thể
  *
  * @param token JWT token

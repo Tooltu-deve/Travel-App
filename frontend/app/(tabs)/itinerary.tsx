@@ -124,6 +124,13 @@ const ItineraryScreen: React.FC = () => {
     }
   };
 
+  const handleViewRoute = (routeId: string) => {
+    router.push({
+      pathname: '/itinerary-details',
+      params: { routeId },
+    });
+  };
+
   const handleCreateItinerary = () => {
     router.push('/create-itinerary');
   };
@@ -386,6 +393,7 @@ const ItineraryScreen: React.FC = () => {
                   key={route.route_id}
                   style={styles.itineraryCard}
                   activeOpacity={0.9}
+                  onPress={() => handleViewRoute(route.route_id)}
                 >
                   <View style={styles.cardContent}>
                     <View style={styles.cardHeader}>
