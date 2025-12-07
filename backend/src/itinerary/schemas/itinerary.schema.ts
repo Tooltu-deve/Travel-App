@@ -20,8 +20,12 @@ export type ItineraryDocument = Document & {
   destination?: string;
   duration_days?: number;
   start_datetime?: Date | null;
+  start_location?: {
+    lat: number;
+    lng: number;
+  };
   route_data_json: any;
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   id: string;
 };
 
@@ -84,6 +88,20 @@ export class Itinerary {
     default: null,
   })
   start_datetime?: Date | null;
+
+  @Prop({
+    type: {
+      lat: { type: Number, required: true },
+      lng: { type: Number, required: true },
+    },
+    required: false,
+    default: null,
+    _id: false,
+  })
+  start_location?: {
+    lat: number;
+    lng: number;
+  };
 
   @Prop({
     type: Object,
