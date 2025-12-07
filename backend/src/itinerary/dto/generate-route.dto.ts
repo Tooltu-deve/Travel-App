@@ -18,12 +18,9 @@ export class GenerateRouteDto {
   @Min(1, { message: 'duration_days phải lớn hơn 0' })
   duration_days: number;
 
-  @IsNotEmpty({ message: 'current_location không được để trống' })
-  @IsObject({ message: 'current_location phải là object' })
-  current_location: {
-    lat: number;
-    lng: number;
-  };
+  @IsNotEmpty({ message: 'start_location không được để trống' })
+  @IsString({ message: 'start_location phải là chuỗi' })
+  start_location: string;
 
   @IsOptional()
   @IsString({ message: 'start_datetime phải là chuỗi ISO 8601' })

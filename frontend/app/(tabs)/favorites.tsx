@@ -348,7 +348,13 @@ const FavoritesScreen: React.FC = () => {
 
   return (
     <LinearGradient
-      colors={['#f8fafc', '#fff']}
+      colors={[
+        COLORS.gradientStart,
+        COLORS.gradientBlue1,
+        COLORS.gradientBlue2,
+        COLORS.gradientBlue3,
+      ]}
+      locations={[0, 0.3, 0.6, 1]}
       style={styles.container}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
