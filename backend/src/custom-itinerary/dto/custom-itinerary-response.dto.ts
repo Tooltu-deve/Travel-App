@@ -24,7 +24,6 @@ export class PlaceWithRouteDto {
     lat: number;
     lng: number;
   };
-    travelMode: string;
   
   // snake_case để nhất quán với route_id, user_id, created_at... trong các module khác
   encoded_polyline: string | null;

@@ -65,7 +65,7 @@ export class CustomItineraryService {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           location: currentPlace.location,
-          travelMode: travelMode,
+          // travelMode chỉ dùng cho logic, không trả về response
           encoded_polyline: route.overview_polyline.points,
           travel_duration_minutes: Math.round(leg.duration.value / 60),
         };
@@ -74,7 +74,7 @@ export class CustomItineraryService {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           location: currentPlace.location,
-          travelMode: travelMode,
+          // travelMode chỉ dùng cho logic, không trả về response
           encoded_polyline: null,
           travel_duration_minutes: null,
         };
