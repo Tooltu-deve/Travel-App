@@ -21,7 +21,7 @@ export type ItineraryDocument = Document & {
   duration_days?: number;
   start_datetime?: Date | null;
   route_data_json: any;
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   id: string;
 };
 
@@ -93,12 +93,12 @@ export class Itinerary {
 
   @Prop({
     type: String,
-    enum: ['DRAFT', 'CONFIRMED', 'ARCHIVED'],
+    enum: ['DRAFT', 'CONFIRMED', 'MAIN'],
     required: true,
     default: 'DRAFT',
     index: true,
   })
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
 
   @Prop({
     type: [
