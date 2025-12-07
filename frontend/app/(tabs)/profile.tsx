@@ -1,5 +1,6 @@
 // ProfileScreen - Trang cá nhân
 import { SPACING } from '@/constants';
+import { COLORS } from '../../constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { getProfileAPI } from '@/services/api';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -16,6 +17,7 @@ import {
   View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const AVATAR_SIZE = 72;
 const APP_VERSION = 'v1.0.2 (Build 2024)';
@@ -69,7 +71,17 @@ const ProfileScreen: React.FC = () => {
   }, [signOut]);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+    <LinearGradient
+      colors={[
+        COLORS.gradientStart,
+        COLORS.gradientBlue1,
+        COLORS.gradientBlue2,
+        COLORS.gradientBlue3,
+      ]}
+      locations={[0, 0.3, 0.6, 1]}
+      style={{ flex: 1 }}
+    >
+      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       {/* Header */}
       <View style={[styles.headerWrap, { paddingTop: insets.top || 16 }]}>
         <View style={styles.headerRow}>
@@ -156,6 +168,7 @@ const ProfileScreen: React.FC = () => {
         </View>
       )}
     </ScrollView>
+    </LinearGradient>
   );
 };
 

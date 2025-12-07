@@ -33,20 +33,32 @@ export class AiService {
             // Prepare context - include itinerary_id from latest DRAFT itinerary if not provided
             let requestContext = chatRequest.context || {};
 
-            // If context doesn't have itinerary_id, try to get latest DRAFT itinerary
+            // If context doesn't have itinerary_id, try to get latest itinerary (DRAFT or CONFIRMED)
             if (!requestContext.itinerary_id) {
                 try {
-                    const latestDraftItinerary = await this.aiItineraryModel
-                        .findOne({ userId: chatRequest.userId, status: 'DRAFT' })
+                    const latestItinerary = await this.aiItineraryModel
+                        .findOne({ userId: chatRequest.userId })
                         .sort({ updatedAt: -1 })
                         .exec();
 
-                    if (latestDraftItinerary) {
-                        requestContext.itinerary_id = (latestDraftItinerary._id as any).toString();
-                        this.logger.log(`Auto-attached latest DRAFT itinerary: ${requestContext.itinerary_id}`);
+                    if (latestItinerary) {
+                        requestContext.itinerary_id = (latestItinerary._id as any).toString();
+                        requestContext.itinerary_status = latestItinerary.status;
+                        this.logger.log(`Auto-attached latest itinerary: ${requestContext.itinerary_id} (status: ${latestItinerary.status})`);
                     }
                 } catch (err) {
-                    this.logger.warn(`Failed to fetch latest DRAFT itinerary: ${err.message}`);
+                    this.logger.warn(`Failed to fetch latest itinerary: ${err.message}`);
+                }
+            } else {
+                // Context already has itinerary_id, fetch its status
+                try {
+                    const existingItinerary = await this.aiItineraryModel.findById(requestContext.itinerary_id).exec();
+                    if (existingItinerary) {
+                        requestContext.itinerary_status = existingItinerary.status;
+                        this.logger.log(`Attached itinerary status: ${existingItinerary.status} for itinerary ${requestContext.itinerary_id}`);
+                    }
+                } catch (err) {
+                    this.logger.warn(`Failed to fetch itinerary status: ${err.message}`);
                 }
             } const response = await firstValueFrom(
                 this.httpService.post(`${this.AI_AGENT_URL}/chat`, {

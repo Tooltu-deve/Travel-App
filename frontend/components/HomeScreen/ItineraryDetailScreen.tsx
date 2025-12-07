@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { COLORS } from '../../constants';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../services/api';
 
 interface ItineraryItem {
   day: number;
@@ -34,22 +35,74 @@ interface ItineraryItem {
 interface ItineraryDetailScreenProps {
   itinerary: ItineraryItem[];
   itineraryId: string;
+  itineraryStatus?: 'DRAFT' | 'CONFIRMED' | null;
+  setItineraryStatus?: (status: 'DRAFT' | 'CONFIRMED') => void;
   onClose: () => void;
   onConfirmSuccess?: () => void;
+  onSendMessage?: (message: string) => void;
 }
 
 export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
   itinerary,
   itineraryId,
+  itineraryStatus: parentItineraryStatus,
+  setItineraryStatus: setParentItineraryStatus,
   onClose,
   onConfirmSuccess,
+  onSendMessage,
 }) => {
   const { token, signOut } = useAuth();
   const [isConfirming, setIsConfirming] = useState(false);
-  const API_BASE_URL = 'http://192.168.2.92:3000/api/v1';
+  // Sử dụng state từ parent nếu có, nếu không thì sử dụng local state
+  const itineraryStatus = parentItineraryStatus ?? null;
+  const setItineraryStatus = setParentItineraryStatus || (() => { });
+
+  // Debug: Log when component mounts or props change
+  React.useEffect(() => {
+    console.debug('[ItineraryDetailScreen] Mounted/Updated:', {
+      hasItinerary: !!itinerary,
+      itineraryId,
+      itineraryLength: itinerary?.length,
+      hasToken: !!token,
+      itineraryStatus,
+    });
+
+    // Nếu không có itineraryStatus từ parent, fetch từ API
+    if (!parentItineraryStatus) {
+      const fetchItineraryStatus = async () => {
+        if (!itineraryId || !token) return;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/v1/ai/itineraries/${itineraryId}`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+          if (response.ok) {
+            const data = await response.json();
+            console.debug('[ItineraryDetailScreen] Fetched status:', data?.status);
+            if (setParentItineraryStatus) {
+              setParentItineraryStatus(data?.status || 'DRAFT');
+            }
+          }
+        } catch (error) {
+          console.error('[ItineraryDetailScreen] Error fetching status:', error);
+        }
+      };
+
+      fetchItineraryStatus();
+    }
+  }, [itinerary, itineraryId, token, API_BASE_URL, parentItineraryStatus, setParentItineraryStatus]);
 
   const confirmItinerary = async () => {
-    if (!itineraryId || !token) {
+    console.debug('[Confirm Itinerary] Button pressed. itineraryId:', itineraryId, ', status:', itineraryStatus);
+
+    if (itineraryStatus === 'CONFIRMED') {
+      Alert.alert('Thông báo', 'Lộ trình này đã được xác nhận rồi!');
+      return;
+    }
+
+    if (!itineraryId) {
       Alert.alert('Lỗi', 'Không có lộ trình để xác nhận');
       return;
     }
@@ -58,20 +111,28 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
       'Xác nhận lộ trình',
       'Sau khi xác nhận, lộ trình không thể chỉnh sửa thêm. Bạn có chắc chắn?',
       [
-        { text: 'Hủy', onPress: () => {}, style: 'cancel' },
+        { text: 'Hủy', onPress: () => { }, style: 'cancel' },
         {
           text: 'Xác nhận',
           onPress: async () => {
             setIsConfirming(true);
             try {
               console.debug('[Confirm Itinerary] Starting with ID:', itineraryId);
-              const response = await fetch(`${API_BASE_URL}/ai/itineraries/${itineraryId}/confirm`, {
+
+              // Add timeout using AbortController
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds
+
+              const response = await fetch(`${API_BASE_URL}/api/v1/ai/itineraries/${itineraryId}/confirm`, {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${token}`,
                   'Content-Type': 'application/json',
                 },
+                signal: controller.signal,
               });
+
+              clearTimeout(timeoutId);
 
               if (response.status === 401) {
                 signOut();
@@ -81,6 +142,7 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
               if (response.ok) {
                 const data = await response.json();
                 console.debug('[Confirm Itinerary] Success:', data);
+                setItineraryStatus('CONFIRMED');
                 Alert.alert(
                   'Thành công',
                   'Lộ trình đã được xác nhận!',
@@ -259,16 +321,28 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
         {/* Confirm Button */}
         <BlurView intensity={80} tint="light" style={styles.bottomContainer}>
           <TouchableOpacity
-            style={[styles.confirmButton, isConfirming && styles.confirmButtonDisabled]}
+            style={[
+              styles.confirmButton,
+              (isConfirming || itineraryStatus === 'CONFIRMED') && styles.confirmButtonDisabled,
+            ]}
             onPress={confirmItinerary}
-            disabled={isConfirming}
+            disabled={isConfirming || itineraryStatus === 'CONFIRMED'}
           >
             <LinearGradient
-              colors={isConfirming ? [COLORS.disabled, COLORS.disabled] : [COLORS.primary, COLORS.gradientSecondary]}
+              colors={
+                isConfirming || itineraryStatus === 'CONFIRMED'
+                  ? [COLORS.disabled, COLORS.disabled]
+                  : [COLORS.primary, COLORS.gradientSecondary]
+              }
               style={styles.confirmButtonGradient}
             >
               {isConfirming ? (
                 <ActivityIndicator size="small" color={COLORS.textWhite} />
+              ) : itineraryStatus === 'CONFIRMED' ? (
+                <>
+                  <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.textWhite} />
+                  <Text style={styles.confirmButtonText}>Đã xác nhận</Text>
+                </>
               ) : (
                 <>
                   <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.textWhite} />

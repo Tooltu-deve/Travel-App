@@ -22,10 +22,13 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://10.0.2.2:3000';
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
 // ============================================
 // TYPES
 // ============================================
+
+// Export API_BASE_URL để các component khác có thể dùng
+export { API_BASE_URL };
 interface LoginRequest {
   email: string;
   password: string;
@@ -108,7 +111,11 @@ export interface TravelRoute {
   destination?: string;
   duration_days?: number;
   start_datetime?: string | null;
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  start_location?: {
+    lat: number;
+    lng: number;
+  };
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   route_data_json: any;
   id: string;
 }
@@ -116,6 +123,29 @@ export interface TravelRoute {
 interface GenerateRouteResponse {
   message: string;
   route: TravelRoute;
+}
+
+// Notification types
+export type NotificationType = 'favorite' | 'itinerary' | 'account' | 'system';
+export type EntityType = 'place' | 'itinerary' | 'system' | null;
+
+export interface Notification {
+  _id: string;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  message?: string;
+  entity_type?: EntityType;
+  entity_id?: string | null;
+  route_id?: string | null;
+  is_read: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface GetNotificationsParams {
+  isRead?: boolean;
+  type?: NotificationType;
 }
 
 // ============================================
@@ -149,6 +179,12 @@ const makeRequest = async <T>(
 
     if (!response.ok) {
       console.error('❌ HTTP Error:', response.status, response.statusText);
+    }
+
+    // Handle 204 No Content - no response body to parse
+    if (response.status === 204) {
+      console.log('✅ API Response: 204 No Content');
+      return undefined as T;
     }
 
     try {
@@ -302,7 +338,7 @@ export const generateRouteAPI = async (
  * 
  * @param token - JWT token
  * @param routeId - ID của lộ trình
- * @param status - Trạng thái mới: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'
+ * @param status - Trạng thái mới: 'DRAFT' | 'CONFIRMED' | 'MAIN'
  * @returns Response với thông tin lộ trình đã cập nhật
  * 
  * Endpoint: PATCH /api/v1/routes/:routeId/status
@@ -311,7 +347,7 @@ export const generateRouteAPI = async (
  * Response: { message, route }
  */
 interface UpdateRouteStatusPayload {
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   title?: string;
 }
 
@@ -358,11 +394,59 @@ export const deleteRouteAPI = async (
  */
 export const getRoutesAPI = async (
   token: string,
-  status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
 ): Promise<{ message: string; routes: TravelRoute[]; total: number }> => {
   const query = status ? `?status=${status}` : '';
   return makeRequest<{ message: string; routes: TravelRoute[]; total: number }>(
     `/api/v1/itineraries${query}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
+ * getRouteByIdAPI: Lấy chi tiết đầy đủ một lộ trình
+ *
+ * @param token JWT token
+ * @param routeId ID của lộ trình
+ * @returns Chi tiết đầy đủ lộ trình
+ */
+export const getRouteByIdAPI = async (
+  token: string,
+  routeId: string,
+): Promise<{ route: TravelRoute }> => {
+  return makeRequest<{ route: TravelRoute }>(
+    `/api/v1/itineraries/${routeId}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
+ * getItineraryAPI: Lấy chi tiết một itinerary cụ thể
+ *
+ * @param token JWT token
+ * @param itineraryId ID của itinerary
+ * @returns Chi tiết itinerary bao gồm status
+ *
+ * Endpoint: GET /api/v1/itineraries/:id
+ * Headers: Authorization: Bearer <token>
+ * Response: { message, status, ... }
+ */
+export const getItineraryAPI = async (
+  token: string,
+  itineraryId: string,
+): Promise<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'; [key: string]: any }> => {
+  return makeRequest<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'; [key: string]: any }>(
+    `/api/v1/itineraries/${itineraryId}`,
     {
       method: 'GET',
       headers: {
@@ -610,6 +694,33 @@ export const getPlaceByIdAPI = async (
 };
 
 /**
+ * enrichPlaceAPI: Enrich POI với thông tin chi tiết từ Google Places API
+ * Protected endpoint: POST /api/v1/places/enrich
+ * Requires: Bearer token
+ * 
+ * @param token - JWT token
+ * @param googlePlaceId - Google Place ID của địa điểm
+ * @param forceRefresh - Force refresh dữ liệu (optional, default: false)
+ * @returns Enriched POI data
+ */
+export const enrichPlaceAPI = async (
+  token: string,
+  googlePlaceId: string,
+  forceRefresh: boolean = false
+): Promise<any> => {
+  return makeRequest<any>('/api/v1/places/enrich', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      googlePlaceId,
+      forceRefresh,
+    }),
+  });
+};
+
+/**
  * getPlacesAPI: Lấy danh sách địa điểm từ server
  * Public endpoint: GET /api/v1/places
  */
@@ -617,6 +728,228 @@ export const getPlacesAPI = async (): Promise<any[]> => {
   return makeRequest<any[]>('/api/v1/places', {
     method: 'GET',
   });
+};
+
+/**
+ * getNotificationsAPI: Lấy danh sách thông báo của user
+ * 
+ * @param token JWT token
+ * @param params Filter parameters (isRead, type)
+ * @returns Array of notifications
+ * 
+ * Endpoint: GET /api/v1/notifications
+ * Headers: Authorization: Bearer <token>
+ * Query: ?isRead=true&type=favorite
+ * Response: Notification[]
+ */
+export const getNotificationsAPI = async (
+  token: string,
+  params?: GetNotificationsParams,
+): Promise<Notification[]> => {
+  const queryParams = new URLSearchParams();
+  if (params?.isRead !== undefined) {
+    queryParams.append('isRead', params.isRead.toString());
+  }
+  if (params?.type) {
+    queryParams.append('type', params.type);
+  }
+  const query = queryParams.toString() ? `?${queryParams.toString()}` : '';
+  
+  return makeRequest<Notification[]>(`/api/v1/notifications${query}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * getUnreadCountAPI: Lấy số lượng thông báo chưa đọc
+ * 
+ * @param token JWT token
+ * @returns Count of unread notifications
+ * 
+ * Endpoint: GET /api/v1/notifications/unread-count
+ * Headers: Authorization: Bearer <token>
+ * Response: { count: number }
+ */
+export const getUnreadCountAPI = async (
+  token: string,
+): Promise<{ count: number }> => {
+  return makeRequest<{ count: number }>('/api/v1/notifications/unread-count', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * markNotificationAsReadAPI: Đánh dấu một thông báo là đã đọc
+ * 
+ * @param token JWT token
+ * @param notificationId ID của thông báo
+ * 
+ * Endpoint: PATCH /api/v1/notifications/:id/read
+ * Headers: Authorization: Bearer <token>
+ * Response: 204 No Content
+ */
+export const markNotificationAsReadAPI = async (
+  token: string,
+  notificationId: string,
+): Promise<void> => {
+  return makeRequest<void>(`/api/v1/notifications/${notificationId}/read`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * markAllNotificationsAsReadAPI: Đánh dấu tất cả thông báo là đã đọc
+ * 
+ * @param token JWT token
+ * 
+ * Endpoint: PATCH /api/v1/notifications/read-all
+ * Headers: Authorization: Bearer <token>
+ * Response: 204 No Content
+ */
+export const markAllNotificationsAsReadAPI = async (
+  token: string,
+): Promise<void> => {
+  return makeRequest<void>('/api/v1/notifications/read-all', {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * deleteNotificationAPI: Xóa một thông báo
+ * 
+ * @param token JWT token
+ * @param notificationId ID của thông báo
+ * 
+ * Endpoint: DELETE /api/v1/notifications/:id
+ * Headers: Authorization: Bearer <token>
+ * Response: 204 No Content
+ */
+export const deleteNotificationAPI = async (
+  token: string,
+  notificationId: string,
+): Promise<void> => {
+  return makeRequest<void>(`/api/v1/notifications/${notificationId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * deleteAllNotificationsAPI: Xóa tất cả thông báo
+ * 
+ * @param token JWT token
+ * 
+ * Endpoint: DELETE /api/v1/notifications
+ * Headers: Authorization: Bearer <token>
+ * Response: 204 No Content
+ */
+export const deleteAllNotificationsAPI = async (
+  token: string,
+): Promise<void> => {
+  return makeRequest<void>('/api/v1/notifications', {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * chatWithAIAPI: Gửi tin nhắn tới AI Travel Agent
+ * 
+ * @param token JWT token
+ * @param message Tin nhắn gửi tới AI
+ * @param sessionId Session ID (nếu có)
+ * @param context Ngữ cảnh bổ sung (vị trí hiện tại, v.v.)
+ * 
+ * Endpoint: POST /api/v1/ai/chat
+ * Headers: Authorization: Bearer <token>
+ * Response: { response, sessionId, itineraryId, metadata, ... }
+ */
+export const chatWithAIAPI = async (
+  token: string,
+  message: string,
+  sessionId?: string | null,
+  context?: any,
+): Promise<any> => {
+  const requestBody: any = { message };
+  if (sessionId) {
+    requestBody.sessionId = sessionId;
+  }
+  if (context) {
+    requestBody.context = context;
+  }
+  
+  return makeRequest<any>('/api/v1/ai/chat', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+};
+
+/**
+ * resetConversationAPI: Reset cuộc trò chuyện với AI
+ * 
+ * @param token JWT token
+ * @param userId User ID
+ * @param sessionId Session ID (nếu có)
+ * 
+ * Endpoint: POST /api/v1/ai/reset
+ * Headers: Authorization: Bearer <token>
+ * Response: { message, ... }
+ */
+export const resetConversationAPI = async (
+  token: string,
+  userId: string,
+  sessionId?: string | null,
+): Promise<any> => {
+  const requestBody: any = { userId };
+  if (sessionId) {
+    requestBody.sessionId = sessionId;
+  }
+  
+  return makeRequest<any>('/api/v1/ai/reset', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+};
+
+/**
+ * getPlacePhotoAPI: Lấy ảnh của địa điểm từ Google Places API
+ * 
+ * @param photoName Photo name từ Google Places API (format: places/{place_id}/photos/{photo_reference})
+ * @param maxWidthPx Chiều rộng tối đa của ảnh (mặc định 1600)
+ * 
+ * Endpoint: GET /api/v1/places/photo?name=...&maxWidthPx=...
+ * Response: Image data
+ */
+export const getPlacePhotoAPI = (
+  photoName: string,
+  maxWidthPx: number = 1600,
+): string => {
+  const encodedPhotoName = encodeURIComponent(photoName);
+  return `${API_BASE_URL}/api/v1/places/photo?name=${encodedPhotoName}&maxWidthPx=${maxWidthPx}`;
 };
 
 // ============================================
@@ -636,7 +969,18 @@ export default {
   getFavoritesByMoodAPI,
   likePlaceAPI,
   getLikedPlacesAPI,
+  getNotificationsAPI,
+  getUnreadCountAPI,
+  markNotificationAsReadAPI,
+  markAllNotificationsAsReadAPI,
+  deleteNotificationAPI,
+  deleteAllNotificationsAPI,
   getProfileAPI,
   updateProfileAPI,
   changePasswordAPI,
+  getPlaceByIdAPI,
+  enrichPlaceAPI,
+  getPlacesAPI,
+  chatWithAIAPI,
+  resetConversationAPI,
 };

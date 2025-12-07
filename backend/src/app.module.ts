@@ -8,6 +8,7 @@ import { FavoritesModule } from './likeModules/likes.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ItineraryModule } from './itinerary/itinerary.module';
 import { AiModule } from './ai/ai.module';
+import { CustomItineraryModule } from './custom-itinerary/custom-itinerary.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { AiModule } from './ai/ai.module';
     AiModule,
     FavoritesModule,
     NotificationsModule,
+    CustomItineraryModule,
   ],
   controllers: [],
   providers: [],
