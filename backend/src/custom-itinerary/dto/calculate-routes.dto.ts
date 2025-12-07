@@ -26,14 +26,14 @@ export class PlaceDto {
   @Type(() => LocationDto)
   location: LocationDto;
   
-  @IsNotEmpty()
-  travelMode: string; // driving, walking, bicycling, transit
+  // travelMode đã chuyển lên DayDto
 }
 
 /**
  * DTO cho một day trong itinerary
  */
 export class DayDto {
+    // travelMode đã chuyển lên CalculateRoutesDto
   @IsNotEmpty()
   dayNumber: number;
 
@@ -52,6 +52,8 @@ export class DayDto {
  * - Nested validation cho complex objects
  */
 export class CalculateRoutesDto {
+    @IsNotEmpty()
+    travelMode: string; // driving, walking, bicycling, transit
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => DayDto)

@@ -43,20 +43,20 @@ export class CustomItineraryService {
     }
   }
 
-  private async calculateRoutesForDay(places: PlaceDto[], optimize?: boolean): Promise<PlaceWithRouteDto[]> {
+  private async calculateRoutesForDay(places: PlaceDto[], travelMode: string, optimize?: boolean): Promise<PlaceWithRouteDto[]> {
     const result: PlaceWithRouteDto[] = [];
     for (let i = 0; i < places.length; i++) {
       const currentPlace = places[i];
       let placeWithRoute: PlaceWithRouteDto;
       if (i < places.length - 1) {
         const nextPlace = places[i + 1];
-        if (!currentPlace.travelMode) {
-          throw new BadRequestException('travelMode is required for each place and must be provided by the frontend');
+        if (!travelMode) {
+          throw new BadRequestException('travelMode is required for each day and must be provided by the frontend');
         }
         const directionsData = await this.getDirections(
           `${currentPlace.location.lat},${currentPlace.location.lng}`,
           `${nextPlace.location.lat},${nextPlace.location.lng}`,
-          currentPlace.travelMode,
+          travelMode,
           optimize,
         );
         const route = directionsData.routes[0];
@@ -65,7 +65,7 @@ export class CustomItineraryService {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           location: currentPlace.location,
-          travelMode: currentPlace.travelMode as string,
+          travelMode: travelMode,
           encoded_polyline: route.overview_polyline.points,
           travel_duration_minutes: Math.round(leg.duration.value / 60),
         };
@@ -74,7 +74,7 @@ export class CustomItineraryService {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           location: currentPlace.location,
-          travelMode: currentPlace.travelMode as string,
+          travelMode: travelMode,
           encoded_polyline: null,
           travel_duration_minutes: null,
         };
@@ -91,11 +91,14 @@ export class CustomItineraryService {
         throw new BadRequestException('Invalid input: days must be an array');
       }
       const processedDays: DayWithRoutesDto[] = [];
+      if (!itineraryData.travelMode) {
+        throw new BadRequestException('travelMode is required for the whole itinerary and must be provided by the frontend');
+      }
       for (const day of days) {
         if (!day.places || !Array.isArray(day.places)) {
           throw new BadRequestException('Invalid input: each day must have places array');
         }
-        const processedPlaces = await this.calculateRoutesForDay(day.places, itineraryData.optimize);
+        const processedPlaces = await this.calculateRoutesForDay(day.places, itineraryData.travelMode, itineraryData.optimize);
         processedDays.push({ dayNumber: day.dayNumber, places: processedPlaces });
       }
       this.logger.log(`Successfully calculated routes for ${days.length} days`);
