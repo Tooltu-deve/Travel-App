@@ -301,9 +301,9 @@ def optimize_route_with_ecs(
         print(f"   → Duration: {duration_days} days")
         print(f"   → ECS threshold: {ecs_score_threshold}")
         
-        # Call AI Optimizer Service
+        # Call AI Optimizer Service (chatbot endpoint - fast round-robin)
         response = requests.post(
-            f"{AI_OPTIMIZER_URL}/optimize-route",
+            f"{AI_OPTIMIZER_URL}/optimize",
             json=payload,
             timeout=60  # 60 seconds timeout
         )
