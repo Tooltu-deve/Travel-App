@@ -1103,6 +1103,7 @@ export class ItineraryService {
   private async callAiOptimizer(
     poiList: any[],
     generateDto: GenerateRouteDto,
+    currentLocation: { lat: number; lng: number },
   ): Promise<any> {
     try {
       const response = await firstValueFrom(
@@ -1112,9 +1113,9 @@ export class ItineraryService {
             poi_list: poiList,
             user_mood: generateDto.user_mood,
             duration_days: generateDto.duration_days,
-            current_location: generateDto.current_location,
+            current_location: currentLocation,
             start_datetime: generateDto.start_datetime,
-            ecs_score_threshold: generateDto.ecs_score_threshold || 0.0,
+            ecs_score_threshold: generateDto.ecs_score_threshold || 0.15,
           },
           {
             timeout: 120000,
@@ -1143,10 +1144,47 @@ export class ItineraryService {
     }
   }
 
+  /**
+   * Geocode địa chỉ string thành tọa độ lat/lng
+   */
+  async geocodeAddress(address: string): Promise<{ lat: number; lng: number }> {
+    try {
+      const url = 'https://maps.googleapis.com/maps/api/geocode/json';
+      const params = {
+        address: address,
+        key: this.googleDirectionsApiKey,
+      };
+      const response = await firstValueFrom(
+        this.httpService.get(url, { params }),
+      );
+
+      if (response.data.status !== 'OK' || !response.data.results.length) {
+        throw new HttpException(
+          `Không tìm thấy tọa độ cho địa điểm: ${address}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      const location = response.data.results[0].geometry.location;
+      return { lat: location.lat, lng: location.lng };
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        `Lỗi khi geocode địa điểm: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   async generateAndSaveRoute(
     userId: string,
     generateDto: GenerateRouteDto,
   ): Promise<ItineraryDocument> {
+    // Geocode start_location từ string sang coordinates
+    const currentLocation = await this.geocodeAddress(generateDto.start_location);
+
     let places = await this.filterPoisByBudgetAndDestination(
       generateDto.budget,
       generateDto.destination,
@@ -1155,7 +1193,7 @@ export class ItineraryService {
     // Lọc theo thời tiết sau khi lọc budget
     const weatherFilterResult = await this.filterByWeather(
       places,
-      generateDto.current_location,
+      currentLocation,
       generateDto.start_datetime,
       generateDto.duration_days,
     );
@@ -1182,10 +1220,10 @@ export class ItineraryService {
       this.convertPlaceToOptimizerFormat(place as any),
     );
 
-    const optimizedRoute = await this.callAiOptimizer(poiList, generateDto);
+    const optimizedRoute = await this.callAiOptimizer(poiList, generateDto, currentLocation);
     const enrichedRoute = await this.enrichRouteWithDirections(
       optimizedRoute,
-      generateDto.current_location,
+      currentLocation,
     );
 
     const routeId = this.generateRouteId();
@@ -1230,6 +1268,7 @@ export class ItineraryService {
       start_datetime: metadata.start_datetime
         ? new Date(metadata.start_datetime)
         : null,
+      start_location: currentLocation,
       alerts: weatherAlerts,
     });
 
@@ -1247,6 +1286,9 @@ export class ItineraryService {
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
       : userId;
+
+    // Geocode start_location để lưu vào schema
+    const currentLocation = await this.geocodeAddress(generateDto.start_location);
 
     const metadata = {
       title: generateDto.destination
@@ -1279,6 +1321,7 @@ export class ItineraryService {
       start_datetime: metadata.start_datetime
         ? new Date(metadata.start_datetime)
         : null,
+      start_location: currentLocation,
       alerts,
     });
 
