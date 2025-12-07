@@ -1,24 +1,21 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet, Animated } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { getMoodsAPI, getFavoritesByMoodAPI } from '../../services/api';
+import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI, enrichPlaceAPI } from '../../services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { translatePlaceType } from '../../constants/placeTypes';
+import { POIDetailBottomSheet } from '@/components/place/POIDetailBottomSheet';
 
-// Small helper to render star icons for a rating (0-5) using gold color
 const renderStars = (rating?: number | null) => {
   const stars = [];
   let ratingText = '0.0';
-  // support decimal ratings (4.5 -> 4 full + 1 half)
   if (rating == null || Number.isNaN(rating)) {
-    // show 0 filled stars
     for (let i = 0; i < 5; i++) {
       stars.push(
         <FontAwesome key={`e-${i}`} name="star-o" size={14} color={COLORS.textSecondary} style={{ marginRight: 6 }} />,
@@ -49,13 +46,11 @@ const renderStars = (rating?: number | null) => {
 };
 
 const normalizePlace = (p: any) => {
-  // Build moods array from several possible backend shapes
   let moods: string[] = [];
   if (Array.isArray(p.moods) && p.moods.length) moods = p.moods;
   else if (p.mood) moods = [p.mood];
   else if (p.type) moods = [p.type];
 
-  // If still empty, try to derive top mood from emotionalTags (object or Map-like)
   if ((!moods || moods.length === 0) && p.emotionalTags) {
     try {
       const tagsObj: any = p.emotionalTags instanceof Map ? Object.fromEntries(p.emotionalTags) : p.emotionalTags;
@@ -66,24 +61,18 @@ const normalizePlace = (p: any) => {
           moods = [entries[0][0]];
         }
       }
-    } catch (e) {
-      // ignore and keep moods empty
-    }
+    } catch (e) {}
   }
 
-  // translate known backend keys to Vietnamese labels
   if (moods && moods.length) {
     moods = moods.map((m) => translatePlaceType(m));
   }
 
   const name = p.name || p.title || p.name_en || p.googlePlaceId || p.google_place_id || p.address || 'Không rõ';
-
-  // Ensure we only use string values for address (location may be GeoJSON object)
   const address = typeof p.address === 'string' && p.address
     ? p.address
     : (typeof p.location === 'string' ? p.location : '');
 
-  // coerce rating if string
   let ratingVal: number | null = null;
   if (typeof p.rating === 'number') ratingVal = p.rating;
   else if (typeof p.rating === 'string' && p.rating.trim() !== '') {
@@ -92,7 +81,7 @@ const normalizePlace = (p: any) => {
   }
 
   return {
-    id: p.placeId || p.id || p._id || p.google_place_id || p.googlePlaceId || '',
+    id: p.placeId || p.id || p._id || p.place_id || p.google_place_id || p.googlePlaceId || '',
     name,
     address,
     moods,
@@ -108,19 +97,15 @@ const FavoritesScreen: React.FC = () => {
   const moodScales = useRef<Record<string, Animated.Value>>({}).current;
   const prevSelectedRef = useRef<string | null>(null);
 
-  // ensure we have Animated.Value for each mood, initialize selected with slightly larger scale
   useEffect(() => {
     moods.forEach((m) => {
       if (!moodScales[m.key]) {
         moodScales[m.key] = new Animated.Value(m.key === selectedMood ? 1.06 : 1);
       }
     });
-    // ensure previous ref starts at selected
     prevSelectedRef.current = selectedMood;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moods]);
 
-  // animate whenever selectedMood changes
   useEffect(() => {
     const prev = prevSelectedRef.current;
     if (prev && moodScales[prev]) {
@@ -130,8 +115,8 @@ const FavoritesScreen: React.FC = () => {
       Animated.timing(moodScales[selectedMood], { toValue: 1.06, duration: 180, useNativeDriver: true }).start();
     }
     prevSelectedRef.current = selectedMood;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMood]);
+
   const { favorites: ctxFavorites, toggleLike, refreshFavorites } = useFavorites();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -139,6 +124,9 @@ const FavoritesScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLiking, setIsLiking] = useState<string | null>(null);
+  const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
+  const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
+  const [isEnriching, setIsEnriching] = useState(false);
 
   useEffect(() => {
     const fetch = async () => {
@@ -147,20 +135,25 @@ const FavoritesScreen: React.FC = () => {
       try {
         const token = await AsyncStorage.getItem('userToken');
         if (!token) {
-           setMoods([{ key: 'all', label: 'Tất cả' }]);
+          setMoods([{ key: 'all', label: 'Tất cả' }]);
           return;
         }
         const res = await getMoodsAPI(token);
         const raw = Array.isArray(res?.moods) ? res.moods : [];
-        // translate mood/type keys to Vietnamese labels for UI and keep original keys
-        let translated = raw.map((m: string) => ({ key: String(m), label: translatePlaceType(m) }));
-        // Sort alphabetically by translated label (Vietnamese collation). Keep the 'all' chip first.
+        const map = new Map<string, { key: string; label: string }>();
+        raw.forEach((m: string) => {
+          const key = String(m);
+          if (!map.has(key)) {
+            map.set(key, { key, label: translatePlaceType(m) });
+          }
+        });
+        let translated = Array.from(map.values());
         translated.sort((a, b) => a.label.localeCompare(b.label, 'vi'));
         const list = [{ key: 'all', label: 'Tất cả' }, ...translated];
         setMoods(list);
       } catch (e: any) {
         setError(e?.message || 'Không thể tải danh sách thể loại');
-          setMoods([{ key: 'all', label: 'Tất cả' }]);
+        setMoods([{ key: 'all', label: 'Tất cả' }]);
       } finally {
         setIsLoading(false);
       }
@@ -168,36 +161,82 @@ const FavoritesScreen: React.FC = () => {
     fetch();
   }, []);
 
-  // derive displayed favorites from context + selectedMood
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        if (selectedMood === 'all') {
-          const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
-          const mapped = list.map(normalizePlace).sort((a, b) => a.id.localeCompare(b.id));
-          if (!mounted) return;
-          setFavorites(mapped);
-          return;
-        }
-
-        // call backend to get favorites filtered by mood key
+        setIsLoading(true);
         const token = await AsyncStorage.getItem('userToken');
         if (!token) {
           setFavorites([]);
+          setIsLoading(false);
           return;
         }
-        const remote = await getFavoritesByMoodAPI(token, selectedMood);
-        if (!mounted) return;
-        if (Array.isArray(remote)) {
-          const mapped = remote.map((p: any) => normalizePlace(p));
-          setFavorites(mapped);
+
+        let places: any[] = [];
+        if (selectedMood === 'all') {
+          const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
+          places = list.map(normalizePlace).filter(p => p.name !== 'Không rõ');
         } else {
-          setFavorites([]);
+          const remote = await getFavoritesByMoodAPI(token, selectedMood);
+          if (Array.isArray(remote)) {
+            places = await Promise.all(remote.map(async (p: any) => {
+              let norm = normalizePlace(p);
+              const hasGoogleId = !!norm.googlePlaceId;
+              const possibleId = p.place_id || p.placeId || p._id || p.id || norm.id;
+              if (!hasGoogleId && possibleId) {
+                try {
+                  const detail = await getPlaceByIdAPI(possibleId);
+                  if (detail) {
+                    norm = normalizePlace({ ...detail, ...p });
+                  }
+                } catch (e) {}
+              }
+              return norm;
+            }));
+          }
         }
+
+        if (!mounted) return;
+
+        // Enrich từng place có googlePlaceId để lấy thông tin mới nhất
+        const enrichedPlaces = await Promise.all(
+          places.map(async (place) => {
+            if (!place.googlePlaceId) {
+              return place; // Giữ nguyên nếu không có googlePlaceId
+            }
+
+            try {
+              // Enrich để lấy thông tin mới nhất (không force refresh để tránh tốn API calls)
+              const response = await enrichPlaceAPI(token, place.googlePlaceId, false);
+              const enrichedData = response?.data || response;
+
+              if (enrichedData) {
+                // Cập nhật thông tin từ enriched data
+                return {
+                  ...place,
+                  name: enrichedData.name || place.name,
+                  address: enrichedData.address || place.address,
+                  rating: enrichedData.rating ?? place.rating,
+                  // Giữ lại các thông tin khác
+                };
+              }
+            } catch (error: any) {
+              console.warn(`[Favorites] Failed to enrich place ${place.googlePlaceId}:`, error.message);
+              // Nếu enrich thất bại, giữ nguyên thông tin cũ
+            }
+
+            return place;
+          })
+        );
+
+        if (!mounted) return;
+        setFavorites(enrichedPlaces.sort((a, b) => a.id.localeCompare(b.id)));
       } catch (e: any) {
         setError(e?.message || 'Không thể tải địa điểm yêu thích');
         setFavorites([]);
+      } finally {
+        setIsLoading(false);
       }
     })();
     return () => {
@@ -210,59 +249,111 @@ const FavoritesScreen: React.FC = () => {
     setIsLiking(id);
     try {
       await toggleLike(id);
-      // remove locally to give immediate feedback
       setFavorites((prev) => prev.filter((p) => p.id !== placeId));
-      // refresh context in background
       refreshFavorites().catch(() => {});
     } catch (e: any) {
-      setError(e?.message || 'Không thể cập nhật yêu thích');
+      if (e?.message?.includes('Place không tồn tại')) {
+        setFavorites((prev) => prev.filter((p) => p.id !== placeId));
+        refreshFavorites().catch(() => {});
+      } else {
+        setError(e?.message || 'Không thể cập nhật yêu thích');
+      }
     } finally {
       setIsLiking(null);
     }
   };
 
-  const renderPlaceCard = (place: any) => {
-    return (
-      <View key={place.id} style={styles.card}>
-        <View style={styles.cardInner}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
-            <View style={styles.rowSmall}>
-              <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
-              <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
-            </View>
+  // Handle click vào POI card - enrich POI và hiển thị bottom sheet
+  const handlePlacePress = async (place: any) => {
+    const googlePlaceId = place.googlePlaceId;
+    if (!googlePlaceId) {
+      Alert.alert('Thông báo', 'Địa điểm này chưa có Google Place ID.');
+      return;
+    }
 
-            <View style={[styles.rowSmall, { marginTop: 8, alignItems: 'center' }]}> 
-              {renderStars(place.rating)}
-            </View>
+    setIsEnriching(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để xem chi tiết địa điểm.');
+        router.push('/(auth)/login');
+        return;
+      }
 
-            <View style={{ flexDirection: 'row', marginTop: 8, flexWrap: 'wrap' }}>
-              {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
-                <View key={i} style={styles.moodPill}><Text style={styles.moodPillText}>{m}</Text></View>
-              ))}
-              {place.moods && place.moods.length > 3 && (
-                <View style={styles.moodPill}><Text style={styles.moodPillText}>+{place.moods.length - 3}</Text></View>
-              )}
-            </View>
-          </View>
+      // Gọi enrich API để cập nhật thông tin POI
+      // Force refresh để đảm bảo lấy dữ liệu mới bằng tiếng Việt từ Google Places API
+      const response = await enrichPlaceAPI(token, googlePlaceId, true);
+      
+      // Map dữ liệu từ enriched response sang format mà bottom sheet hiểu
+      const enrichedData = response?.data || response;
+      const mappedPlaceData = {
+        _id: enrichedData.googlePlaceId,
+        googlePlaceId: enrichedData.googlePlaceId,
+        name: enrichedData.name,
+        address: enrichedData.address,
+        formatted_address: enrichedData.address,
+        description: enrichedData.description || enrichedData.editorialSummary,
+        editorialSummary: enrichedData.editorialSummary,
+        rating: enrichedData.rating,
+        user_ratings_total: enrichedData.reviews?.length || 0,
+        contactNumber: enrichedData.contactNumber,
+        phone: enrichedData.contactNumber,
+        websiteUri: enrichedData.websiteUri,
+        website: enrichedData.websiteUri,
+        photos: enrichedData.photos || [],
+        reviews: enrichedData.reviews?.map((review: any) => {
+          // Debug: Log review data để kiểm tra
+          console.log('[Favorites] Review data:', JSON.stringify(review, null, 2));
+          
+          // Lấy tên tác giả từ authorAttributions
+          let authorName = 'Người dùng ẩn danh';
+          if (review.authorAttributions) {
+            if (Array.isArray(review.authorAttributions) && review.authorAttributions.length > 0) {
+              const firstAttr = review.authorAttributions[0];
+              authorName = firstAttr?.displayName || firstAttr?.name || 'Người dùng ẩn danh';
+            } else if (typeof review.authorAttributions === 'object') {
+              authorName = review.authorAttributions.displayName || review.authorAttributions.name || 'Người dùng ẩn danh';
+            }
+          }
+          
+          return {
+            authorName,
+            rating: review.rating,
+            text: review.text,
+            relativePublishTimeDescription: review.relativePublishTimeDescription,
+            publishTime: review.relativePublishTimeDescription, // Giữ lại để backward compatible
+            authorAttributions: review.authorAttributions, // Giữ lại để có thể fallback
+          };
+        }) || [],
+        type: enrichedData.type,
+        types: enrichedData.types,
+        location: enrichedData.location,
+        openingHours: enrichedData.openingHours,
+        emotionalTags: enrichedData.emotionalTags,
+        budgetRange: enrichedData.budgetRange,
+      };
 
-          <TouchableOpacity
-            style={styles.heartFloat}
-            onPress={() => handleLikePlace(place.id, place.googlePlaceId)}
-            disabled={isLiking !== null}
-          >
-            <FontAwesome name="heart" size={18} color="#E53E3E" />
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
+      setSelectedPlaceData(mappedPlaceData);
+      setIsBottomSheetVisible(true);
+    } catch (error: any) {
+      console.error('❌ Error enriching POI:', error);
+      Alert.alert(
+        'Lỗi',
+        error.message || 'Không thể tải thông tin chi tiết địa điểm. Vui lòng thử lại.'
+      );
+    } finally {
+      setIsEnriching(false);
+    }
   };
 
   return (
-    <LinearGradient colors={[COLORS.gradientStart, COLORS.gradientBlue1]} style={styles.container}>
+    <LinearGradient
+      colors={['#f8fafc', '#fff']}
+      style={styles.container}
+    >
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
-        <View style={[styles.headerContainer, { paddingTop: insets.top - SPACING.sm }]}>
+        <View style={[styles.headerContainer, { paddingTop: insets.top - SPACING.sm }]}> 
           <View style={styles.headerRow}>
             <View style={styles.headerTextContainer}>
               <Text style={styles.headerTitle}>Yêu thích của tôi</Text>
@@ -284,19 +375,16 @@ const FavoritesScreen: React.FC = () => {
           <View style={styles.moodsGrid}>
             {moods.map((mood) => {
               const scale = moodScales[mood.key] || new Animated.Value(1);
-              // ensure presence in map
               if (!moodScales[mood.key]) moodScales[mood.key] = scale;
               return (
                 <Animated.View key={mood.key} style={{ transform: [{ scale }] }}>
                   <TouchableOpacity
                     style={[styles.moodButton, selectedMood === mood.key && styles.moodButtonSelected]}
                     onPress={() => {
-                      // animate previous back to normal
                       const prev = prevSelectedRef.current;
                       if (prev && moodScales[prev]) {
                         Animated.timing(moodScales[prev], { toValue: 1, duration: 150, useNativeDriver: true }).start();
                       }
-                      // animate this one slightly larger
                       Animated.timing(scale, { toValue: 1.06, duration: 180, useNativeDriver: true }).start();
                       prevSelectedRef.current = mood.key;
                       setSelectedMood(mood.key);
@@ -348,9 +436,61 @@ const FavoritesScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
           )}
-          {favorites.map(renderPlaceCard)}
+          {favorites.map((place) => (
+            <TouchableOpacity
+              key={place.id}
+              style={styles.card}
+              onPress={() => handlePlacePress(place)}
+              disabled={isEnriching}
+              activeOpacity={0.7}
+            >
+              <View style={styles.cardInner}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
+                  <View style={styles.rowSmall}>
+                    <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
+                    <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
+                  </View>
+                  <View style={[styles.rowSmall, { marginTop: 8, alignItems: 'center' }]}> 
+                    {renderStars(place.rating)}
+                  </View>
+                  <View style={{ flexDirection: 'row', marginTop: 8, flexWrap: 'wrap' }}>
+                    {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
+                      <View key={i} style={styles.moodPill}><Text style={styles.moodPillText}>{m}</Text></View>
+                    ))}
+                    {place.moods && place.moods.length > 3 && (
+                      <View style={styles.moodPill}><Text style={styles.moodPillText}>+{place.moods.length - 3}</Text></View>
+                    )}
+                  </View>
+                  {isEnriching && place.googlePlaceId === selectedPlaceData?.googlePlaceId && (
+                    <ActivityIndicator size="small" color={COLORS.primary} style={{ marginTop: 8 }} />
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={styles.heartFloat}
+                  onPress={(e) => {
+                    e.stopPropagation(); // Ngăn trigger handlePlacePress
+                    handleLikePlace(place.id, place.googlePlaceId);
+                  }}
+                  disabled={isLiking !== null}
+                >
+                  <FontAwesome name="heart" size={18} color="#E53E3E" />
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          ))}
         </View>
       </ScrollView>
+
+      {/* POI Detail Bottom Sheet */}
+      <POIDetailBottomSheet
+        visible={isBottomSheetVisible}
+        placeData={selectedPlaceData}
+        onClose={() => {
+          setIsBottomSheetVisible(false);
+          setSelectedPlaceData(null);
+        }}
+      />
     </LinearGradient>
   );
 };
@@ -366,12 +506,9 @@ const styles = StyleSheet.create({
   moodText: { fontWeight: '700', color: COLORS.textDark },
   toggleButton: { padding: 8, marginLeft: SPACING.sm },
   moodsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: SPACING.sm, marginBottom: SPACING.md, paddingHorizontal: 4 },
-  chipsLoaderWrap: { marginTop: SPACING.sm, marginBottom: SPACING.md, alignItems: 'center' },
-  sectionLoaderWrap: { marginTop: SPACING.sm, marginBottom: SPACING.md, alignItems: 'center' },
   listContainer: { flexDirection: 'column', gap: SPACING.md },
   card: { backgroundColor: COLORS.textWhite, borderRadius: 12, padding: SPACING.md, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 4, borderWidth: 1, borderColor: COLORS.borderLight },
   cardInner: { flexDirection: 'row', alignItems: 'flex-start' },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm },
   placeName: { fontSize: 16, fontWeight: '800', color: COLORS.textDark, flex: 1 },
   placeAddress: { color: COLORS.textSecondary, marginLeft: 6, marginTop: 2 },
   rowSmall: { flexDirection: 'row', alignItems: 'center' },
@@ -379,11 +516,7 @@ const styles = StyleSheet.create({
   moodPillText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
   placeRating: { color: COLORS.ratingAlt, marginLeft: 8, fontWeight: '700' },
   heartFloat: { width: 38, height: 38, borderRadius: 20, backgroundColor: COLORS.textWhite, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 4, marginLeft: 12 },
-  topHeader: { paddingTop: (Constants.statusBarHeight || 0) + SPACING.lg, paddingBottom: SPACING.lg },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  titleIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,99,99,0.12)', justifyContent: 'center', alignItems: 'center' },
-  titleMain: { fontSize: 24, fontWeight: '900', color: COLORS.textDark },
-  titleSub: { fontSize: 14, color: COLORS.primary, marginTop: 6 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textDark, marginBottom: SPACING.sm, marginTop: SPACING.md },
   emptyWrap: { alignItems: 'center', paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md },
   emptyIcon: { marginBottom: SPACING.sm },
