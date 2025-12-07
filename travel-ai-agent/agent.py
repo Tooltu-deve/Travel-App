@@ -357,62 +357,35 @@ def profile_collector_node(state: TravelState) -> TravelState:
     if not preferences.duration:
         missing_info.append("duration")
     
-    # Analyze user's latest message for preferences
-    system_prompt = f"""
-    Bạn là một AI travel assistant thông minh. Nhiệm vụ của bạn là thu thập thông tin về sở thích du lịch của khách hàng một cách tự nhiên.
-    
-    Thông tin hiện tại về khách hàng:
-    - Địa điểm: {preferences.start_location or "Chưa biết"}
-    - Phong cách du lịch: {preferences.travel_style or "Chưa biết"}
-    - Nhóm đi: {preferences.group_type or "Chưa biết"}  
-    - Ngân sách: {preferences.budget_range or "Chưa biết"}
-    - Thời gian: {preferences.duration or "Chưa biết"}
-    - Sở thích: {preferences.interests or "Chưa biết"}
-    
-    Tin nhắn mới nhất của khách: "{last_message}"
-    
-    QUAN TRỌNG:
-    - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ thông tin → Nói sẽ tạo lộ trình
-    - Nếu khách mới bắt đầu conversation hoặc còn thiếu thông tin → HỎI thông tin còn thiếu
-    - Thông tin CẦN THIẾT: địa điểm (destination)
-    - Thông tin còn thiếu: {missing_info}
-    
-    Hãy:
-    1. Phân tích tin nhắn để trích xuất thông tin sở thích (nếu có), đặc biệt chú ý đến TÊN ĐỊA ĐIỂM/THÀNH PHỐ
-    2. Nếu CHƯA CÓ ĐỊA ĐIỂM (destination) → HỎI: "Bạn đã có ý tưởng về địa điểm nào chưa?"
-    3. Nếu đã có đủ thông tin và khách xác nhận → KHÔNG cần hỏi gì nữa
-    4. Hỏi một cách tự nhiên, thân thiện
-    
-    Trả lời bằng tiếng Việt, thân thiện và chuyên nghiệp.
-    """
-    
-    response = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=last_message)
-    ])
-    
     # Update preferences based on user input (simple keyword detection)
     # Use model_copy() for Pydantic models
+    # IMPORTANT: Parse preferences FIRST before calling LLM
     updated_preferences = preferences.model_copy() if hasattr(preferences, 'model_copy') else preferences.copy()
     
     # Extract info from user message
     user_text = last_message.lower()
     
+    # Debug: Track destination preservation
+    print(f"   📍 STATE INPUT - start_location: {preferences.start_location}")
+    
     # CRITICAL: Detect confirmation responses (user answering "yes" to our question)
     # Only consider as confirmation if:
     # 1. Message is short (< 15 chars) AND contains confirmation word
     # 2. OR message is ONLY a confirmation word (like "Muốn", "Có", "Được")
+    # IMPORTANT: Don't treat informational messages as confirmations!
     confirmation_keywords = ["có", "được", "muốn", "ok", "okay", "yes", "ừ", "oke", "đồng ý", "vâng"]
     user_text_stripped = user_text.strip().replace(".", "").replace("!", "")
     
-    # Check if message is a simple confirmation (not part of a longer sentence)
+    # More strict confirmation check: must be VERY short and match exactly
     is_confirmation = (
-        len(user_text) < 15 and any(word in user_text for word in confirmation_keywords)
-    ) or user_text_stripped in confirmation_keywords
+        len(user_text_stripped) <= 10 and 
+        (user_text_stripped in confirmation_keywords or 
+         any(user_text_stripped == word for word in confirmation_keywords))
+    )
     
     # If user is just confirming and we already have destination, auto-fill missing info
     if is_confirmation and updated_preferences.start_location:
-        print(f"   ✅ User confirmed → Auto-filling missing info")
+        print(f"   ✅ User confirmed (destination already set: {updated_preferences.start_location}) → Auto-filling missing info")
         
         # Auto-fill defaults for quick planning
         if not updated_preferences.travel_style:
@@ -429,6 +402,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
             print(f"      → Defaulting duration: 3_days")
     
     # Destination detection (IMPORTANT!)
+    # Only update if found in current message - preserve existing destination if not mentioned
     destination_keywords = {
         "vũng tàu": ["vũng tàu", "vung tau", "vùng tàu", "vùng tau"],
         "đà lạt": ["đà lạt", "da lat", "đà lat"],
@@ -445,11 +419,18 @@ def profile_collector_node(state: TravelState) -> TravelState:
         "ninh bình": ["ninh bình", "ninh binh"],
     }
     
+    destination_found_in_message = False
     for destination, keywords in destination_keywords.items():
         if any(keyword in user_text for keyword in keywords):
             updated_preferences.start_location = destination
-            print(f"   ✅ Detected destination: {destination}")
+            destination_found_in_message = True
+            print(f"   ✅ Detected NEW destination in message: {destination}")
             break
+    
+    # If no destination in current message, preserve existing one from state
+    if not destination_found_in_message and preferences.start_location:
+        updated_preferences.start_location = preferences.start_location
+        print(f"   🔄 PRESERVED destination from state: {preferences.start_location}")
     
     # Travel style detection
     if any(word in user_text for word in ["chill", "nghỉ dưỡng", "thư giãn", "yên tĩnh"]):
@@ -569,7 +550,56 @@ def profile_collector_node(state: TravelState) -> TravelState:
             "session_stage": "planning"
         }
     
+    # NOW call LLM with UPDATED preferences to generate natural response
+    missing_fields = []
+    if not updated_preferences.start_location:
+        missing_fields.append("địa điểm")
+    if not updated_preferences.travel_style:
+        missing_fields.append("phong cách du lịch")
+    if not updated_preferences.group_type:
+        missing_fields.append("nhóm đi")
+    if not updated_preferences.budget_range:
+        missing_fields.append("ngân sách")
+    if not updated_preferences.duration:
+        missing_fields.append("thời gian")
+    
+    missing_info = ", ".join(missing_fields) if missing_fields else "Đã đủ"
+    
+    system_prompt = f"""
+    Bạn là một AI travel assistant thông minh. Nhiệm vụ của bạn là thu thập thông tin về sở thích du lịch của khách hàng một cách tự nhiên.
+    
+    Thông tin hiện tại về khách hàng (ĐÃ CẬP NHẬT):
+    - Địa điểm: {updated_preferences.start_location or "Chưa biết"}
+    - Phong cách du lịch: {updated_preferences.travel_style or "Chưa biết"}
+    - Nhóm đi: {updated_preferences.group_type or "Chưa biết"}  
+    - Ngân sách: {updated_preferences.budget_range or "Chưa biết"}
+    - Thời gian: {updated_preferences.duration or "Chưa biết"}
+    - Sở thích: {updated_preferences.interests or "Chưa biết"}
+    
+    Tin nhắn mới nhất của khách: "{last_message}"
+    
+    QUAN TRỌNG:
+    - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ thông tin → Nói sẽ tạo lộ trình
+    - Nếu khách mới bắt đầu conversation hoặc còn thiếu thông tin → HỎI thông tin còn thiếu
+    - Thông tin còn thiếu: {missing_info}
+    
+    Hãy:
+    1. Xác nhận thông tin khách vừa cung cấp (nếu có)
+    2. Chỉ hỏi về thông tin CÒN THIẾU (không hỏi lại thông tin đã có)
+    3. Hỏi một cách tự nhiên, thân thiện, một câu hỏi mỗi lần
+    
+    Trả lời bằng tiếng Việt, thân thiện và chuyên nghiệp.
+    """
+    
+    response = llm.invoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=last_message)
+    ])
+    
     next_stage = "planning" if is_info_complete else "profiling"
+    
+    print(f"   📍 STATE OUTPUT - start_location: {updated_preferences.start_location}")
+    print(f"   ℹ️  Info complete: {is_info_complete}, next stage: {next_stage}")
     
     return {
         **state,

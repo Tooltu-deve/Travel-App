@@ -81,6 +81,93 @@ DAY_NAME_TO_INDEX = {
     "SUNDAY": 6,
 }
 
+# Thời gian tham quan ước tính dựa trên loại địa điểm (phút)
+VISIT_DURATION_BY_TYPE = {
+    # Bảo tàng, di tích lịch sử - thời gian dài
+    'museum': 90,
+    'art_gallery': 90,
+    'historical': 120,
+    'cultural_center': 90,
+    
+    # Công viên, thiên nhiên - thời gian trung bình đến dài
+    'park': 60,
+    'natural_feature': 90,
+    'scenic': 75,
+    'hiking_area': 120,
+    
+    # Chùa, đền, di tích tâm linh - thời gian ngắn đến trung bình
+    'church': 45,
+    'temple': 45,
+    'place_of_worship': 45,
+    'spiritual': 45,
+    
+    # Điểm tham quan du lịch - thời gian trung bình
+    'tourist_attraction': 75,
+    'point_of_interest': 60,
+    'landmark': 60,
+    
+    # Mua sắm - thời gian trung bình
+    'shopping_mall': 90,
+    'market': 60,
+    'store': 45,
+    
+    # Giải trí - thời gian dài
+    'amusement_park': 180,
+    'zoo': 120,
+    'aquarium': 120,
+    
+    # Biển, bãi tắm - thời gian dài
+    'beach': 120,
+    'seaside': 120,
+    
+    # Cafe, quán - thời gian ngắn
+    'cafe': 45,
+    'coffee_shop': 45,
+    'bar': 60,
+    
+    # Nhà hàng - thời gian trung bình
+    'restaurant': 60,
+    'food': 60,
+}
+
+def get_estimated_visit_duration(poi: Dict[str, Any]) -> int:
+    """
+    Tính thời gian tham quan ước tính dựa trên loại địa điểm.
+    Ưu tiên: visit_duration_minutes từ DB > estimated_visit_minutes > tính theo type > default
+    """
+    # Ưu tiên 1: Nếu đã có visit_duration_minutes trong DB
+    if poi.get('visit_duration_minutes'):
+        return int(poi['visit_duration_minutes'])
+    
+    # Ưu tiên 2: Nếu có estimated_visit_minutes
+    if poi.get('estimated_visit_minutes'):
+        return int(poi['estimated_visit_minutes'])
+    
+    # Ưu tiên 3: Tính dựa trên types
+    types = []
+    if isinstance(poi.get('type'), str):
+        types.append(poi['type'].lower())
+    if isinstance(poi.get('types'), list):
+        types.extend([str(t).lower() for t in poi['types']])
+    
+    # Tìm duration phù hợp nhất dựa trên types
+    for poi_type in types:
+        if poi_type in VISIT_DURATION_BY_TYPE:
+            return VISIT_DURATION_BY_TYPE[poi_type]
+    
+    # Ưu tiên 4: Default dựa trên category chung
+    if any(t in types for t in ['museum', 'art_gallery', 'historical', 'cultural']):
+        return 90
+    if any(t in types for t in ['park', 'natural', 'scenic', 'beach', 'seaside']):
+        return 75
+    if any(t in types for t in ['church', 'temple', 'spiritual', 'place_of_worship']):
+        return 45
+    if any(t in types for t in ['shopping', 'market', 'store']):
+        return 60
+    
+    # Default fallback
+    return DEFAULT_VISIT_DURATION_MINUTES
+
 # Bộ não của ECS: Định nghĩa trọng số cho mỗi Mood
 
 # --- 2. ĐỊNH NGHĨA DATA MODELS (PYDANTIC) ---
@@ -470,6 +557,15 @@ async def optimize_for_chatbot(request: OptimizerRequest):
             print(f"  → POI '{poi.get('name')}' có types: {types}")
         return {"optimized_route": []}
     
+    # Kiểm tra số lượng POI tối thiểu
+    MIN_POIS_PER_DAY = 3
+    required_pois = MIN_POIS_PER_DAY * request.duration_days
+    
+    if len(non_restaurant_pois) < required_pois:
+        print(f"⚠️  Cảnh báo: Chỉ có {len(non_restaurant_pois)} POI cho {request.duration_days} ngày")
+        print(f"  → Cần tối thiểu {required_pois} POI ({MIN_POIS_PER_DAY} POI/ngày)")
+        print(f"  → Backend cần lọc với bán kính lớn hơn hoặc giảm ECS threshold")
+    
     # Phân bổ đều POI cho các ngày (round-robin)
     daily_poi_groups: List[List[Dict[str, Any]]] = [[] for _ in range(request.duration_days)]
     
@@ -477,9 +573,10 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         day_idx = idx % request.duration_days
         daily_poi_groups[day_idx].append(poi)
     
-    # In ra thông tin phân bổ
+    # Kiểm tra và cảnh báo cho từng ngày
     for day_idx, day_pois in enumerate(daily_poi_groups, start=1):
-        print(f"  → Ngày {day_idx}: {len(day_pois)} POI được phân bổ")
+        status = "✅" if len(day_pois) >= MIN_POIS_PER_DAY else "⚠️"
+        print(f"  {status} Ngày {day_idx}: {len(day_pois)} POI được phân bổ")
 
     # Hàm helper để tính ETA giữa 2 POI
     def eta_between(a_id: str, b_id: str, fallback_list: Optional[List[Dict[str, Any]]] = None) -> float:
@@ -561,9 +658,9 @@ async def optimize_for_chatbot(request: OptimizerRequest):
             poi_with_timing = deepcopy(poi)
             poi_with_timing['estimated_arrival'] = arrival_time.isoformat()
 
-            visit_duration = poi.get('visit_duration_minutes') or poi.get('estimated_visit_minutes') or DEFAULT_VISIT_DURATION_MINUTES
-            if not isinstance(visit_duration, (int, float)) or visit_duration <= 0:
-                visit_duration = DEFAULT_VISIT_DURATION_MINUTES
+            # Sử dụng hàm mới để tính visit_duration dựa trên place_type
+            visit_duration = get_estimated_visit_duration(poi)
+            poi_with_timing['visit_duration_minutes'] = visit_duration
 
             departure_time = arrival_time + timedelta(minutes=visit_duration)
             poi_with_timing['estimated_departure'] = departure_time.isoformat()
