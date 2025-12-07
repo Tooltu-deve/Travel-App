@@ -295,7 +295,11 @@ const ItineraryScreen: React.FC = () => {
               <Text style={styles.dataStateText}>Đang tải...</Text>
             </View>
           ) : mainRoute ? (
-            <View style={styles.currentItineraryCard}>
+            <TouchableOpacity 
+              style={styles.currentItineraryCard}
+              onPress={() => handleViewRoute(mainRoute.route_id)}
+              activeOpacity={0.9}
+            >
               <LinearGradient
                 colors={[COLORS.primary, COLORS.gradientSecondary]}
                 start={{ x: 0, y: 0 }}
@@ -344,7 +348,7 @@ const ItineraryScreen: React.FC = () => {
                   </View>
                 </View>
               </LinearGradient>
-            </View>
+            </TouchableOpacity>
           ) : (
             <View style={styles.emptyMainContainer}>
               <FontAwesome name="map-o" size={48} color={COLORS.textSecondary} />
@@ -358,7 +362,7 @@ const ItineraryScreen: React.FC = () => {
 
         {/* Other Itineraries Section */}
         <>
-          <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>
+          <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg, marginTop: SPACING.xl}]}>
             Lộ trình đã lưu
           </Text>
           <View style={{marginHorizontal: SPACING.lg}}>

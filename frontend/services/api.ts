@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
+const API_BASE_URL = 'http://192.168.2.92:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
 // ============================================
 // TYPES
 // ============================================
@@ -395,6 +395,28 @@ export const getRoutesAPI = async (
   const query = status ? `?status=${status}` : '';
   return makeRequest<{ message: string; routes: TravelRoute[]; total: number }>(
     `/api/v1/itineraries${query}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
+ * getRouteByIdAPI: Lấy chi tiết đầy đủ một lộ trình
+ *
+ * @param token JWT token
+ * @param routeId ID của lộ trình
+ * @returns Chi tiết đầy đủ lộ trình
+ */
+export const getRouteByIdAPI = async (
+  token: string,
+  routeId: string,
+): Promise<{ route: TravelRoute }> => {
+  return makeRequest<{ route: TravelRoute }>(
+    `/api/v1/itineraries/${routeId}`,
     {
       method: 'GET',
       headers: {
