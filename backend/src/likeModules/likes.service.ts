@@ -1,18 +1,16 @@
 
-import { NotFoundException, InternalServerErrorException, Inject, forwardRef } from '@nestjs/common';
+import { NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument } from '../user/schemas/user.schema';
 import { Place, PlaceDocument } from '../place/schemas/place.schema';
-import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class FavoritesService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Place.name) private placeModel: Model<PlaceDocument>,
-    @Inject(forwardRef(() => NotificationsService)) private notificationsService: NotificationsService,
   ) {}
 
   // Lấy tất cả type trong toàn bộ Place
@@ -89,34 +87,6 @@ export class FavoritesService {
       action = 'like';
     }
     await user.save();
-
-    // Tạo notification cho cả like và unlike
-    try {
-      const userObjectId = Types.ObjectId.isValid(userId)
-        ? new Types.ObjectId(userId)
-        : userId;
-      if (action === 'like') {
-        await this.notificationsService.createNotification({
-          userId: userObjectId,
-          type: 'favorite',
-          title: `Bạn đã thêm địa điểm yêu thích`,
-          message: `Địa điểm: ${place.name}`,
-          entityType: 'place',
-          entityId: place._id instanceof Types.ObjectId ? place._id : new Types.ObjectId(String(place._id)),
-        });
-      } else {
-        await this.notificationsService.createNotification({
-          userId: userObjectId,
-          type: 'favorite',
-          title: `Bạn đã bỏ thích địa điểm`,
-          message: `Địa điểm: ${place.name}`,
-          entityType: 'place',
-          entityId: place._id instanceof Types.ObjectId ? place._id : new Types.ObjectId(String(place._id)),
-        });
-      }
-    } catch (err) {
-      // Không throw lỗi nếu tạo noti thất bại
-    }
 
     return { success: true, liked: action === 'like' };
   }
