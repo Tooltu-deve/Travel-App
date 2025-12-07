@@ -82,7 +82,7 @@ export class ItineraryController {
   @HttpCode(HttpStatus.OK)
   async getUserRoutes(
     @Request() req,
-    @Query('status') status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+    @Query('status') status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
   ): Promise<{
     message: string;
     routes: ItineraryResponseDto[];

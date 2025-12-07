@@ -111,7 +111,7 @@ export interface TravelRoute {
   destination?: string;
   duration_days?: number;
   start_datetime?: string | null;
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   route_data_json: any;
   id: string;
 }
@@ -334,7 +334,7 @@ export const generateRouteAPI = async (
  * 
  * @param token - JWT token
  * @param routeId - ID của lộ trình
- * @param status - Trạng thái mới: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'
+ * @param status - Trạng thái mới: 'DRAFT' | 'CONFIRMED' | 'MAIN'
  * @returns Response với thông tin lộ trình đã cập nhật
  * 
  * Endpoint: PATCH /api/v1/routes/:routeId/status
@@ -343,7 +343,7 @@ export const generateRouteAPI = async (
  * Response: { message, route }
  */
 interface UpdateRouteStatusPayload {
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   title?: string;
 }
 
@@ -390,7 +390,7 @@ export const deleteRouteAPI = async (
  */
 export const getRoutesAPI = async (
   token: string,
-  status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
 ): Promise<{ message: string; routes: TravelRoute[]; total: number }> => {
   const query = status ? `?status=${status}` : '';
   return makeRequest<{ message: string; routes: TravelRoute[]; total: number }>(

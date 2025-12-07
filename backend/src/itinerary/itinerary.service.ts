@@ -77,7 +77,7 @@ export class ItineraryService {
 
   async findByUserId(
     userId: string,
-    status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+    status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
   ): Promise<ItineraryDocument[]> {
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
@@ -97,12 +97,34 @@ export class ItineraryService {
   async updateStatus(
     routeId: string,
     userId: string,
-    status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+    status: 'DRAFT' | 'CONFIRMED' | 'MAIN',
     extra?: { title?: string },
   ): Promise<ItineraryDocument | null> {
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
       : userId;
+
+    // Nếu đang set status thành MAIN, cần chuyển MAIN cũ về CONFIRMED
+    if (status === 'MAIN') {
+      const existingMain = await this.itineraryModel
+        .findOne({
+          user_id: userObjectId,
+          status: 'MAIN',
+          route_id: { $ne: routeId }, // Không phải lộ trình hiện tại
+        })
+        .exec();
+
+      if (existingMain) {
+        // Chuyển MAIN cũ về CONFIRMED
+        await this.itineraryModel
+          .findOneAndUpdate(
+            { _id: existingMain._id },
+            { status: 'CONFIRMED' },
+            { new: true },
+          )
+          .exec();
+      }
+    }
 
     const updatePayload: any = { status };
     if (extra?.title !== undefined) {
@@ -134,6 +156,24 @@ export class ItineraryService {
         console.error('Lỗi khi tạo notification CONFIRMED:', err);
       }
     }
+
+    // Gửi notification khi set lộ trình thành MAIN
+    if (status === 'MAIN' && updated) {
+      try {
+        await this.notificationsService.createNotification({
+          userId: userObjectId,
+          type: 'itinerary',
+          title: 'Lộ trình đã được đặt làm lộ trình chính',
+          message: extra?.title || updated.title || 'Lộ trình đã được đặt làm lộ trình chính',
+          entityType: 'itinerary',
+          entityId: updated._id,
+          routeId: updated.route_id,
+        });
+      } catch (err) {
+        console.error('Lỗi khi tạo notification MAIN:', err);
+      }
+    }
+
     return updated;
   }
 
@@ -1194,22 +1234,6 @@ export class ItineraryService {
     });
 
     const savedItinerary = await itinerary.save();
-
-    // Tạo notification cho user: chỉ nhắc nhở xác nhận để hoàn tất tạo lộ trình
-    try {
-      await this.notificationsService.createNotification({
-        userId: userObjectId,
-        type: 'itinerary',
-        title: 'Lưu nháp lộ trình',
-        message: 'Bạn đã lưu nháp lộ trình, vui lòng bấm xác nhận để hoàn tất tạo lộ trình.',
-        entityType: 'itinerary',
-        entityId: savedItinerary._id,
-        routeId: savedItinerary.route_id,
-      });
-    } catch (err) {
-      // Không throw lỗi nếu tạo noti thất bại
-      console.error('Lỗi khi tạo notification:', err);
-    }
 
     return savedItinerary;
   }
