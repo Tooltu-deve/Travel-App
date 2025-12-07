@@ -6,9 +6,9 @@ export class CreateItineraryDto {
   route_data_json: any;
 
   @IsOptional()
-  @IsEnum(['DRAFT', 'CONFIRMED', 'ARCHIVED'], {
-    message: 'status phải là DRAFT, CONFIRMED hoặc ARCHIVED',
+  @IsEnum(['DRAFT', 'CONFIRMED', 'MAIN'], {
+    message: 'status phải là DRAFT, CONFIRMED hoặc MAIN',
   })
-  status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN';
 }
 

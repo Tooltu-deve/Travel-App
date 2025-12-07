@@ -196,6 +196,9 @@ async def chat_with_agent(request: ChatRequest):
             if request.context.get('active_place_id'):
                 conversation_state['active_place_id'] = request.context['active_place_id']
                 logging.info(f"   🏛️ Updated state with active_place_id from context: {request.context['active_place_id']}")
+            if request.context.get('itinerary_status'):
+                conversation_state['itinerary_status'] = request.context['itinerary_status']
+                logging.info(f"   ✅ Updated state with itinerary_status from context: {request.context['itinerary_status']}")
         elif request.context and not conversation_state:
             # New conversation - create initial state with context
             conversation_state = {
@@ -394,6 +397,6 @@ if __name__ == "__main__":
         "main:app",  # Import string format để enable reload
         host="0.0.0.0",
         port=8001,  # Changed from 8000 to avoid conflict
-        reload=True,  # For development
+        reload=False,  # Disabled to ensure code is loaded correctly
         log_level="info"
     )

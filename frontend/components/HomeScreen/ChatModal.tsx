@@ -21,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { COLORS } from '../../constants';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../services/api';
 import ItineraryDetailScreen from './ItineraryDetailScreen';
 import useLocation from '../../hooks/useLocation';
 
@@ -176,12 +177,12 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [itineraryId, setItineraryId] = useState<string | null>(null);
   const [itinerary, setItinerary] = useState<any>(null);
+  const [itineraryStatus, setItineraryStatus] = useState<'DRAFT' | 'CONFIRMED' | null>(null);
   const [showItineraryDetail, setShowItineraryDetail] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const buttonScale = useRef(new Animated.Value(0)).current;
 
-  const API_BASE_URL = 'http://192.168.2.92:3000/api/v1';
   const MAX_CHAT_RETRIES = 2;
   const RETRY_BASE_DELAY_MS = 1000;
 
@@ -271,7 +272,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           }
           
           console.debug('Sending chat request', requestBody);
-          const response = await fetch(`${API_BASE_URL}/ai/chat`, {
+          const response = await fetch(`${API_BASE_URL}/api/v1/ai/chat`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -354,17 +355,27 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
           // Track itinerary from response
           if (dataOk.itineraryId) {
+            console.debug('[Chat Response] Setting itineraryId from dataOk.itineraryId:', dataOk.itineraryId);
             setItineraryId(dataOk.itineraryId);
           } else if (dataOk.metadata?.itinerary_id) {
             // Fallback: get itinerary_id from metadata
+            console.debug('[Chat Response] Setting itineraryId from metadata:', dataOk.metadata.itinerary_id);
             setItineraryId(dataOk.metadata.itinerary_id);
+          } else if (dataOk.itinerary_id) {
+            // Fallback: get itinerary_id from top level (snake_case)
+            console.debug('[Chat Response] Setting itineraryId from dataOk.itinerary_id:', dataOk.itinerary_id);
+            setItineraryId(dataOk.itinerary_id);
           }
           if (dataOk.itinerary && Array.isArray(dataOk.itinerary)) {
+            console.debug('[Chat Response] Setting itinerary with', dataOk.itinerary.length, 'items');
             setItinerary(dataOk.itinerary);
           }
           if (dataOk.stage) {
             console.debug('[Chat Response] Stage:', dataOk.stage, '. ItineraryId:', dataOk.itineraryId || dataOk.metadata?.itinerary_id);
           }
+
+          console.debug('[Chat Response] Full response object keys:', Object.keys(dataOk));
+          console.debug('[Chat Response] Final itineraryId state:', itineraryId);
 
           const assistantMessage: Message = {
             id: (Date.now() + 1).toString(),
@@ -436,7 +447,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
               
               console.debug('Sending reset request', resetBody);
               
-              const response = await fetch(`${API_BASE_URL}/ai/reset`, {
+              const response = await fetch(`${API_BASE_URL}/api/v1/ai/reset`, {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${token}`,
@@ -547,9 +558,16 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
         <ItineraryDetailScreen
           itinerary={itinerary}
           itineraryId={itineraryId}
+          itineraryStatus={itineraryStatus}
+          setItineraryStatus={setItineraryStatus}
           onClose={() => setShowItineraryDetail(false)}
           onConfirmSuccess={() => {
             // Optional: handle post-confirmation logic
+            setShowItineraryDetail(false);
+          }}
+          onSendMessage={(message) => {
+            console.debug('[ItineraryDetailScreen] Sending message:', message);
+            sendMessage(message);
             setShowItineraryDetail(false);
           }}
         />
@@ -723,7 +741,14 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             {itinerary && itinerary.length > 0 && (
               <TouchableOpacity
                 style={styles.itineraryQuickButton}
-                onPress={() => setShowItineraryDetail(true)}
+                onPress={() => {
+                  console.debug('[ChatModal] Itinerary button pressed:', {
+                    hasItinerary: !!itinerary,
+                    itineraryLength: itinerary?.length,
+                    itineraryId,
+                  });
+                  setShowItineraryDetail(true);
+                }}
               >
                 <LinearGradient
                   colors={[COLORS.primary + '25', COLORS.gradientSecondary + '15']}

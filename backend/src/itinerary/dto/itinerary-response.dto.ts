@@ -16,7 +16,11 @@ export class ItineraryResponseDto {
   destination?: string;
   duration_days?: number;
   start_datetime?: Date | null;
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  start_location?: {
+    lat: number;
+    lng: number;
+  };
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   route_data_json: any;
   alerts?: WeatherAlertDto[];
   id: string;
