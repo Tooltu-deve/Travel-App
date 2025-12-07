@@ -202,13 +202,24 @@ export default function ItineraryDetailsScreen() {
 
   // Calculate map region
   const calculateMapRegion = (activities: Activity[]) => {
-    if (activities.length === 0) return null;
+    const coords: { latitude: number; longitude: number }[] = [];
 
-    const coords = activities
+    // Add start location if available
+    if (routeDetails?.start_location) {
+      coords.push({
+        latitude: routeDetails.start_location.lat,
+        longitude: routeDetails.start_location.lng,
+      });
+    }
+
+    // Add activity coordinates
+    const activityCoords = activities
       .map((a) => a.location || a.place?.location)
       .filter(Boolean)
       .map(toMapCoordinate)
       .filter(Boolean) as { latitude: number; longitude: number }[];
+
+    coords.push(...activityCoords);
 
     if (coords.length === 0) return null;
 
@@ -247,11 +258,24 @@ export default function ItineraryDetailsScreen() {
 
   // Fit to markers
   const handleFitToMarkers = () => {
-    const coords = activities
+    const coords: { latitude: number; longitude: number }[] = [];
+
+    // Add start location if available
+    if (routeDetails?.start_location) {
+      coords.push({
+        latitude: routeDetails.start_location.lat,
+        longitude: routeDetails.start_location.lng,
+      });
+    }
+
+    // Add activity coordinates
+    const activityCoords = activities
       .map((a) => a.location || a.place?.location)
       .filter(Boolean)
       .map(toMapCoordinate)
       .filter(Boolean) as { latitude: number; longitude: number }[];
+
+    coords.push(...activityCoords);
 
     if (coords.length > 0 && mapRef.current) {
       mapRef.current.fitToCoordinates(coords, {
@@ -402,13 +426,29 @@ export default function ItineraryDetailsScreen() {
               ))}
 
               {/* Markers */}
+              {/* Start Location Marker */}
+              {routeDetails?.start_location && (
+                <Marker 
+                  key="start-location" 
+                  coordinate={{
+                    latitude: routeDetails.start_location.lat,
+                    longitude: routeDetails.start_location.lng,
+                  }}
+                >
+                  <View style={styles.startMarker}>
+                    <Text style={styles.markerText}>BĐ</Text>
+                  </View>
+                </Marker>
+              )}
+
+              {/* Activity Markers */}
               {activities.map((activity, index) => {
                 const coord = toMapCoordinate(activity.location || activity.place?.location);
                 if (!coord) return null;
 
                 return (
                   <Marker key={`marker-${index}`} coordinate={coord}>
-                    <View style={index === 0 ? styles.startMarker : styles.marker}>
+                    <View style={styles.marker}>
                       <Text style={styles.markerText}>{index + 1}</Text>
                     </View>
                   </Marker>

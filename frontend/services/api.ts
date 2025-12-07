@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://192.168.2.92:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
 // ============================================
 // TYPES
 // ============================================
@@ -111,6 +111,10 @@ export interface TravelRoute {
   destination?: string;
   duration_days?: number;
   start_datetime?: string | null;
+  start_location?: {
+    lat: number;
+    lng: number;
+  };
   status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   route_data_json: any;
   id: string;
