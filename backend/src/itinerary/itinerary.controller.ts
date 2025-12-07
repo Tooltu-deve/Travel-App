@@ -39,10 +39,18 @@ export class ItineraryController {
       generateDto,
     );
 
+    // Geocode start_location để trả về tọa độ
+    const startLocation = await this.itineraryService.geocodeAddress(
+      generateDto.start_location,
+    );
+
+    const routeResponse = this.mapToResponse(savedRoute);
+    routeResponse.start_location = startLocation;
+
     return {
       message:
         'Lộ trình đã được tạo và lưu với trạng thái DRAFT. Vui lòng xác nhận để lưu chính thức.',
-      route: this.mapToResponse(savedRoute),
+      route: routeResponse,
     };
   }
 
@@ -160,6 +168,7 @@ export class ItineraryController {
       destination: routeObject.destination,
       duration_days: routeObject.duration_days,
       start_datetime: routeObject.start_datetime || null,
+      start_location: routeObject.start_location || null,
       status: routeObject.status,
       route_data_json: routeObject.route_data_json,
       alerts: routeObject.alerts || [],
