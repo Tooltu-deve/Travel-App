@@ -95,7 +95,7 @@ class OptimizerRequest(BaseModel):
     current_location: Dict[str, float]  # { lat, lng } - vị trí hiện tại của user
     start_datetime: Optional[str] = None  # ISO 8601 datetime bắt đầu chuyến đi
     # Ngưỡng ECS tối thiểu (chỉ giữ POI có ecs_score > threshold này)
-    ecs_score_threshold: float = 0.2
+    ecs_score_threshold: float = 0.15
     # Ma trận ETA (phút) giữa các POIs, ví dụ: { "poiA": { "poiB": 12, ... }, ... }
     eta_matrix: Optional[Dict[str, Dict[str, float]]] = None
     # ETA từ vị trí hiện tại đến từng POI, ví dụ: { "poiA": 8, "poiB": 15 }
