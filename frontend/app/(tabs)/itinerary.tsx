@@ -1,5 +1,5 @@
 // ItineraryScreen - Trang lịch trình du lịch
-import { getRoutesAPI, TravelRoute } from '@/services/api';
+import { getRoutesAPI, TravelRoute, updateRouteStatusAPI } from '@/services/api';
 import { FontAwesome } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   ScrollView,
   StyleSheet,
@@ -20,64 +21,19 @@ import { SPACING } from '../../constants/spacing';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-interface MockItinerary {
-  id: string;
-  title: string;
-  destination: string;
-  startDate: string;
-  endDate: string;
-  duration: number;
-  status: 'active' | 'upcoming' | 'completed';
-  places: number;
-}
-
-const mockItineraries: MockItinerary[] = [
-  {
-    id: '1',
-    title: 'Hành trình khám phá Đà Lạt',
-    destination: 'Đà Lạt, Lâm Đồng',
-    startDate: '2024-12-20',
-    endDate: '2024-12-25',
-    duration: 5,
-    status: 'active',
-    places: 8,
-  },
-  {
-    id: '2',
-    title: 'Du lịch biển Nha Trang',
-    destination: 'Nha Trang, Khánh Hòa',
-    startDate: '2025-01-10',
-    endDate: '2025-01-15',
-    duration: 5,
-    status: 'upcoming',
-    places: 6,
-  },
-  {
-    id: '3',
-    title: 'Tham quan Hà Nội',
-    destination: 'Hà Nội',
-    startDate: '2024-11-15',
-    endDate: '2024-11-18',
-    duration: 3,
-    status: 'completed',
-    places: 10,
-  },
-];
-
 const ItineraryScreen: React.FC = () => {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [itineraries] = useState<MockItinerary[]>(mockItineraries);
+  const [mainRoute, setMainRoute] = useState<TravelRoute | null>(null);
   const [confirmedRoutes, setConfirmedRoutes] = useState<TravelRoute[]>([]);
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(true);
   const [routesError, setRoutesError] = useState<string | null>(null);
-  
-  const activeItinerary = itineraries.find(it => it.status === 'active');
+  const [isActivating, setIsActivating] = useState<string | null>(null);
   
   useEffect(() => {
     let isMounted = true;
 
-    const fetchConfirmedRoutes = async () => {
+    const fetchAllRoutes = async () => {
       try {
         setIsLoadingRoutes(true);
         setRoutesError(null);
@@ -88,9 +44,16 @@ const ItineraryScreen: React.FC = () => {
           return;
         }
 
-        const response = await getRoutesAPI(token, 'CONFIRMED');
+        // Fetch MAIN route
+        const mainResponse = await getRoutesAPI(token, 'MAIN');
         if (isMounted) {
-          setConfirmedRoutes(response.routes || []);
+          setMainRoute(mainResponse.routes?.[0] || null);
+        }
+
+        // Fetch CONFIRMED routes
+        const confirmedResponse = await getRoutesAPI(token, 'CONFIRMED');
+        if (isMounted) {
+          setConfirmedRoutes(confirmedResponse.routes || []);
         }
       } catch (error: any) {
         console.error('❌ Fetch routes error:', error);
@@ -104,12 +67,62 @@ const ItineraryScreen: React.FC = () => {
       }
     };
 
-    fetchConfirmedRoutes();
+    fetchAllRoutes();
 
     return () => {
       isMounted = false;
     };
   }, []);
+
+  const handleActivateRoute = async (routeId: string) => {
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập.');
+        return;
+      }
+
+      // Show confirmation alert before activating
+      Alert.alert(
+        'Xác nhận kích hoạt',
+        'Bạn có chắc muốn đặt lộ trình này làm lộ trình chính?',
+        [
+          {
+            text: 'Hủy',
+            onPress: () => {},
+            style: 'cancel',
+          },
+          {
+            text: 'Xác nhận',
+            onPress: async () => {
+              setIsActivating(routeId);
+              try {
+                // Update to MAIN status
+                const response = await updateRouteStatusAPI(token, routeId, {
+                  status: 'MAIN',
+                });
+
+                if (response.route) {
+                  // Move from confirmed to main
+                  setMainRoute(response.route);
+                  setConfirmedRoutes(prev => prev.filter(r => r.route_id !== routeId));
+                }
+              } catch (error: any) {
+                console.error('❌ Activate route error:', error);
+                Alert.alert('Lỗi', error.message || 'Không thể kích hoạt lộ trình.');
+              } finally {
+                setIsActivating(null);
+              }
+            },
+            style: 'default',
+          },
+        ]
+      );
+    } catch (error: any) {
+      console.error('❌ Error:', error);
+      Alert.alert('Lỗi', 'Đã xảy ra lỗi.');
+    }
+  };
 
   const handleCreateItinerary = () => {
     router.push('/create-itinerary');
@@ -267,59 +280,79 @@ const ItineraryScreen: React.FC = () => {
         </View>
 
         {/* Current Itinerary Section */}
-        {activeItinerary && (
-          <>
-            <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>Lộ trình hiện tại</Text>
-            <View style={{marginHorizontal: SPACING.lg}}>
-              <View style={styles.currentItineraryCard}>
-                <LinearGradient
-                  colors={[COLORS.primary, COLORS.gradientSecondary]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.currentCardGradient}
-                >
-                  <View style={styles.currentCardHeader}>
-                    <View style={styles.currentCardTitleContainer}>
-                      <Text style={styles.currentCardTitle}>{activeItinerary.title}</Text>
-                      <View style={styles.statusBadge}> 
-                        <Text style={[styles.statusText, { color: getStatusColor(activeItinerary.status) }]}>
-                          {getStatusText(activeItinerary.status)}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                  <View style={styles.currentCardContent}>
-                    <View style={styles.currentCardRow}>
-                      <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
-                      <Text style={styles.currentCardText}>{activeItinerary.destination}</Text>
-                    </View>
-                    <View style={styles.currentCardRow}>
-                      <FontAwesome name="calendar" size={16} color={COLORS.textWhite} />
-                      <Text style={styles.currentCardText}>
-                        {formatDate(activeItinerary.startDate)} - {formatDate(activeItinerary.endDate)}
+        <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>Lộ trình hiện tại</Text>
+        <View style={{marginHorizontal: SPACING.lg}}>
+          {isLoadingRoutes ? (
+            <View style={styles.dataStateContainer}>
+              <ActivityIndicator size="small" color={COLORS.primary} />
+              <Text style={styles.dataStateText}>Đang tải...</Text>
+            </View>
+          ) : mainRoute ? (
+            <View style={styles.currentItineraryCard}>
+              <LinearGradient
+                colors={[COLORS.primary, COLORS.gradientSecondary]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.currentCardGradient}
+              >
+                <View style={styles.currentCardHeader}>
+                  <View style={styles.currentCardTitleContainer}>
+                    <Text style={styles.currentCardTitle}>{getRouteTitle(mainRoute, 0)}</Text>
+                    <View style={styles.statusBadge}> 
+                      <Text style={[styles.statusText, { color: COLORS.success }]}>
+                        Đang hoạt động
                       </Text>
                     </View>
-                    <View style={styles.currentCardInfoRow}>
-                      <View style={styles.currentCardInfoItem}>
-                        <FontAwesome name="clock-o" size={14} color={COLORS.textWhite} />
-                        <Text style={styles.currentCardInfoText}>{activeItinerary.duration} ngày</Text>
-                      </View>
-                      <View style={styles.currentCardInfoItem}>
-                        <FontAwesome name="map-pin" size={14} color={COLORS.textWhite} />
-                        <Text style={styles.currentCardInfoText}>{activeItinerary.places} địa điểm</Text>
-                      </View>
+                  </View>
+                </View>
+                <View style={styles.currentCardContent}>
+                  <View style={styles.currentCardRow}>
+                    <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
+                    <Text style={styles.currentCardText}>{getRouteDestination(mainRoute)}</Text>
+                  </View>
+                  <View style={styles.currentCardRow}>
+                    <FontAwesome name="calendar" size={16} color={COLORS.textWhite} />
+                    <Text style={styles.currentCardText}>
+                      {(() => {
+                        const start = getRouteStartDate(mainRoute);
+                        const end = getRouteEndDate(mainRoute);
+                        if (!start && !end) return 'Chưa xác định';
+                        if (start && !end) return formatDate(start);
+                        if (start && end) {
+                          return `${formatDate(start)} - ${formatDate(end)}`;
+                        }
+                        return 'Chưa xác định';
+                      })()}
+                    </Text>
+                  </View>
+                  <View style={styles.currentCardInfoRow}>
+                    <View style={styles.currentCardInfoItem}>
+                      <FontAwesome name="clock-o" size={14} color={COLORS.textWhite} />
+                      <Text style={styles.currentCardInfoText}>{getRouteDuration(mainRoute)} ngày</Text>
+                    </View>
+                    <View style={styles.currentCardInfoItem}>
+                      <FontAwesome name="map-pin" size={14} color={COLORS.textWhite} />
+                      <Text style={styles.currentCardInfoText}>{getRoutePlaces(mainRoute)} địa điểm</Text>
                     </View>
                   </View>
-                </LinearGradient>
-              </View>
+                </View>
+              </LinearGradient>
             </View>
-          </>
-        )}
+          ) : (
+            <View style={styles.emptyMainContainer}>
+              <FontAwesome name="map-o" size={48} color={COLORS.textSecondary} />
+              <Text style={styles.emptyMainText}>Chưa có lộ trình chính</Text>
+              <Text style={styles.emptyMainSubtext}>
+                Chọn một lộ trình bên dưới để kích hoạt làm lộ trình chính
+              </Text>
+            </View>
+          )}
+        </View>
 
         {/* Other Itineraries Section */}
         <>
           <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>
-            {activeItinerary ? 'Lộ trình khác' : 'Các lộ trình đã lưu'}
+            Lộ trình đã lưu
           </Text>
           <View style={{marginHorizontal: SPACING.lg}}>
             {isLoadingRoutes && (
@@ -342,7 +375,7 @@ const ItineraryScreen: React.FC = () => {
               <View style={styles.dataStateContainer}>
                 <FontAwesome name="info-circle" size={18} color={COLORS.textSecondary} />
                 <Text style={styles.dataStateText}>
-                  Chưa có lộ trình nào được xác nhận.
+                  Chưa có lộ trình nào được lưu.
                 </Text>
               </View>
             )}
@@ -357,28 +390,32 @@ const ItineraryScreen: React.FC = () => {
                   <View style={styles.cardContent}>
                     <View style={styles.cardHeader}>
                       <View style={styles.cardTitleContainer}>
-                        <Text style={styles.cardTitle} numberOfLines={2}>
-                          {getRouteTitle(route, index)}
-                        </Text>
-                        <View
-                          style={[
-                            styles.statusBadgeSmall,
-                            { backgroundColor: getStatusColor('confirmed') + '20' },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.statusTextSmall,
-                              { color: getStatusColor('confirmed') },
-                            ]}
-                          >
-                            {getStatusText('confirmed')}
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.cardTitle} numberOfLines={2}>
+                            {getRouteTitle(route, index)}
                           </Text>
                         </View>
+                        <View style={styles.cardHeaderRight}>
+                          <View
+                            style={[
+                              styles.statusBadgeSmall,
+                              { backgroundColor: getStatusColor('confirmed') + '20' },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.statusTextSmall,
+                                { color: getStatusColor('confirmed') },
+                              ]}
+                            >
+                              {getStatusText('confirmed')}
+                            </Text>
+                          </View>
+                        </View>
                       </View>
-                    </View>
+                      </View>
 
-                    <View style={styles.cardBody}>
+                      <View style={styles.cardBody}>
                       <View style={styles.cardRow}>
                         <FontAwesome name="map-marker" size={14} color={COLORS.primary} />
                         <Text style={styles.cardText}>{getRouteDestination(route)}</Text>
@@ -400,19 +437,47 @@ const ItineraryScreen: React.FC = () => {
                         </Text>
                       </View>
 
-                      <View style={styles.cardFooter}>
-                        <View style={styles.cardInfoItem}>
-                          <FontAwesome name="clock-o" size={12} color={COLORS.textSecondary} />
-                          <Text style={styles.cardInfoText}>
-                            {getRouteDuration(route) || '?'} ngày
-                          </Text>
+                      <View style={styles.cardFooterWithButton}>
+                        <View style={styles.cardFooter}>
+                          <View style={styles.cardInfoItem}>
+                            <FontAwesome name="clock-o" size={12} color={COLORS.textSecondary} />
+                            <Text style={styles.cardInfoText}>
+                              {getRouteDuration(route) || '?'} ngày
+                            </Text>
+                          </View>
+                          <View style={styles.cardInfoItem}>
+                            <FontAwesome name="map-pin" size={12} color={COLORS.textSecondary} />
+                            <Text style={styles.cardInfoText}>
+                              {getRoutePlaces(route)} địa điểm
+                            </Text>
+                          </View>
                         </View>
-                        <View style={styles.cardInfoItem}>
-                          <FontAwesome name="map-pin" size={12} color={COLORS.textSecondary} />
-                          <Text style={styles.cardInfoText}>
-                            {getRoutePlaces(route)} địa điểm
-                          </Text>
-                        </View>
+
+                        {/* Activate Button - Play Icon */}
+                        <TouchableOpacity
+                          style={[
+                            styles.activatePlayButton,
+                            isActivating === route.route_id && styles.activatePlayButtonLoading,
+                          ]}
+                          onPress={() => handleActivateRoute(route.route_id)}
+                          disabled={isActivating === route.route_id}
+                          activeOpacity={0.7}
+                        >
+                          <LinearGradient
+                            colors={
+                              isActivating === route.route_id
+                                ? [COLORS.disabled, COLORS.disabled]
+                                : [COLORS.primary, '#4DB8FF']
+                            }
+                            style={styles.activatePlayButtonGradient}
+                          >
+                            {isActivating === route.route_id ? (
+                              <ActivityIndicator size="small" color={COLORS.textWhite} />
+                            ) : (
+                              <FontAwesome name="play" size={12} color={COLORS.textWhite} />
+                            )}
+                          </LinearGradient>
+                        </TouchableOpacity>
                       </View>
                     </View>
                   </View>
@@ -423,7 +488,7 @@ const ItineraryScreen: React.FC = () => {
         </>
 
         {/* Empty State */}
-        {itineraries.length === 0 && (
+        {!isLoadingRoutes && !mainRoute && confirmedRoutes.length === 0 && (
           <View style={styles.emptyStateContainer}>
             <FontAwesome name="map-o" size={64} color={COLORS.textSecondary} />
             <Text style={styles.emptyStateText}>Chưa có lộ trình nào</Text>
@@ -608,6 +673,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: SPACING.sm,
   },
+  cardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+  },
   cardTitle: {
     fontSize: 18,
     fontWeight: '700',
@@ -651,6 +721,13 @@ const styles = StyleSheet.create({
     paddingTop: SPACING.sm,
     borderTopWidth: 1,
     borderTopColor: COLORS.borderLight,
+    flex: 1,
+  },
+  cardFooterWithButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    marginTop: SPACING.xs,
   },
   cardInfoItem: {
     flexDirection: 'row',
@@ -681,6 +758,76 @@ const styles = StyleSheet.create({
   errorText: {
     color: COLORS.error,
     fontWeight: '600',
+  },
+  emptyMainContainer: {
+    backgroundColor: COLORS.bgMain,
+    borderRadius: 16,
+    padding: SPACING.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: COLORS.borderLight,
+    gap: SPACING.sm,
+  },
+  emptyMainText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textMain,
+    marginTop: SPACING.sm,
+  },
+  emptyMainSubtext: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  activateButton: {
+    marginTop: SPACING.md,
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  activateButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.xs,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+  },
+  activateButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textWhite,
+    letterSpacing: 0.3,
+    textShadowColor: 'rgba(0, 163, 255, 0.4)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  activatePlayButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  activatePlayButtonLoading: {
+    opacity: 0.8,
+  },
+  activatePlayButtonGradient: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyStateContainer: {
     flex: 1,
