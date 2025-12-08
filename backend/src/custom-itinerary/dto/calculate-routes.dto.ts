@@ -56,6 +56,10 @@ export class DayDto {
 export class CalculateRoutesDto {
     @IsNotEmpty()
     travelMode: string; // driving, walking, bicycling, transit
+
+  @IsNotEmpty()
+  destination: string; // Điểm đến chính của lộ trình
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => DayDto)

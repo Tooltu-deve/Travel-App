@@ -50,4 +50,10 @@ export class DayWithRoutesDto {
 export class CalculateRoutesResponseDto {
   days: DayWithRoutesDto[];
   optimize?: boolean;
+  // Meta fields để tương thích với ItineraryResponseDto
+  route_id?: string | null;
+  user_id?: string | null;
+  title?: string | null;
+  destination?: string | null;
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN' | null;
 }
