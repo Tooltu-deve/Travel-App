@@ -12,6 +12,8 @@ export class CustomItineraryService {
   private readonly logger = new Logger(CustomItineraryService.name);
   private readonly openWeatherApiKey: string;
   private readonly googleDirectionsApiKey: string;
+  private readonly googlePlacesApiKey: string;
+  private readonly AUTOCOMPLETE_DELAY_MS = 150; // Debounce delay (ms) để hạn chế call liên tiếp
 
   constructor(
     private readonly httpService: HttpService,
@@ -19,6 +21,7 @@ export class CustomItineraryService {
   ) {
     this.openWeatherApiKey = this.configService.get<string>('OPENWEATHER_API_KEY') || '';
     this.googleDirectionsApiKey = this.configService.get<string>('GOOGLE_DIRECTIONS_API_KEY') || '';
+    this.googlePlacesApiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY') || this.googleDirectionsApiKey || '';
     if (!this.openWeatherApiKey || !this.googleDirectionsApiKey) {
       this.logger.warn('Missing API keys in environment variables');
     }
@@ -132,6 +135,63 @@ export class CustomItineraryService {
     } catch (error) {
       this.logger.error(`Lỗi khi tính toán routes: ${error.message}`);
       throw error;
+    }
+  }
+
+  // --- Places Autocomplete ---
+  async autocompletePlaces(
+    input: string,
+    sessionToken?: string,
+  ): Promise<
+    Array<{
+      description: string;
+      place_id: string;
+      structured_formatting?: {
+        main_text: string;
+        secondary_text: string;
+      };
+    }>
+  > {
+    if (!input || input.trim().length === 0) {
+      throw new BadRequestException('input is required');
+    }
+
+    if (!this.googlePlacesApiKey) {
+      throw new BadRequestException('Google Places API key is not configured');
+    }
+
+    // Optional debounce delay to reduce rapid calls from frontend
+    await new Promise((resolve) => setTimeout(resolve, this.AUTOCOMPLETE_DELAY_MS));
+
+    try {
+      const url = 'https://maps.googleapis.com/maps/api/place/autocomplete/json';
+      const params: any = {
+        input,
+        key: this.googlePlacesApiKey,
+        language: 'vi',
+        components: 'country:VN', // Giới hạn Việt Nam
+      };
+      if (sessionToken) {
+        params.sessiontoken = sessionToken;
+      }
+
+      const response = await firstValueFrom(this.httpService.get(url, { params }));
+      if (response.data.status !== 'OK') {
+        throw new BadRequestException(`Autocomplete API error: ${response.data.status}`);
+      }
+
+      const predictions = Array.isArray(response.data.predictions)
+        ? response.data.predictions.slice(0, 5)
+        : [];
+
+      return predictions.map((p: any) => ({
+        description: p.description,
+        place_id: p.place_id,
+        structured_formatting: p.structured_formatting,
+      }));
+    } catch (error: any) {
+      this.logger.error(`Lỗi khi gọi Places Autocomplete API: ${error.message}`);
+      throw new BadRequestException('Không thể lấy gợi ý địa điểm');
     }
   }
 
