@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CustomItineraryService } from './custom-itinerary.service';
 import { CheckWeatherDto } from './dto/check-weather.dto';
 import { CalculateRoutesDto } from './dto/calculate-routes.dto';
+import { AutocompleteRequestDto } from './dto/autocomplete-request.dto';
 
 /**
  * Controller quản lý custom itinerary
@@ -36,5 +37,18 @@ export class CustomItineraryController {
   @Post('calculate-routes')
   async calculateRoutes(@Body() dto: CalculateRoutesDto) {
     return this.customItineraryService.calculateRoutes(dto);
+  }
+
+  /**
+   * POST /custom-itinerary/autocomplete
+   * Gợi ý địa điểm bằng Google Places Autocomplete, giới hạn trong Việt Nam
+   * Body:
+   * - input: chuỗi người dùng nhập (bắt buộc)
+   * - sessionToken: optional, để gom billing trong một session
+   * Debounce 150ms phía server, trả tối đa 5 gợi ý
+   */
+  @Post('autocomplete')
+  async autocomplete(@Body() dto: AutocompleteRequestDto) {
+    return this.customItineraryService.autocompletePlaces(dto.input, dto.sessionToken);
   }
 }

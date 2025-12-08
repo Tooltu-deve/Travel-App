@@ -12,6 +12,8 @@ export class CustomItineraryService {
   private readonly logger = new Logger(CustomItineraryService.name);
   private readonly openWeatherApiKey: string;
   private readonly googleDirectionsApiKey: string;
+  private readonly googlePlacesApiKey: string;
+  private readonly AUTOCOMPLETE_DELAY_MS = 150; // Debounce delay (ms) để hạn chế call liên tiếp
 
   constructor(
     private readonly httpService: HttpService,
@@ -19,6 +21,7 @@ export class CustomItineraryService {
   ) {
     this.openWeatherApiKey = this.configService.get<string>('OPENWEATHER_API_KEY') || '';
     this.googleDirectionsApiKey = this.configService.get<string>('GOOGLE_DIRECTIONS_API_KEY') || '';
+    this.googlePlacesApiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY') || this.googleDirectionsApiKey || '';
     if (!this.openWeatherApiKey || !this.googleDirectionsApiKey) {
       this.logger.warn('Missing API keys in environment variables');
     }
@@ -45,11 +48,23 @@ export class CustomItineraryService {
 
   private async calculateRoutesForDay(places: PlaceDto[], travelMode: string, optimize?: boolean): Promise<PlaceWithRouteDto[]> {
     const result: PlaceWithRouteDto[] = [];
-    for (let i = 0; i < places.length; i++) {
-      const currentPlace = places[i];
+    
+    // Geocode tất cả places trước để có tọa độ
+    const placesWithLocation = await Promise.all(
+      places.map(async (place) => {
+        const location = await this.getCityCoordinates(place.address);
+        return {
+          ...place,
+          location,
+        };
+      })
+    );
+    
+    for (let i = 0; i < placesWithLocation.length; i++) {
+      const currentPlace = placesWithLocation[i];
       let placeWithRoute: PlaceWithRouteDto;
-      if (i < places.length - 1) {
-        const nextPlace = places[i + 1];
+      if (i < placesWithLocation.length - 1) {
+        const nextPlace = placesWithLocation[i + 1];
         if (!travelMode) {
           throw new BadRequestException('travelMode is required for each day and must be provided by the frontend');
         }
@@ -64,6 +79,7 @@ export class CustomItineraryService {
         placeWithRoute = {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
+          address: currentPlace.address,
           location: currentPlace.location,
           // travelMode chỉ dùng cho logic, không trả về response
           encoded_polyline: route.overview_polyline.points,
@@ -73,6 +89,7 @@ export class CustomItineraryService {
         placeWithRoute = {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
+          address: currentPlace.address,
           location: currentPlace.location,
           // travelMode chỉ dùng cho logic, không trả về response
           encoded_polyline: null,
@@ -98,14 +115,102 @@ export class CustomItineraryService {
         if (!day.places || !Array.isArray(day.places)) {
           throw new BadRequestException('Invalid input: each day must have places array');
         }
+        if (!day.startLocation) {
+          throw new BadRequestException('Invalid input: each day must have startLocation');
+        }
+        
+        // Geocode startLocation để lấy tọa độ
+        const startLocationCoordinates = await this.getCityCoordinates(day.startLocation);
+        
         const processedPlaces = await this.calculateRoutesForDay(day.places, itineraryData.travelMode, itineraryData.optimize);
-        processedDays.push({ dayNumber: day.dayNumber, places: processedPlaces });
+        processedDays.push({ 
+          dayNumber: day.dayNumber, 
+          startLocation: day.startLocation,
+          startLocationCoordinates,
+          places: processedPlaces 
+        });
       }
       this.logger.log(`Successfully calculated routes for ${days.length} days`);
       return { days: processedDays, optimize: itineraryData.optimize };
     } catch (error) {
       this.logger.error(`Lỗi khi tính toán routes: ${error.message}`);
       throw error;
+    }
+  }
+
+  // --- Places Autocomplete ---
+  async autocompletePlaces(
+    userInput: string,
+    token?: string,
+  ): Promise<
+    Array<{
+      description: string;
+      place_id: string;
+      structured_formatting?: {
+        main_text: string;
+        secondary_text: string;
+      };
+    }>
+  > {
+    if (!userInput || userInput.trim().length === 0) {
+      throw new BadRequestException('input is required');
+    }
+
+    if (!this.googlePlacesApiKey) {
+      throw new BadRequestException('Google Places API key is not configured');
+    }
+
+    // Optional debounce delay to reduce rapid calls from frontend
+    await new Promise((resolve) => setTimeout(resolve, this.AUTOCOMPLETE_DELAY_MS));
+
+    try {
+      // Google Places API (new) v1 autocomplete
+      const url = 'https://places.googleapis.com/v1/places:autocomplete';
+      const body: any = {
+        input: userInput,
+        languageCode: 'vi',
+        includedRegionCodes: ['VN'], // Giới hạn Việt Nam
+        sessionToken: token || undefined,
+      };
+      const headers = {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': this.googlePlacesApiKey,
+        'X-Goog-FieldMask':
+          'suggestions.placePrediction.placeId,' +
+          'suggestions.placePrediction.text,' +
+          'suggestions.placePrediction.structuredFormat',
+      };
+
+      const response = await firstValueFrom(this.httpService.post(url, body, { headers }));
+      const predictions = Array.isArray(response.data?.suggestions)
+        ? response.data.suggestions
+        : [];
+
+      return predictions
+        .map((p: any) => {
+          const place = p.placePrediction;
+          const struct = place?.structuredFormat;
+          return {
+            description: place?.text?.text,
+            place_id: place?.placeId,
+            structured_formatting: struct
+              ? {
+                  main_text: struct.mainText?.text,
+                  secondary_text: struct.secondaryText?.text,
+                }
+              : undefined,
+          };
+        })
+        .filter((p: any) => p.place_id && p.description)
+        .slice(0, 5);
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.error?.message ||
+        error?.response?.data?.status ||
+        error?.message ||
+        'Unknown error';
+      this.logger.error(`Lỗi khi gọi Places Autocomplete API: ${msg}`);
+      throw new BadRequestException('Không thể lấy gợi ý địa điểm');
     }
   }
 
