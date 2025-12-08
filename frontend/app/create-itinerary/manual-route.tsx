@@ -69,8 +69,6 @@ const ManualRouteScreen: React.FC = () => {
   // UI states
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showDestinationModal, setShowDestinationModal] = useState(false);
-  const [isGeocoding, setIsGeocoding] = useState(false);
-  const [currentLocationCoords, setCurrentLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   const handleGoBack = () => {
     router.back();
@@ -108,62 +106,6 @@ const ManualRouteScreen: React.FC = () => {
         }
         setEndDate(selectedDate);
       }
-    }
-  };
-
-  const geocodeAddress = async (address: string): Promise<{ lat: number; lng: number } | null> => {
-    if (!address.trim()) return null;
-
-    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
-    if (!apiKey) {
-      Alert.alert('Lỗi', 'Google Geocoding API key chưa được cấu hình');
-      return null;
-    }
-
-    try {
-      setIsGeocoding(true);
-      const encodedAddress = encodeURIComponent(address);
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${apiKey}`;
-
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.status === 'OK' && data.results && data.results.length > 0) {
-        const location = data.results[0].geometry.location;
-        return { lat: location.lat, lng: location.lng };
-      } else {
-        throw new Error(data.error_message || `Không tìm thấy địa chỉ: ${data.status}`);
-      }
-    } catch (error: any) {
-      console.error('❌ Geocoding error:', error);
-      throw error;
-    } finally {
-      setIsGeocoding(false);
-    }
-  };
-
-  const handleGeocodeLocation = async () => {
-    if (!currentLocationText.trim()) {
-      Alert.alert('Lỗi', 'Vui lòng nhập địa chỉ');
-      return;
-    }
-
-    Keyboard.dismiss();
-
-    try {
-      const coords = await geocodeAddress(currentLocationText);
-      if (coords) {
-        setCurrentLocationCoords(coords);
-        Alert.alert(
-          'Thành công',
-          `Đã tìm thấy vị trí:\nLatitude: ${coords.lat.toFixed(6)}\nLongitude: ${coords.lng.toFixed(6)}`
-        );
-      } else {
-        Alert.alert('Lỗi', 'Không tìm thấy vị trí cho địa chỉ này');
-      }
-    } catch (error: any) {
-      Alert.alert('Lỗi', error.message || 'Không thể chuyển đổi địa chỉ thành tọa độ');
-      setCurrentLocationCoords(null);
     }
   };
 
@@ -207,11 +149,6 @@ const ManualRouteScreen: React.FC = () => {
       animateStepChange(2);
       return;
     }
-    if (!currentLocationCoords) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng xác nhận vị trí xuất phát bằng cách nhấn nút tìm kiếm');
-      animateStepChange(2);
-      return;
-    }
     if (!destination) {
       Alert.alert('Thiếu thông tin', 'Vui lòng chọn điểm đến');
       animateStepChange(3);
@@ -225,8 +162,8 @@ const ManualRouteScreen: React.FC = () => {
         endDate: endDate.toISOString(),
         durationDays: calculateDays().toString(),
         currentLocation: currentLocationText,
-        currentLocationLat: currentLocationCoords.lat.toString(),
-        currentLocationLng: currentLocationCoords.lng.toString(),
+        currentLocationLat: '0',
+        currentLocationLng: '0',
         destination,
       },
     });
@@ -299,36 +236,19 @@ const ManualRouteScreen: React.FC = () => {
             <Text style={styles.stepTitle}>Vị trí xuất phát</Text>
             <Text style={styles.stepDescription}>Bạn sẽ xuất phát từ đâu?</Text>
             
-            <View style={styles.locationInputContainer}>
-              <TextInput
-                style={styles.locationInput}
-                placeholder="Nhập địa chỉ của bạn..."
-                placeholderTextColor={COLORS.textSecondary}
-                value={currentLocationText}
-                onChangeText={(text) => {
-                  setCurrentLocationText(text);
-                  setCurrentLocationCoords(null);
-                }}
-                editable={!isGeocoding}
-                multiline={false}
-              />
-              <TouchableOpacity
-                style={[styles.searchButton, isGeocoding && styles.searchButtonDisabled]}
-                onPress={handleGeocodeLocation}
-                disabled={isGeocoding || !currentLocationText.trim()}
-              >
-                {isGeocoding ? (
-                  <ActivityIndicator size="small" color={COLORS.textWhite} />
-                ) : (
-                  <FontAwesome name="location-arrow" size={20} color={COLORS.textWhite} />
-                )}
-              </TouchableOpacity>
-            </View>
+            <TextInput
+              style={styles.locationInputFull}
+              placeholder="Nhập địa chỉ của bạn..."
+              placeholderTextColor={COLORS.textSecondary}
+              value={currentLocationText}
+              onChangeText={setCurrentLocationText}
+              multiline={false}
+            />
 
-            {currentLocationCoords && (
+            {currentLocationText.trim().length > 0 && (
               <View style={styles.coordsConfirmed}>
                 <FontAwesome name="check-circle" size={16} color={COLORS.success} />
-                <Text style={styles.coordsConfirmedText}>Đã xác định vị trí</Text>
+                <Text style={styles.coordsConfirmedText}>Đã nhập vị trí</Text>
               </View>
             )}
           </View>
@@ -684,14 +604,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.textWhite,
   },
-  locationInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
+  locationInputFull: {
     width: '100%',
-  },
-  locationInput: {
-    flex: 1,
     backgroundColor: `${COLORS.primary}10`,
     borderRadius: 16,
     paddingVertical: SPACING.md,
@@ -701,17 +615,6 @@ const styles = StyleSheet.create({
     color: COLORS.textDark,
     borderWidth: 1,
     borderColor: `${COLORS.primary}30`,
-  },
-  searchButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 16,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchButtonDisabled: {
-    backgroundColor: COLORS.textSecondary,
   },
   coordsConfirmed: {
     flexDirection: 'row',

@@ -32,28 +32,34 @@ const SmartAgentFormScreen: React.FC = () => {
   // Form state
   const [budget, setBudget] = useState<string>('affordable');
   const [destination, setDestination] = useState<string>('');
-  const [userMood, setUserMood] = useState<string>('');
-  const [durationDays, setDurationDays] = useState<string>('3');
-  const [currentLocationText, setCurrentLocationText] = useState<string>('');
-  const [currentLocationCoords, setCurrentLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
+  const [startLocationText, setStartLocationText] = useState<string>('');
+  const [placesPerDay, setPlacesPerDay] = useState<number>(3);
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [startTime, setStartTime] = useState<Date | null>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
+  const [isMoodDropdownOpen, setIsMoodDropdownOpen] = useState(false);
 
   // Available options - Sử dụng đúng các giá trị budget từ database
   const budgetOptions = [
-    { value: 'free', label: 'Miễn phí' },
     { value: 'cheap', label: 'Rẻ' },
     { value: 'affordable', label: 'Hợp lý' },
     { value: 'expensive', label: 'Đắt' },
   ];
 
   const moodOptions = [
-    'adventurous', 'relaxed', 'romantic', 'family-friendly', 
-    'cultural', 'nature', 'foodie', 'nightlife'
+    { value: 'adventurous', label: 'Phiêu lưu' },
+    { value: 'relaxed', label: 'Thư giãn' },
+    { value: 'romantic', label: 'Lãng mạn' },
+    { value: 'family-friendly', label: 'Gia đình' },
+    { value: 'cultural', label: 'Văn hóa' },
+    { value: 'nature', label: 'Thiên nhiên' },
+    { value: 'foodie', label: 'Ẩm thực' },
+    { value: 'nightlife', label: 'Về đêm' },
   ];
+
+  const placesPerDayOptions = [1, 2, 3, 4, 5];
 
   // Danh sách các thành phố từ scrape_poi_reviews.py
   const vietnamCities = [
@@ -92,63 +98,15 @@ const SmartAgentFormScreen: React.FC = () => {
     router.back();
   };
 
-  const geocodeAddress = async (address: string): Promise<{ lat: number; lng: number } | null> => {
-    if (!address.trim()) {
-      return null;
-    }
-
-    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
-    if (!apiKey) {
-      throw new Error('Google Geocoding API key chưa được cấu hình. Vui lòng thêm EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY vào .env');
-    }
-
-    try {
-      setIsGeocoding(true);
-      const encodedAddress = encodeURIComponent(address);
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${apiKey}`;
-
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.status === 'OK' && data.results && data.results.length > 0) {
-        const location = data.results[0].geometry.location;
-        return {
-          lat: location.lat,
-          lng: location.lng,
-        };
-      } else {
-        const errorMessage = data.error_message || `Geocoding failed: ${data.status}`;
-        throw new Error(errorMessage);
+  const toggleMoodSelection = (moodValue: string) => {
+    setSelectedMoods(prev => {
+      if (prev.includes(moodValue)) {
+        return prev.filter(m => m !== moodValue);
+      } else if (prev.length < 3) {
+        return [...prev, moodValue];
       }
-    } catch (error: any) {
-      console.error('❌ Geocoding error:', error);
-      throw error;
-    } finally {
-      setIsGeocoding(false);
-    }
-  };
-
-  const handleGeocodeLocation = async () => {
-    if (!currentLocationText.trim()) {
-      Alert.alert('Lỗi', 'Vui lòng nhập địa chỉ');
-      return;
-    }
-
-    try {
-      const coords = await geocodeAddress(currentLocationText);
-      if (coords) {
-        setCurrentLocationCoords(coords);
-        Alert.alert(
-          'Thành công',
-          `Đã tìm thấy vị trí:\nLatitude: ${coords.lat.toFixed(6)}\nLongitude: ${coords.lng.toFixed(6)}`
-        );
-      } else {
-        Alert.alert('Lỗi', 'Không tìm thấy vị trí cho địa chỉ này');
-      }
-    } catch (error: any) {
-      Alert.alert('Lỗi', error.message || 'Không thể chuyển đổi địa chỉ thành tọa độ');
-      setCurrentLocationCoords(null);
-    }
+      return prev;
+    });
   };
 
   const handleSubmit = async () => {
@@ -158,19 +116,13 @@ const SmartAgentFormScreen: React.FC = () => {
       return;
     }
 
-    if (!userMood.trim()) {
-      Alert.alert('Lỗi', 'Vui lòng chọn tâm trạng');
+    if (selectedMoods.length === 0) {
+      Alert.alert('Lỗi', 'Vui lòng chọn ít nhất một tâm trạng');
       return;
     }
 
-    const days = parseInt(durationDays);
-    if (isNaN(days) || days < 1) {
-      Alert.alert('Lỗi', 'Số ngày phải lớn hơn 0');
-      return;
-    }
-
-    if (!currentLocationCoords) {
-      Alert.alert('Lỗi', 'Vui lòng nhập và xác nhận vị trí hiện tại');
+    if (!startLocationText.trim()) {
+      Alert.alert('Lỗi', 'Vui lòng nhập vị trí xuất phát');
       return;
     }
 
@@ -189,12 +141,10 @@ const SmartAgentFormScreen: React.FC = () => {
       const requestBody: any = {
         budget,
         destination: destination.trim(),
-        user_mood: userMood.trim(),
-        duration_days: days,
-        current_location: {
-          lat: currentLocationCoords.lat,
-          lng: currentLocationCoords.lng,
-        },
+        user_mood: selectedMoods.join(', '),
+        duration_days: 1,
+        places_per_day: placesPerDay,
+        start_location: startLocationText.trim(),
       };
 
       // Add optional fields
@@ -215,6 +165,15 @@ const SmartAgentFormScreen: React.FC = () => {
 
       console.log('✅ Route generated:', response);
 
+      // Kiểm tra response có đầy đủ dữ liệu không
+      if (!response || !response.route) {
+        throw new Error('Backend không trả về dữ liệu lộ trình');
+      }
+
+      if (!response.route.route_data_json) {
+        throw new Error('Dữ liệu lộ trình không hợp lệ (thiếu route_data_json)');
+      }
+
       // Navigate to route preview screen
       router.push({
         pathname: '/create-itinerary/route-preview',
@@ -222,11 +181,8 @@ const SmartAgentFormScreen: React.FC = () => {
           routeData: JSON.stringify(response.route.route_data_json),
           routeId: response.route.route_id,
           destination: destination,
-          durationDays: durationDays,
-          currentLocation: JSON.stringify({
-            lat: currentLocationCoords.lat,
-            lng: currentLocationCoords.lng,
-          }),
+          durationDays: '1',
+          startLocation: startLocationText.trim(),
         },
       });
     } catch (error: any) {
@@ -366,70 +322,137 @@ const SmartAgentFormScreen: React.FC = () => {
             </TouchableOpacity>
           </Modal>
 
-          {/* User Mood */}
+          {/* User Mood - Dropdown với multi-select (tối đa 3) */}
           <View style={styles.section}>
-            <Text style={styles.label}>Tâm trạng *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Ví dụ: adventurous, relaxed, romantic..."
-              placeholderTextColor={COLORS.textSecondary}
-              value={userMood}
-              onChangeText={setUserMood}
-            />
-            <Text style={styles.hint}>
-              Gợi ý: adventurous, relaxed, romantic, family-friendly, cultural, nature, foodie, nightlife
-            </Text>
-          </View>
-
-          {/* Duration Days */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Số ngày du lịch *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="3"
-              placeholderTextColor={COLORS.textSecondary}
-              value={durationDays}
-              onChangeText={setDurationDays}
-              keyboardType="numeric"
-            />
-          </View>
-
-          {/* Current Location */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Vị trí hiện tại *</Text>
-            <View style={styles.locationInputRow}>
-              <TextInput
-                style={[styles.input, styles.locationTextInput]}
-                placeholder="Ví dụ: Hà Nội, 123 Đường ABC, Quận 1, TP.HCM..."
-                placeholderTextColor={COLORS.textSecondary}
-                value={currentLocationText}
-                onChangeText={setCurrentLocationText}
-                editable={!isGeocoding}
-              />
-              <TouchableOpacity
-                style={[styles.geocodeButton, isGeocoding && styles.geocodeButtonDisabled]}
-                onPress={handleGeocodeLocation}
-                disabled={isGeocoding}
-                activeOpacity={0.7}
-              >
-                {isGeocoding ? (
-                  <ActivityIndicator size="small" color={COLORS.textWhite} />
-                ) : (
-                  <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
-                )}
-              </TouchableOpacity>
-            </View>
-            {currentLocationCoords && (
-              <View style={styles.coordsDisplay}>
-                <Text style={styles.coordsText}>
-                  <FontAwesome name="check-circle" size={14} color={COLORS.success} />{' '}
-                  Tọa độ: {currentLocationCoords.lat.toFixed(6)}, {currentLocationCoords.lng.toFixed(6)}
-                </Text>
+            <Text style={styles.label}>Tâm trạng * (Chọn tối đa 3)</Text>
+            <TouchableOpacity
+              style={styles.dropdownButton}
+              onPress={() => setIsMoodDropdownOpen(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.dropdownButtonText, selectedMoods.length === 0 && styles.dropdownButtonTextPlaceholder]}>
+                {selectedMoods.length > 0
+                  ? selectedMoods.map(m => moodOptions.find(opt => opt.value === m)?.label).join(', ')
+                  : 'Chọn tâm trạng...'}
+              </Text>
+              <FontAwesome name="chevron-down" size={16} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+            {selectedMoods.length > 0 && (
+              <View style={styles.selectedMoodsContainer}>
+                {selectedMoods.map(mood => (
+                  <View key={mood} style={styles.moodTag}>
+                    <Text style={styles.moodTagText}>
+                      {moodOptions.find(opt => opt.value === mood)?.label}
+                    </Text>
+                    <TouchableOpacity onPress={() => toggleMoodSelection(mood)}>
+                      <FontAwesome name="times" size={12} color={COLORS.textWhite} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
               </View>
             )}
-            <Text style={styles.hint}>
-              Nhập địa chỉ và nhấn nút để chuyển đổi thành tọa độ GPS
-            </Text>
+          </View>
+
+          {/* Mood Dropdown Modal */}
+          <Modal
+            visible={isMoodDropdownOpen}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setIsMoodDropdownOpen(false)}
+          >
+            <TouchableOpacity
+              style={styles.modalOverlay}
+              activeOpacity={1}
+              onPress={() => setIsMoodDropdownOpen(false)}
+            >
+              <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Chọn tâm trạng (tối đa 3)</Text>
+                  <TouchableOpacity
+                    onPress={() => setIsMoodDropdownOpen(false)}
+                    style={styles.modalCloseButton}
+                  >
+                    <FontAwesome name="times" size={20} color={COLORS.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  data={moodOptions}
+                  keyExtractor={(item) => item.value}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={[
+                        styles.dropdownItem,
+                        selectedMoods.includes(item.value) && styles.dropdownItemActive,
+                        selectedMoods.length >= 3 && !selectedMoods.includes(item.value) && styles.dropdownItemDisabled,
+                      ]}
+                      onPress={() => toggleMoodSelection(item.value)}
+                      disabled={selectedMoods.length >= 3 && !selectedMoods.includes(item.value)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownItemText,
+                          selectedMoods.includes(item.value) && styles.dropdownItemTextActive,
+                          selectedMoods.length >= 3 && !selectedMoods.includes(item.value) && styles.dropdownItemTextDisabled,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                      {selectedMoods.includes(item.value) && (
+                        <FontAwesome name="check" size={16} color={COLORS.primary} />
+                      )}
+                    </TouchableOpacity>
+                  )}
+                  style={styles.dropdownList}
+                />
+                <TouchableOpacity
+                  style={styles.moodConfirmButton}
+                  onPress={() => setIsMoodDropdownOpen(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.moodConfirmButtonText}>Xong</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </Modal>
+
+          {/* Start Location */}
+          <View style={styles.section}>
+            <Text style={styles.label}>Vị trí xuất phát *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Ví dụ: Hà Nội, 123 Đường ABC, Quận 1, TP.HCM..."
+              placeholderTextColor={COLORS.textSecondary}
+              value={startLocationText}
+              onChangeText={setStartLocationText}
+            />
+          </View>
+
+          {/* Places Per Day */}
+          <View style={styles.section}>
+            <Text style={styles.label}>Số điểm đi trong 1 ngày *</Text>
+            <View style={styles.optionsRow}>
+              {placesPerDayOptions.map((num) => (
+                <TouchableOpacity
+                  key={num}
+                  style={[
+                    styles.numberOptionButton,
+                    placesPerDay === num && styles.optionButtonActive,
+                  ]}
+                  onPress={() => setPlacesPerDay(num)}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.optionButtonText,
+                      placesPerDay === num && styles.optionButtonTextActive,
+                    ]}
+                  >
+                    {num}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           {/* Start Date and Time */}
@@ -1077,6 +1100,55 @@ const styles = StyleSheet.create({
   iosDateTimePicker: {
     width: '100%',
     height: 200,
+  },
+  // New styles for mood tags and places per day
+  selectedMoodsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.xs,
+    marginTop: SPACING.sm,
+  },
+  moodTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    borderRadius: 16,
+  },
+  moodTagText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textWhite,
+  },
+  moodConfirmButton: {
+    margin: SPACING.lg,
+    paddingVertical: SPACING.md,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  moodConfirmButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textWhite,
+  },
+  dropdownItemDisabled: {
+    opacity: 0.5,
+  },
+  dropdownItemTextDisabled: {
+    color: COLORS.textSecondary,
+  },
+  numberOptionButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: COLORS.bgMain,
+    borderWidth: 2,
+    borderColor: COLORS.borderLight,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

@@ -14,6 +14,8 @@ export class CustomItineraryService {
   private readonly googleDirectionsApiKey: string;
   private readonly googlePlacesApiKey: string;
   private readonly AUTOCOMPLETE_DELAY_MS = 150; // Debounce delay (ms) để hạn chế call liên tiếp
+  private readonly googlePlacesApiKey: string;
+  private readonly AUTOCOMPLETE_DELAY_MS = 150; // Debounce delay (ms) để hạn chế call liên tiếp
 
   constructor(
     private readonly httpService: HttpService,
@@ -115,6 +117,13 @@ export class CustomItineraryService {
         if (!day.places || !Array.isArray(day.places)) {
           throw new BadRequestException('Invalid input: each day must have places array');
         }
+        if (!day.startLocation) {
+          throw new BadRequestException('Invalid input: each day must have startLocation');
+        }
+        
+        // Geocode startLocation để lấy tọa độ
+        const startLocationCoordinates = await this.getCityCoordinates(day.startLocation);
+        
         if (!day.startLocation) {
           throw new BadRequestException('Invalid input: each day must have startLocation');
         }

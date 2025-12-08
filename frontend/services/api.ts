@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
+const API_BASE_URL = 'http://10.0.2.2:3000'; // ⬅️ Local URL for Android emulator
 // ============================================
 // TYPES
 // ============================================
@@ -953,6 +953,180 @@ export const getPlacePhotoAPI = (
 };
 
 // ============================================
+// CUSTOM ITINERARY API (Lộ trình thủ công)
+// ============================================
+
+/**
+ * Interface cho location của place
+ */
+interface PlaceLocation {
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Interface cho place trong request calculate routes
+ */
+interface CalculateRoutePlaceInput {
+  placeId: string;
+  name: string;
+  address: string;
+}
+
+/**
+ * Interface cho day trong request calculate routes
+ */
+interface CalculateRouteDayInput {
+  dayNumber: number;
+  startLocation: string; // Địa chỉ điểm xuất phát dạng string
+  places: CalculateRoutePlaceInput[];
+}
+
+/**
+ * Interface cho request calculate routes
+ */
+interface CalculateRoutesRequest {
+  travelMode: 'driving' | 'walking' | 'bicycling' | 'transit';
+  optimize?: boolean;
+  days: CalculateRouteDayInput[];
+}
+
+/**
+ * Interface cho place với route info trong response
+ */
+interface PlaceWithRoute {
+  placeId: string;
+  name: string;
+  address: string;
+  location: PlaceLocation;
+  encoded_polyline: string | null;
+  travel_duration_minutes: number | null;
+}
+
+/**
+ * Interface cho day với routes trong response
+ */
+interface DayWithRoutes {
+  dayNumber: number;
+  startLocation: string;
+  startLocationCoordinates: PlaceLocation;
+  places: PlaceWithRoute[];
+}
+
+/**
+ * Interface cho response calculate routes
+ */
+interface CalculateRoutesResponse {
+  days: DayWithRoutes[];
+  optimize?: boolean;
+}
+
+/**
+ * Interface cho request check weather
+ */
+interface CheckWeatherRequest {
+  departureDate: string;
+  returnDate: string;
+  destination: string;
+}
+
+/**
+ * Interface cho response check weather
+ */
+interface CheckWeatherResponse {
+  severity: 'normal' | 'warning' | 'danger';
+  alert: string;
+}
+
+/**
+ * calculateRoutesAPI: Tính toán đường đi và polyline cho lộ trình thủ công
+ * 
+ * @param token JWT token
+ * @param data Request body chứa days, travelMode, optimize
+ * 
+ * Endpoint: POST /api/v1/custom-itinerary/calculate-routes
+ * Headers: Authorization: Bearer <token>
+ * Response: { days: [...], optimize: boolean }
+ */
+export const calculateRoutesAPI = async (
+  token: string,
+  data: CalculateRoutesRequest,
+): Promise<CalculateRoutesResponse> => {
+  return makeRequest<CalculateRoutesResponse>('/api/v1/custom-itinerary/calculate-routes', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+};
+
+/**
+ * checkWeatherAPI: Kiểm tra thời tiết cho chuyến đi
+ * 
+ * @param token JWT token
+ * @param data Request body chứa departureDate, returnDate, destination
+ * 
+ * Endpoint: POST /api/v1/custom-itinerary/weather-check
+ * Headers: Authorization: Bearer <token>
+ * Response: { severity, alert }
+ */
+export const checkWeatherAPI = async (
+  token: string,
+  data: CheckWeatherRequest,
+): Promise<CheckWeatherResponse> => {
+  return makeRequest<CheckWeatherResponse>('/api/v1/custom-itinerary/weather-check', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+};
+
+/**
+ * Interface cho autocomplete prediction
+ */
+export interface AutocompletePrediction {
+  description: string;
+  place_id: string;
+  structured_formatting?: {
+    main_text: string;
+    secondary_text: string;
+  };
+}
+
+/**
+ * autocompleteAPI: Gợi ý địa điểm bằng Google Places Autocomplete
+ * 
+ * @param token JWT token
+ * @param input Chuỗi người dùng nhập
+ * @param sessionToken Session token để gom billing
+ * 
+ * Endpoint: GET /api/v1/custom-itinerary/autocomplete
+ * Headers: Authorization: Bearer <token>
+ * Response: Array of predictions
+ */
+export const autocompleteAPI = async (
+  token: string,
+  input: string,
+  sessionToken?: string,
+): Promise<AutocompletePrediction[]> => {
+  const params = new URLSearchParams({ input });
+  if (sessionToken) {
+    params.append('sessionToken', sessionToken);
+  }
+  return makeRequest<AutocompletePrediction[]>(`/api/v1/custom-itinerary/autocomplete?${params.toString()}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+// ============================================
 // EXPORT
 // ============================================
 export default {
@@ -983,4 +1157,7 @@ export default {
   getPlacesAPI,
   chatWithAIAPI,
   resetConversationAPI,
+  calculateRoutesAPI,
+  checkWeatherAPI,
+  autocompleteAPI,
 };

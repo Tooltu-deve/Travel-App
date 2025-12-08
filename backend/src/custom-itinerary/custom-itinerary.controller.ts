@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CustomItineraryService } from './custom-itinerary.service';
 import { CheckWeatherDto } from './dto/check-weather.dto';
 import { CalculateRoutesDto } from './dto/calculate-routes.dto';
+import { AutocompleteRequestDto } from './dto/autocomplete-request.dto';
 
 /**
  * Controller quản lý custom itinerary

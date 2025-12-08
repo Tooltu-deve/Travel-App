@@ -14,19 +14,24 @@ import {
   PanResponder,
   GestureResponderEvent,
   PanResponderGestureState,
+  TextInput,
+  Modal,
 } from 'react-native';
 import { FontAwesome, MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
+import { calculateRoutesAPI, checkWeatherAPI, autocompleteAPI, AutocompletePrediction } from '../../services/api';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const BOTTOM_SHEET_MAX_HEIGHT = SCREEN_HEIGHT * 0.75;
 const BOTTOM_SHEET_MIN_HEIGHT = SCREEN_HEIGHT * 0.35;
 const SWIPE_THRESHOLD = 80;
 const DELETE_BUTTON_WIDTH = 80;
+const AUTOCOMPLETE_DEBOUNCE_MS = 300; // Debounce delay for autocomplete
 
 interface TripInfo {
   startDate: string;
@@ -58,6 +63,7 @@ interface SwipeablePlaceCardProps {
   totalPlaces: number;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onDelete: () => void;
+  onEdit: (place: Place) => void;
   onLongPress: () => void;
   isSelectionMode: boolean;
   isSelected: boolean;
@@ -73,6 +79,7 @@ const SwipeablePlaceCard: React.FC<SwipeablePlaceCardProps> = ({
   totalPlaces,
   onReorder,
   onDelete,
+  onEdit,
   onLongPress,
   isSelectionMode,
   isSelected,
@@ -145,16 +152,18 @@ const SwipeablePlaceCard: React.FC<SwipeablePlaceCardProps> = ({
         return !isSelectionModeRef.current && !isDragModeRef.current && Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dy) < 10;
       },
       onPanResponderMove: (_, gestureState) => {
+        const swipeWidth = DELETE_BUTTON_WIDTH * 2;
         if (gestureState.dx < 0) {
-          translateX.setValue(Math.max(gestureState.dx, -DELETE_BUTTON_WIDTH));
+          translateX.setValue(Math.max(gestureState.dx, -swipeWidth));
         } else if (isSwipeOpenRef.current) {
-          translateX.setValue(Math.min(gestureState.dx - DELETE_BUTTON_WIDTH, 0));
+          translateX.setValue(Math.min(gestureState.dx - swipeWidth, 0));
         }
       },
       onPanResponderRelease: (_, gestureState) => {
+        const swipeWidth = DELETE_BUTTON_WIDTH * 2;
         if (gestureState.dx < -SWIPE_THRESHOLD / 2) {
           Animated.spring(translateX, {
-            toValue: -DELETE_BUTTON_WIDTH,
+            toValue: -swipeWidth,
             useNativeDriver: true,
             bounciness: 5,
           }).start();
@@ -176,6 +185,15 @@ const SwipeablePlaceCard: React.FC<SwipeablePlaceCardProps> = ({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
+        // Đóng swipe nếu đang mở trước khi bắt đầu drag
+        if (isSwipeOpenRef.current) {
+          Animated.spring(translateX, {
+            toValue: 0,
+            useNativeDriver: true,
+            bounciness: 5,
+          }).start();
+          setIsSwipeOpen(false);
+        }
         setIsDragMode(true);
         onDragStartRef.current();
       },
@@ -222,19 +240,31 @@ const SwipeablePlaceCard: React.FC<SwipeablePlaceCardProps> = ({
 
   return (
     <View style={[styles.swipeableContainer, isDragging && styles.draggingContainer]}>
-      {/* Delete button behind */}
-      <View style={styles.deleteButtonContainer}>
-        <TouchableOpacity
-          style={styles.deleteButton}
-          onPress={() => {
-            closeSwipe();
-            onDelete();
-          }}
-        >
-          <Ionicons name="trash" size={24} color={COLORS.textWhite} />
-          <Text style={styles.deleteButtonText}>Xóa</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Delete and Edit buttons behind - chỉ hiện khi KHÔNG đang drag */}
+      {!isDragMode && (
+        <View style={styles.deleteButtonContainer}>
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => {
+              closeSwipe();
+              onEdit(place);
+            }}
+          >
+            <Ionicons name="pencil" size={20} color={COLORS.textWhite} />
+            <Text style={styles.editButtonText}>Sửa</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={() => {
+              closeSwipe();
+              onDelete();
+            }}
+          >
+            <Ionicons name="trash" size={20} color={COLORS.textWhite} />
+            <Text style={styles.deleteButtonText}>Xóa</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Main card */}
       <Animated.View
@@ -306,10 +336,12 @@ const ManualPlaceSelectionScreen: React.FC = () => {
 
   const [tripInfo, setTripInfo] = useState<TripInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedDay, setSelectedDay] = useState(1);
   const [dayPlaces, setDayPlaces] = useState<DayPlaces>({});
   const [dayStartLocations, setDayStartLocations] = useState<{ [day: number]: { name: string; lat: number; lng: number } }>({});
   const [hasAskedStartLocation, setHasAskedStartLocation] = useState(false);
+  const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'bicycling' | 'transit'>('driving');
   
   // Selection mode states
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -317,6 +349,19 @@ const ManualPlaceSelectionScreen: React.FC = () => {
   
   // Drag state
   const [draggingPlaceId, setDraggingPlaceId] = useState<string | null>(null);
+  
+  // Edit state
+  const [editingPlace, setEditingPlace] = useState<Place | null>(null);
+  const [editPlaceName, setEditPlaceName] = useState('');
+  const [editPlaceAddress, setEditPlaceAddress] = useState('');
+
+  // Add Place Modal state (Search like Google Maps)
+  const [isAddPlaceModalVisible, setIsAddPlaceModalVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<AutocompletePrediction[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [sessionToken, setSessionToken] = useState<string>(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Bottom sheet animation
   const bottomSheetHeight = useRef(new Animated.Value(BOTTOM_SHEET_MIN_HEIGHT)).current;
@@ -487,39 +532,76 @@ const ManualPlaceSelectionScreen: React.FC = () => {
   };
 
   const handleAddPlace = () => {
-    // TODO: Navigate to place search/selection screen
-    Alert.alert(
-      'Thêm địa điểm',
-      `Thêm địa điểm cho Ngày ${selectedDay}`,
-      [
-        { text: 'Hủy', style: 'cancel' },
-        { 
-          text: 'Thêm mẫu', 
-          onPress: () => {
-            const newPlace: Place = {
-              id: `place_${Date.now()}`,
-              name: `Địa điểm ${(dayPlaces[selectedDay]?.length || 0) + 1}`,
-              address: `Địa chỉ mẫu tại ${tripInfo?.destination}`,
-              type: 'attraction',
-              lat: tripInfo?.currentLocationLat ? tripInfo.currentLocationLat + (Math.random() - 0.5) * 0.05 : undefined,
-              lng: tripInfo?.currentLocationLng ? tripInfo.currentLocationLng + (Math.random() - 0.5) * 0.05 : undefined,
-            };
-            
-            const isFirstPlaceEver = Object.values(dayPlaces).every(places => places.length === 0);
-            
-            setDayPlaces(prev => ({
-              ...prev,
-              [selectedDay]: [...(prev[selectedDay] || []), newPlace],
-            }));
-            
-            // Ask about start location after first place is added
-            if (isFirstPlaceEver && selectedDay === 1) {
-              setTimeout(() => askAboutStartLocationForOtherDays(newPlace), 500);
-            }
-          }
-        },
-      ]
-    );
+    // Open search modal like Google Maps
+    setSearchQuery('');
+    setSearchResults([]);
+    setIsAddPlaceModalVisible(true);
+    // Refresh session token when opening modal
+    setSessionToken(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  };
+
+  // Autocomplete search with debounce
+  const handleSearchQueryChange = async (query: string) => {
+    setSearchQuery(query);
+    
+    // Clear previous debounce timeout
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+
+    // If query is empty, clear results and refresh session token
+    if (!query.trim()) {
+      setSearchResults([]);
+      setSessionToken(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+      return;
+    }
+
+    // Debounce API call
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        setIsSearching(true);
+        const token = await AsyncStorage.getItem('userToken');
+        if (!token) return;
+
+        const results = await autocompleteAPI(token, query, sessionToken);
+        setSearchResults(results);
+      } catch (error) {
+        console.error('Autocomplete error:', error);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, AUTOCOMPLETE_DEBOUNCE_MS);
+  };
+
+  // Handle selecting a place from autocomplete results
+  const handleSelectPlace = (prediction: AutocompletePrediction) => {
+    const newPlace: Place = {
+      id: `place_${Date.now()}`,
+      name: prediction.structured_formatting?.main_text || prediction.description,
+      address: prediction.description,
+      type: 'attraction',
+      // lat/lng will be geocoded by backend
+    };
+    
+    const isFirstPlaceEver = Object.values(dayPlaces).every(places => places.length === 0);
+    
+    setDayPlaces(prev => ({
+      ...prev,
+      [selectedDay]: [...(prev[selectedDay] || []), newPlace],
+    }));
+    
+    // Close modal and reset
+    setIsAddPlaceModalVisible(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    // Refresh session token after selection
+    setSessionToken(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+    
+    // Ask about start location after first place is added
+    if (isFirstPlaceEver && selectedDay === 1) {
+      setTimeout(() => askAboutStartLocationForOtherDays(newPlace), 500);
+    }
   };
 
   const handleRemovePlace = (placeId: string) => {
@@ -534,12 +616,40 @@ const ManualPlaceSelectionScreen: React.FC = () => {
           onPress: () => {
             setDayPlaces(prev => ({
               ...prev,
-              [selectedDay]: prev[selectedDay].filter(p => p.id !== placeId),
+              [selectedDay]: (prev[selectedDay] || []).filter(p => p.id !== placeId),
             }));
           },
         },
       ]
     );
+  };
+
+  const handleEditPlace = (place: Place) => {
+    setEditingPlace(place);
+    setEditPlaceName(place.name);
+    setEditPlaceAddress(place.address);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingPlace) return;
+    
+    if (!editPlaceName.trim()) {
+      Alert.alert('Lỗi', 'Tên địa điểm không được để trống');
+      return;
+    }
+
+    setDayPlaces(prev => ({
+      ...prev,
+      [selectedDay]: (prev[selectedDay] || []).map(p => 
+        p.id === editingPlace.id
+          ? { ...p, name: editPlaceName.trim(), address: editPlaceAddress.trim() }
+          : p
+      ),
+    }));
+
+    setEditingPlace(null);
+    setEditPlaceName('');
+    setEditPlaceAddress('');
   };
 
   const handleReorderPlace = (fromIndex: number, toIndex: number) => {
@@ -553,16 +663,139 @@ const ManualPlaceSelectionScreen: React.FC = () => {
     }));
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     // Check if at least one place is added
-    const totalPlaces = Object.values(dayPlaces).reduce((sum, places) => sum + places.length, 0);
-    if (totalPlaces === 0) {
+    const totalPlacesCount = Object.values(dayPlaces).reduce((sum, places) => sum + places.length, 0);
+    if (totalPlacesCount === 0) {
       Alert.alert('Chưa có địa điểm', 'Vui lòng thêm ít nhất một địa điểm vào lộ trình');
       return;
     }
-    
-    // TODO: Navigate to next screen or save itinerary
-    Alert.alert('Thành công', 'Lộ trình đã được tạo!');
+
+    // Ask user about route optimization
+    Alert.alert(
+      '🗺️ Tối ưu lộ trình',
+      'Bạn có muốn hệ thống tự động sắp xếp thứ tự địa điểm để tối ưu quãng đường di chuyển không?',
+      [
+        {
+          text: 'Không, giữ nguyên',
+          style: 'cancel',
+          onPress: () => proceedWithConfirm(false),
+        },
+        {
+          text: 'Có, tối ưu',
+          onPress: () => proceedWithConfirm(true),
+        },
+      ]
+    );
+  };
+
+  const proceedWithConfirm = async (optimize: boolean) => {
+    try {
+      setIsSubmitting(true);
+
+      // Get token from AsyncStorage
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để tạo lộ trình');
+        router.replace('/(auth)/login');
+        return;
+      }
+
+      // Check weather first (optional - can be skipped if API fails)
+      if (tripInfo) {
+        try {
+          const weatherResult = await checkWeatherAPI(token, {
+            departureDate: tripInfo.startDate,
+            returnDate: tripInfo.endDate,
+            destination: tripInfo.destination,
+          });
+
+          if (weatherResult.severity === 'danger') {
+            Alert.alert(
+              '⚠️ Cảnh báo thời tiết',
+              `${weatherResult.alert}\n\nBạn có muốn tiếp tục tạo lộ trình không?`,
+              [
+                { text: 'Hủy', style: 'cancel', onPress: () => setIsSubmitting(false) },
+                { text: 'Tiếp tục', onPress: () => processItinerary(token, optimize) },
+              ]
+            );
+            return;
+          } else if (weatherResult.severity === 'warning') {
+            Alert.alert(
+              '⚠️ Lưu ý thời tiết',
+              'Thời tiết có thể không thuận lợi. Bạn có muốn tiếp tục?',
+              [
+                { text: 'Hủy', style: 'cancel', onPress: () => setIsSubmitting(false) },
+                { text: 'Tiếp tục', onPress: () => processItinerary(token, optimize) },
+              ]
+            );
+            return;
+          }
+        } catch (weatherError) {
+          console.log('Weather check failed, continuing without weather data:', weatherError);
+        }
+      }
+
+      // Process itinerary
+      await processItinerary(token, optimize);
+    } catch (error: any) {
+      console.error('❌ Error creating itinerary:', error);
+      Alert.alert('Lỗi', error.message || 'Đã xảy ra lỗi khi tạo lộ trình. Vui lòng thử lại.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const processItinerary = async (token: string, optimize: boolean = false) => {
+    try {
+      // Prepare days data for API
+      const daysData = Object.entries(dayPlaces)
+        .filter(([_, places]) => places.length > 0)
+        .map(([dayNum, places]) => {
+          const dayNumber = parseInt(dayNum);
+          const startLocation = dayStartLocations[dayNumber];
+          
+          // Map places to API format (without start location as place)
+          const allPlaces = places.map((p: Place) => ({
+            placeId: p.id,
+            name: p.name,
+            address: p.address || p.name,
+          }));
+
+          return {
+            dayNumber,
+            startLocation: startLocation?.name || tripInfo?.currentLocation || '',
+            places: allPlaces,
+          };
+        });
+
+      // Call calculate routes API
+      const routeResult = await calculateRoutesAPI(token, {
+        travelMode,
+        optimize,
+        days: daysData,
+      });
+
+      console.log('✅ Routes calculated:', routeResult);
+
+      // Navigate to route preview screen with the result
+      router.push({
+        pathname: '/create-itinerary/route-preview',
+        params: {
+          routeData: JSON.stringify(routeResult),
+          destination: tripInfo?.destination || '',
+          durationDays: tripInfo?.durationDays.toString() || '1',
+          startDate: tripInfo?.startDate || '',
+          endDate: tripInfo?.endDate || '',
+          travelMode,
+          isManualRoute: 'true',
+        },
+      });
+    } catch (error: any) {
+      console.error('❌ Error processing itinerary:', error);
+      Alert.alert('Lỗi', error.message || 'Không thể tính toán đường đi. Vui lòng thử lại.');
+      setIsSubmitting(false);
+    }
   };
 
   const formatDate = (dateString: string, dayOffset: number = 0) => {
@@ -754,6 +987,43 @@ const ManualPlaceSelectionScreen: React.FC = () => {
           </ScrollView>
         </View>
 
+        {/* Travel Mode Selector */}
+        <View style={styles.travelModeContainer}>
+          <Text style={styles.travelModeLabel}>Phương tiện di chuyển:</Text>
+          <View style={styles.travelModeOptions}>
+            {[
+              { value: 'driving', icon: 'car', label: 'Xe' },
+              { value: 'walking', icon: 'walk', label: 'Đi bộ' },
+              { value: 'bicycling', icon: 'bicycle', label: 'Xe đạp' },
+              { value: 'transit', icon: 'bus', label: 'Công cộng' },
+            ].map((mode) => (
+              <TouchableOpacity
+                key={mode.value}
+                style={[
+                  styles.travelModeOption,
+                  travelMode === mode.value && styles.travelModeOptionActive,
+                ]}
+                onPress={() => setTravelMode(mode.value as typeof travelMode)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={mode.icon as any}
+                  size={18}
+                  color={travelMode === mode.value ? COLORS.textWhite : COLORS.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.travelModeText,
+                    travelMode === mode.value && styles.travelModeTextActive,
+                  ]}
+                >
+                  {mode.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
         {/* Start Location Info for Current Day */}
         {currentDayStartLocation && (
           <View style={styles.startLocationInfo}>
@@ -872,9 +1142,10 @@ const ManualPlaceSelectionScreen: React.FC = () => {
                 onDelete={() => {
                   setDayPlaces(prev => ({
                     ...prev,
-                    [selectedDay]: prev[selectedDay].filter(p => p.id !== place.id),
+                    [selectedDay]: (prev[selectedDay] || []).filter(p => p.id !== place.id),
                   }));
                 }}
+                onEdit={handleEditPlace}
                 onLongPress={() => {
                   if (!isSelectionMode) {
                     setIsSelectionMode(true);
@@ -933,7 +1204,7 @@ const ManualPlaceSelectionScreen: React.FC = () => {
                       onPress: () => {
                         setDayPlaces(prev => ({
                           ...prev,
-                          [selectedDay]: prev[selectedDay].filter(p => !selectedPlaceIds.has(p.id)),
+                          [selectedDay]: (prev[selectedDay] || []).filter(p => !selectedPlaceIds.has(p.id)),
                         }));
                         setIsSelectionMode(false);
                         setSelectedPlaceIds(new Set());
@@ -951,9 +1222,10 @@ const ManualPlaceSelectionScreen: React.FC = () => {
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={styles.confirmButton}
+              style={[styles.confirmButton, isSubmitting && styles.confirmButtonDisabled]}
               onPress={handleConfirm}
               activeOpacity={0.8}
+              disabled={isSubmitting}
             >
               <LinearGradient
                 colors={[COLORS.primary, COLORS.gradientSecondary]}
@@ -961,13 +1233,161 @@ const ManualPlaceSelectionScreen: React.FC = () => {
                 end={{ x: 1, y: 0 }}
                 style={styles.confirmButtonGradient}
               >
-                <Text style={styles.confirmButtonText}>XÁC NHẬN LỘ TRÌNH</Text>
-                <MaterialIcons name="check-circle" size={20} color={COLORS.textWhite} />
+                {isSubmitting ? (
+                  <>
+                    <ActivityIndicator size="small" color={COLORS.textWhite} />
+                    <Text style={styles.confirmButtonText}>ĐANG XỬ LÝ...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.confirmButtonText}>XÁC NHẬN LỘ TRÌNH</Text>
+                    <MaterialIcons name="check-circle" size={20} color={COLORS.textWhite} />
+                  </>
+                )}
               </LinearGradient>
             </TouchableOpacity>
           )}
         </View>
       </Animated.View>
+
+      {/* Edit Place Modal */}
+      <Modal
+        visible={editingPlace !== null}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setEditingPlace(null)}
+      >
+        <View style={styles.editModalOverlay}>
+          <View style={styles.editModalContent}>
+            <View style={styles.editModalHeader}>
+              <Text style={styles.editModalTitle}>Chỉnh sửa địa điểm</Text>
+              <TouchableOpacity onPress={() => setEditingPlace(null)}>
+                <Ionicons name="close" size={24} color={COLORS.textDark} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.editModalBody}>
+              <Text style={styles.editLabel}>Tên địa điểm *</Text>
+              <TextInput
+                style={styles.editInput}
+                value={editPlaceName}
+                onChangeText={setEditPlaceName}
+                placeholder="Nhập tên địa điểm..."
+                placeholderTextColor={COLORS.textSecondary}
+              />
+
+              <Text style={styles.editLabel}>Địa chỉ</Text>
+              <TextInput
+                style={styles.editInput}
+                value={editPlaceAddress}
+                onChangeText={setEditPlaceAddress}
+                placeholder="Nhập địa chỉ..."
+                placeholderTextColor={COLORS.textSecondary}
+              />
+            </View>
+
+            <View style={styles.editModalFooter}>
+              <TouchableOpacity
+                style={styles.editCancelButton}
+                onPress={() => setEditingPlace(null)}
+              >
+                <Text style={styles.editCancelText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editSaveButton}
+                onPress={handleSaveEdit}
+              >
+                <Text style={styles.editSaveText}>Lưu</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Place Search Modal */}
+      <Modal
+        visible={isAddPlaceModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsAddPlaceModalVisible(false)}
+      >
+        <View style={styles.searchModalOverlay}>
+          <View style={styles.searchModalContent}>
+            <View style={styles.searchModalHeader}>
+              <Text style={styles.searchModalTitle}>Thêm địa điểm</Text>
+              <TouchableOpacity onPress={() => setIsAddPlaceModalVisible(false)}>
+                <Ionicons name="close" size={24} color={COLORS.textDark} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.searchInputContainer}>
+              <Ionicons name="search" size={20} color={COLORS.textSecondary} style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                value={searchQuery}
+                onChangeText={handleSearchQueryChange}
+                placeholder="Tìm kiếm địa điểm..."
+                placeholderTextColor={COLORS.textSecondary}
+                autoFocus={true}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => {
+                  setSearchQuery('');
+                  setSearchResults([]);
+                }}>
+                  <Ionicons name="close-circle" size={20} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {isSearching && (
+              <View style={styles.searchLoadingContainer}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+                <Text style={styles.searchLoadingText}>Đang tìm kiếm...</Text>
+              </View>
+            )}
+
+            {!isSearching && searchResults.length > 0 && (
+              <ScrollView style={styles.searchResultsContainer} keyboardShouldPersistTaps="handled">
+                {searchResults.map((prediction, index) => (
+                  <TouchableOpacity
+                    key={prediction.place_id}
+                    style={[
+                      styles.searchResultItem,
+                      index === searchResults.length - 1 && styles.searchResultItemLast
+                    ]}
+                    onPress={() => handleSelectPlace(prediction)}
+                  >
+                    <Ionicons name="location-outline" size={20} color={COLORS.primary} style={styles.searchResultIcon} />
+                    <View style={styles.searchResultTextContainer}>
+                      <Text style={styles.searchResultMainText} numberOfLines={1}>
+                        {prediction.structured_formatting?.main_text || prediction.description}
+                      </Text>
+                      <Text style={styles.searchResultSecondaryText} numberOfLines={1}>
+                        {prediction.structured_formatting?.secondary_text || ''}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            {!isSearching && searchQuery.length > 0 && searchResults.length === 0 && (
+              <View style={styles.noResultsContainer}>
+                <Ionicons name="search-outline" size={48} color={COLORS.textSecondary} />
+                <Text style={styles.noResultsText}>Không tìm thấy kết quả</Text>
+              </View>
+            )}
+
+            {!isSearching && searchQuery.length === 0 && (
+              <View style={styles.searchHintContainer}>
+                <Ionicons name="location-sharp" size={48} color={COLORS.primary} />
+                <Text style={styles.searchHintText}>Nhập tên địa điểm để tìm kiếm</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -1205,6 +1625,46 @@ const styles = StyleSheet.create({
     color: COLORS.textWhite,
   },
 
+  // Travel Mode Selector
+  travelModeContainer: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  travelModeLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: SPACING.xs,
+  },
+  travelModeOptions: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+  },
+  travelModeOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.xs,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: 12,
+    backgroundColor: COLORS.borderLight,
+  },
+  travelModeOptionActive: {
+    backgroundColor: COLORS.primary,
+  },
+  travelModeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  travelModeTextActive: {
+    color: COLORS.textWhite,
+  },
+
   // Start Location Info
   startLocationInfo: {
     flexDirection: 'row',
@@ -1289,34 +1749,49 @@ const styles = StyleSheet.create({
   // Swipeable Place Card
   swipeableContainer: {
     position: 'relative',
-    overflow: 'hidden',
     borderRadius: 16,
     marginBottom: SPACING.sm,
+    backgroundColor: COLORS.bgMain,
   },
   draggingContainer: {
     zIndex: 999,
-    opacity: 0.9,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
   },
   deleteButtonContainer: {
     position: 'absolute',
     right: 0,
     top: 0,
     bottom: 0,
-    width: DELETE_BUTTON_WIDTH,
+    width: DELETE_BUTTON_WIDTH * 2,
+    flexDirection: 'row',
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  editButton: {
+    flex: 1,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4,
+  },
+  editButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textWhite,
+  },
+  deleteButton: {
+    flex: 1,
     backgroundColor: COLORS.error,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 16,
-  },
-  deleteButton: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: '100%',
-    height: '100%',
     gap: 4,
   },
   deleteButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: COLORS.textWhite,
   },
@@ -1332,14 +1807,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 3,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
   },
   placeCardDragging: {
-    shadowColor: '#000',
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.3,
     shadowRadius: 12,
-    elevation: 8,
+    elevation: 10,
     backgroundColor: COLORS.bgMain,
+    borderColor: COLORS.primary,
+    borderWidth: 2,
   },
   placeCardContent: {
     flex: 1,
@@ -1461,6 +1940,9 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 6,
   },
+  confirmButtonDisabled: {
+    opacity: 0.7,
+  },
   confirmButtonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1474,6 +1956,206 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.textWhite,
     letterSpacing: 0.5,
+  },
+
+  // Edit Modal Styles
+  editModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.lg,
+  },
+  editModalContent: {
+    backgroundColor: COLORS.bgMain,
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  editModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SPACING.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  editModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  editModalBody: {
+    padding: SPACING.lg,
+    gap: SPACING.md,
+  },
+  editLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: SPACING.xs,
+  },
+  editInput: {
+    backgroundColor: COLORS.bgSecondary,
+    borderRadius: 12,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
+    fontSize: 15,
+    color: COLORS.textMain,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  editModalFooter: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    padding: SPACING.lg,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.borderLight,
+  },
+  editCancelButton: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    borderRadius: 12,
+    backgroundColor: COLORS.bgSecondary,
+    alignItems: 'center',
+  },
+  editCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  editSaveButton: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+  },
+  editSaveText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textWhite,
+  },
+
+  // Search Modal Styles
+  searchModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-start',
+    paddingTop: 60,
+  },
+  searchModalContent: {
+    backgroundColor: COLORS.bgMain,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    flex: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  searchModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SPACING.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  searchModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.bgSecondary,
+    borderRadius: 12,
+    marginHorizontal: SPACING.lg,
+    marginVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  searchIcon: {
+    marginRight: SPACING.sm,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    fontSize: 16,
+    color: COLORS.textMain,
+  },
+  searchLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SPACING.lg,
+    gap: SPACING.sm,
+  },
+  searchLoadingText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+  },
+  searchResultsContainer: {
+    flex: 1,
+    paddingHorizontal: SPACING.lg,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  searchResultItemLast: {
+    borderBottomWidth: 0,
+  },
+  searchResultIcon: {
+    marginRight: SPACING.md,
+  },
+  searchResultTextContainer: {
+    flex: 1,
+  },
+  searchResultMainText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: 2,
+  },
+  searchResultSecondaryText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  noResultsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.xl,
+  },
+  noResultsText: {
+    fontSize: 16,
+    color: COLORS.textSecondary,
+    marginTop: SPACING.md,
+  },
+  searchHintContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.xl,
+  },
+  searchHintText: {
+    fontSize: 16,
+    color: COLORS.textSecondary,
+    marginTop: SPACING.md,
+    textAlign: 'center',
   },
 });
 
