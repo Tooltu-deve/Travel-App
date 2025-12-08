@@ -45,11 +45,23 @@ export class CustomItineraryService {
 
   private async calculateRoutesForDay(places: PlaceDto[], travelMode: string, optimize?: boolean): Promise<PlaceWithRouteDto[]> {
     const result: PlaceWithRouteDto[] = [];
-    for (let i = 0; i < places.length; i++) {
-      const currentPlace = places[i];
+    
+    // Geocode tất cả places trước để có tọa độ
+    const placesWithLocation = await Promise.all(
+      places.map(async (place) => {
+        const location = await this.getCityCoordinates(place.address);
+        return {
+          ...place,
+          location,
+        };
+      })
+    );
+    
+    for (let i = 0; i < placesWithLocation.length; i++) {
+      const currentPlace = placesWithLocation[i];
       let placeWithRoute: PlaceWithRouteDto;
-      if (i < places.length - 1) {
-        const nextPlace = places[i + 1];
+      if (i < placesWithLocation.length - 1) {
+        const nextPlace = placesWithLocation[i + 1];
         if (!travelMode) {
           throw new BadRequestException('travelMode is required for each day and must be provided by the frontend');
         }
@@ -64,6 +76,7 @@ export class CustomItineraryService {
         placeWithRoute = {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
+          address: currentPlace.address,
           location: currentPlace.location,
           // travelMode chỉ dùng cho logic, không trả về response
           encoded_polyline: route.overview_polyline.points,
@@ -73,6 +86,7 @@ export class CustomItineraryService {
         placeWithRoute = {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
+          address: currentPlace.address,
           location: currentPlace.location,
           // travelMode chỉ dùng cho logic, không trả về response
           encoded_polyline: null,
@@ -98,8 +112,20 @@ export class CustomItineraryService {
         if (!day.places || !Array.isArray(day.places)) {
           throw new BadRequestException('Invalid input: each day must have places array');
         }
+        if (!day.startLocation) {
+          throw new BadRequestException('Invalid input: each day must have startLocation');
+        }
+        
+        // Geocode startLocation để lấy tọa độ
+        const startLocationCoordinates = await this.getCityCoordinates(day.startLocation);
+        
         const processedPlaces = await this.calculateRoutesForDay(day.places, itineraryData.travelMode, itineraryData.optimize);
-        processedDays.push({ dayNumber: day.dayNumber, places: processedPlaces });
+        processedDays.push({ 
+          dayNumber: day.dayNumber, 
+          startLocation: day.startLocation,
+          startLocationCoordinates,
+          places: processedPlaces 
+        });
       }
       this.logger.log(`Successfully calculated routes for ${days.length} days`);
       return { days: processedDays, optimize: itineraryData.optimize };

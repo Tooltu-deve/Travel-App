@@ -22,9 +22,8 @@ export class PlaceDto {
   @IsNotEmpty()
   name: string;
 
-  @ValidateNested()
-  @Type(() => LocationDto)
-  location: LocationDto;
+  @IsNotEmpty()
+  address: string; // Địa chỉ dạng string, sẽ được geocoding sang tọa độ
   
   // travelMode đã chuyển lên DayDto
 }
@@ -36,6 +35,9 @@ export class DayDto {
     // travelMode đã chuyển lên CalculateRoutesDto
   @IsNotEmpty()
   dayNumber: number;
+
+  @IsNotEmpty()
+  startLocation: string; // Địa chỉ điểm xuất phát, sẽ được geocoding sang tọa độ
 
   @IsArray()
   @ValidateNested({ each: true })
