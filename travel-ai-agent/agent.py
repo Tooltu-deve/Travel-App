@@ -154,11 +154,13 @@ def intent_classifier_node(state: TravelState) -> TravelState:
     
     # PRIORITY 0: Check for COMPANION MODE questions (location-based, real-time help)
     companion_keywords = [
-        "gần đây", "nearby", "xung quanh", "quanh đây",  # Nearby search
-        "ăn gì", "món gì", "đặc sản", "food",  # Food tips
+        "gần đây", "nearby", "xung quanh", "quanh đây", "gần",  # Nearby search
+        "ăn gì", "món gì", "đặc sản", "food", "quán ăn",  # Food tips
         "check-in", "chụp ảnh", "photo", "sống ảo",  # Photo tips
         "địa điểm này", "chỗ này", "đây",  # Place info
-        "bệnh viện", "pharmacy", "nhà thuốc", "atm", "khẩn cấp"  # Emergency
+        "bệnh viện", "hospital", "pharmacy", "nhà thuốc", "hiệu thuốc", 
+        "atm", "ngân hàng", "bank", "khẩn cấp", "emergency", "cấp cứu",
+        "công an", "cảnh sát", "police"  # Emergency services
     ]
     
     has_companion_keywords = any(keyword in user_text for keyword in companion_keywords)
@@ -1490,16 +1492,78 @@ def live_companion_node(state: TravelState) -> TravelState:
     print(f"   📍 Current location: {current_location}")
     print(f"   🏛️ Active place: {active_place_id}")
     
-    response_text = ""
+    # Default fallback response
+    response_text = "🤔 Tôi chưa hiểu rõ câu hỏi của bạn.\n\n💡 Bạn có thể hỏi:\n• Quán cà phê gần đây\n• Nhà hàng xung quanh\n• Ăn gì ở đây ngon?\n• Chỗ nào chụp ảnh đẹp?"
     
     try:
-        # Classify companion question type
-        if any(word in user_text for word in ["gần đây", "nearby", "xung quanh", "quanh đây", "gần"]):
+        # Classify companion question type - PRIORITY ORDER MATTERS!
+        
+        # PRIORITY 1: EMERGENCY SERVICES (check first!)
+        if any(word in user_text for word in ["bệnh viện", "hospital", "pharmacy", "nhà thuốc", "hiệu thuốc", "atm", "ngân hàng", "bank", "khẩn cấp", "emergency", "cấp cứu", "công an", "cảnh sát", "police"]):
+            # EMERGENCY SERVICES
+            print("   🚨 Type: Emergency services")
+            
+            service_type = "hospital"
+            if any(word in user_text for word in ["pharmacy", "nhà thuốc", "hiệu thuốc", "thuốc"]):
+                service_type = "pharmacy"
+            elif any(word in user_text for word in ["atm", "ngân hàng", "bank", "rút tiền"]):
+                service_type = "atm"
+            elif any(word in user_text for word in ["police", "công an", "cảnh sát"]):
+                service_type = "police"
+            
+            if not current_location:
+                response_text = "🚨 Tôi cần biết vị trí của bạn để tìm dịch vụ gần nhất!\n\n💡 Vui lòng bật GPS."
+            else:
+                try:
+                    services = find_emergency_services.invoke({
+                        "current_location": current_location,
+                        "service_type": service_type
+                    })
+                    
+                    if services and len(services) > 0:
+                        service_label = {
+                            "hospital": "Bệnh viện/Phòng khám",
+                            "pharmacy": "Nhà thuốc",
+                            "atm": "ATM/Ngân hàng",
+                            "police": "Công an"
+                        }.get(service_type, "Dịch vụ")
+                        
+                        response_text = f"🚨 **{service_label} gần nhất:**\n\n"
+                        for i, service in enumerate(services[:5], 1):
+                            name = service.get('name', 'Unknown')
+                            distance = service.get('distance_km', 0)
+                            response_text += f"{i}. **{name}** ({distance:.1f}km)\n"
+                            if service.get('address'):
+                                response_text += f"   📍 {service.get('address')}\n"
+                            response_text += "\n"
+                    else:
+                        service_label_vn = {
+                            "hospital": "bệnh viện",
+                            "pharmacy": "nhà thuốc",
+                            "atm": "ATM",
+                            "police": "đồn công an"
+                        }.get(service_type, "dịch vụ")
+                        
+                        response_text = f"😔 Xin lỗi, không tìm thấy {service_label_vn} trong cơ sở dữ liệu.\n\n"
+                        response_text += "🚨 **Số điện thoại khẩn cấp:**\n"
+                        response_text += "• Cấp cứu: 115\n"
+                        response_text += "• Công an: 113\n"
+                        response_text += "• Cứu hỏa: 114\n"
+                        response_text += "• Tổng đài du lịch: 1800-1008"
+                except Exception as e:
+                    print(f"   ❌ Error in emergency services: {e}")
+                    response_text = "🚨 **Số điện thoại khẩn cấp:**\n\n"
+                    response_text += "• Cấp cứu: 115\n"
+                    response_text += "• Công an: 113\n"
+                    response_text += "• Cứu hỏa: 114"
+        
+        # PRIORITY 2: NEARBY SEARCH (general places)
+        elif any(word in user_text for word in ["gần đây", "nearby", "xung quanh", "quanh đây", "gần"]):
             # NEARBY SEARCH
             print("   🔍 Type: Nearby search")
             
             if not current_location:
-                response_text = "❌ Tôi cần biết vị trí hiện tại của bạn để tìm các địa điểm gần đây.\n\n💡 Vui lòng bật GPS hoặc cho tôi biết bạn đang ở đâu."
+                response_text = "📍 **Tôi cần biết vị trí của bạn để tìm địa điểm gần đây.**\n\n💡 Vui lòng:\n1. Bật GPS trên điện thoại\n2. Cho phép app truy cập vị trí\n3. Hoặc cho tôi biết bạn đang ở khu vực nào?"
             else:
                 # Detect category from query
                 category = None
@@ -1512,6 +1576,8 @@ def live_companion_node(state: TravelState) -> TravelState:
                 elif any(word in user_text for word in ["tham quan", "du lịch", "attraction"]):
                     category = "attraction"
                 
+                # Call the tool using .invoke()
+                from tools import search_nearby_places
                 nearby_places = search_nearby_places.invoke({
                     "current_location": current_location,
                     "radius_km": 2.0,
@@ -1519,9 +1585,16 @@ def live_companion_node(state: TravelState) -> TravelState:
                     "limit": 5
                 })
                 
-                if nearby_places:
-                    category_text = f" {category}" if category else ""
-                    response_text = f"📍 **Các địa điểm{category_text} gần bạn:**\n\n"
+                if nearby_places and len(nearby_places) > 0:
+                    # Translate category to Vietnamese
+                    category_vn = {
+                        'restaurant': 'nhà hàng',
+                        'cafe': 'quán cà phê',
+                        'shopping': 'mua sắm',
+                        'attraction': 'tham quan'
+                    }.get(category, category or 'địa điểm')
+                    
+                    response_text = f"📍 **Các {category_vn} gần bạn:**\n\n"
                     for i, place in enumerate(nearby_places, 1):
                         name = place.get('name', 'Unknown')
                         distance = place.get('distance_km', 0)
@@ -1532,40 +1605,73 @@ def live_companion_node(state: TravelState) -> TravelState:
                             response_text += f"   📍 {place.get('address')}\n"
                         response_text += "\n"
                 else:
-                    response_text = f"😔 Không tìm thấy địa điểm{' ' + category if category else ''} nào trong bán kính 2km.\n\n💡 Thử mở rộng phạm vi hoặc hỏi loại địa điểm khác?"
+                    # More helpful error message with suggestions
+                    category_vn = {
+                        'restaurant': 'nhà hàng',
+                        'cafe': 'quán cà phê',
+                        'shopping': 'địa điểm mua sắm',
+                        'attraction': 'điểm tham quan'
+                    }.get(category, 'địa điểm')
+                    
+                    # Check if user is in Vietnam area
+                    lat = current_location.get('lat', 0)
+                    lng = current_location.get('lng', 0)
+                    is_in_vietnam = (10 <= lat <= 24) and (102 <= lng <= 110)
+                    
+                    if not is_in_vietnam:
+                        response_text = f"📍 **Xin lỗi, hiện tại tôi chỉ hỗ trợ tìm kiếm địa điểm tại Việt Nam.**\n\n"
+                        response_text += f"Vị trí của bạn: ({lat:.4f}, {lng:.4f})\n\n"
+                        response_text += "🇻🇳 **Các khu vực được hỗ trợ:**\n"
+                        response_text += "• Hà Nội\n"
+                        response_text += "• TP. Hồ Chí Minh\n"
+                        response_text += "• Đà Nẵng, Hội An, Huế\n"
+                        response_text += "• Nha Trang, Đà Lạt\n"
+                        response_text += "• Phú Quốc, Hạ Long, Sa Pa\n\n"
+                        response_text += "💡 Nếu bạn đang ở Việt Nam, vui lòng kiểm tra lại GPS."
+                    else:
+                        response_text = f"😔 Không tìm thấy {category_vn} nào trong bán kính 2km.\n\n"
+                        response_text += "💡 **Gợi ý:**\n"
+                        response_text += "• Thử mở rộng phạm vi tìm kiếm\n"
+                        response_text += "• Hỏi loại địa điểm khác (nhà hàng, quán ăn...)\n"
+                        response_text += "• Di chuyển gần trung tâm thành phố hơn"
         
-        elif any(word in user_text for word in ["ăn gì", "món gì", "đặc sản", "food", "eat"]):
+        elif any(word in user_text for word in ["ăn gì", "món gì", "đặc sản", "food", "eat", "quán ăn"]):
             # FOOD TIPS
             print("   🍽️ Type: Food tips")
             
-            if active_place_id:
-                # Get current place details
-                place = get_place_details.invoke({"place_id": active_place_id})
-                tips = get_travel_tips.invoke({"place": place, "tip_type": "food"})
-            elif current_location:
-                # Find nearby restaurants
-                nearby = search_nearby_places.invoke({
-                    "current_location": current_location,
-                    "category": "restaurant",
-                    "radius_km": 1.0,
-                    "limit": 5
-                })
-                place = nearby[0] if nearby else {}
-                tips = get_travel_tips.invoke({"place": place, "tip_type": "food"})
+            if not current_location:
+                response_text = "🍽️ Tôi cần biết vị trí của bạn để gợi ý món ăn ngon gần đó!\n\n💡 Vui lòng bật GPS."
             else:
-                tips = {}
-            
-            if tips and tips.get('suggestions'):
-                response_text = "🍽️ **Gợi ý ẩm thực:**\n\n"
-                for suggestion in tips['suggestions']:
-                    response_text += f"• {suggestion}\n"
-                
-                if tips.get('warnings'):
-                    response_text += "\n⚠️ **Lưu ý:**\n"
-                    for warning in tips['warnings']:
-                        response_text += f"• {warning}\n"
-            else:
-                response_text = "🍽️ Tôi cần biết vị trí của bạn để gợi ý món ăn ngon gần đó!"
+                try:
+                    # Find nearby restaurants
+                    nearby = search_nearby_places.invoke({
+                        "current_location": current_location,
+                        "category": "restaurant",
+                        "radius_km": 2.0,
+                        "limit": 5
+                    })
+                    
+                    if nearby and len(nearby) > 0:
+                        response_text = "🍽️ **Nhà hàng gần bạn:**\n\n"
+                        for i, restaurant in enumerate(nearby, 1):
+                            name = restaurant.get('name', 'Unknown')
+                            distance = restaurant.get('distance_km', 0)
+                            rating = restaurant.get('rating', 'N/A')
+                            response_text += f"{i}. **{name}** ({distance:.1f}km)\n"
+                            response_text += f"   ⭐ {rating} | {restaurant.get('type', '')}\n"
+                            if restaurant.get('address'):
+                                response_text += f"   📍 {restaurant.get('address')}\n"
+                            response_text += "\n"
+                        response_text += "💡 **Tip:** Hỏi người địa phương về đặc sản nhé!"
+                    else:
+                        response_text = "😔 Không tìm thấy nhà hàng nào trong bán kính 2km.\n\n"
+                        response_text += "💡 **Gợi ý:**\n"
+                        response_text += "• Thử tìm 'quán ăn gần đây'\n"
+                        response_text += "• Tìm 'quán cà phê' để hỏi người địa phương\n"
+                        response_text += "• Di chuyển gần trung tâm thành phố hơn"
+                except Exception as e:
+                    print(f"   ❌ Error in food tips: {e}")
+                    response_text = "😔 Xin lỗi, tôi gặp lỗi khi tìm nhà hàng.\n\n💡 Bạn có thể thử hỏi 'nhà hàng gần đây' không?"
         
         elif any(word in user_text for word in ["check-in", "checkin", "chụp ảnh", "photo", "sống ảo"]):
             # PHOTO TIPS
@@ -1584,45 +1690,7 @@ def live_companion_node(state: TravelState) -> TravelState:
             else:
                 response_text = "📸 Bạn đang ở địa điểm nào? Cho tôi biết để gợi ý góc chụp đẹp nhé!"
         
-        elif any(word in user_text for word in ["bệnh viện", "hospital", "pharmacy", "nhà thuốc", "atm", "khẩn cấp", "emergency"]):
-            # EMERGENCY SERVICES
-            print("   🚨 Type: Emergency services")
-            
-            service_type = "hospital"
-            if "pharmacy" in user_text or "nhà thuốc" in user_text:
-                service_type = "pharmacy"
-            elif "atm" in user_text:
-                service_type = "atm"
-            
-            if not current_location:
-                response_text = "🚨 Tôi cần biết vị trí của bạn để tìm dịch vụ gần nhất!\n\n💡 Vui lòng bật GPS."
-            else:
-                services = find_emergency_services.invoke({
-                    "current_location": current_location,
-                    "service_type": service_type
-                })
-                
-                if services:
-                    service_label = {
-                        "hospital": "Bệnh viện",
-                        "pharmacy": "Nhà thuốc",
-                        "atm": "ATM"
-                    }.get(service_type, "Dịch vụ")
-                    
-                    response_text = f"🚨 **{service_label} gần nhất:**\n\n"
-                    for i, service in enumerate(services, 1):
-                        name = service.get('name', 'Unknown')
-                        distance = service.get('distance_km', 0)
-                        response_text += f"{i}. **{name}** ({distance:.1f}km)\n"
-                        if service.get('address'):
-                            response_text += f"   📍 {service.get('address')}\n"
-                        if service.get('phone'):
-                            response_text += f"   📞 {service.get('phone')}\n"
-                        response_text += "\n"
-                else:
-                    response_text = f"😔 Không tìm thấy {service_type} gần đây.\n\n💡 Bạn có thể thử tìm kiếm trên Google Maps."
-        
-        elif any(word in user_text for word in ["địa điểm này", "chỗ này", "đây", "place", "here"]):
+        elif any(word in user_text for word in ["địa điểm này", "chỗ này", "đây", "place", "here", "về", "thông tin", "info", "tell me about"]):
             # PLACE INFO
             print("   ℹ️ Type: Place info")
             
@@ -1683,7 +1751,11 @@ def live_companion_node(state: TravelState) -> TravelState:
     
     except Exception as e:
         print(f"   ❌ Error in companion mode: {e}")
-        response_text = "😔 Xin lỗi, tôi gặp lỗi khi xử lý câu hỏi.\n\n💡 Bạn có thể thử hỏi lại không?"
+        import traceback
+        traceback.print_exc()
+        response_text = "😔 Xin lỗi, tôi gặp lỗi khi xử lý câu hỏi.\n\n💡 Bạn có thể thử hỏi lại hoặc liên hệ hỗ trợ không?"
+    
+    print(f"   ✅ Response ({len(response_text)} chars): {response_text[:150]}...")
     
     return {
         **state,
