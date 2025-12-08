@@ -2,6 +2,12 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
+import { randomUUID } from 'crypto';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { CustomItinerary, CustomItineraryDocument } from './schemas/custom-itinerary.schema';
+import { Itinerary } from '../itinerary/schemas/itinerary.schema';
+import { ItineraryService } from '../itinerary/itinerary.service';
 import { GoogleDirectionsResponse } from './interfaces/google-directions-response.interface';
 import { OpenWeatherResponse } from './interfaces/openweather-response.interface';
 import { PlaceWithRouteDto, DayWithRoutesDto, CalculateRoutesResponseDto, WeatherCheckResponseDto } from './dto/custom-itinerary-response.dto';
@@ -16,8 +22,13 @@ export class CustomItineraryService {
   private readonly AUTOCOMPLETE_DELAY_MS = 150; // Debounce delay (ms) để hạn chế call liên tiếp
 
   constructor(
+    @InjectModel(CustomItinerary.name)
+    private readonly customItineraryModel: Model<CustomItineraryDocument>,
+    @InjectModel(Itinerary.name)
+    private readonly itineraryModel: Model<any>,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly itineraryService: ItineraryService,
   ) {
     this.openWeatherApiKey = this.configService.get<string>('OPENWEATHER_API_KEY') || '';
     this.googleDirectionsApiKey = this.configService.get<string>('GOOGLE_DIRECTIONS_API_KEY') || '';
@@ -25,6 +36,10 @@ export class CustomItineraryService {
     if (!this.openWeatherApiKey || !this.googleDirectionsApiKey) {
       this.logger.warn('Missing API keys in environment variables');
     }
+  }
+
+  private generateRouteId(): string {
+    return `route_${randomUUID()}`;
   }
 
   // --- Directions Logic ---
@@ -101,8 +116,13 @@ export class CustomItineraryService {
     return result;
   }
 
-  async calculateRoutes(itineraryData: CalculateRoutesDto): Promise<CalculateRoutesResponseDto> {
+  async calculateRoutes(
+    itineraryData: CalculateRoutesDto,
+    userId: string | null = null,
+  ): Promise<CalculateRoutesResponseDto> {
     try {
+      const routeId = this.generateRouteId();
+
       const { days } = itineraryData;
       if (!days || !Array.isArray(days)) {
         throw new BadRequestException('Invalid input: days must be an array');
@@ -131,7 +151,33 @@ export class CustomItineraryService {
         });
       }
       this.logger.log(`Successfully calculated routes for ${days.length} days`);
-      return { days: processedDays, optimize: itineraryData.optimize };
+
+      // Lưu vào collection custom-itineraries
+      const saved = await this.customItineraryModel.create({
+        route_id: routeId,
+        user_id: userId,
+        title: 'Lộ trình mới',
+        destination: itineraryData.destination,
+        status: 'DRAFT',
+        optimize: itineraryData.optimize ?? false,
+        route_data_json: {
+          days: processedDays,
+          optimize: itineraryData.optimize,
+          travelMode: itineraryData.travelMode,
+          destination: itineraryData.destination,
+        },
+      });
+
+      return {
+        days: processedDays,
+        optimize: itineraryData.optimize,
+        // Các field meta để tương thích với ItineraryResponseDto
+        route_id: saved.route_id,
+        user_id: saved.user_id,
+        title: saved.title,
+        destination: saved.destination,
+        status: saved.status,
+      };
     } catch (error) {
       this.logger.error(`Lỗi khi tính toán routes: ${error.message}`);
       throw error;
@@ -268,6 +314,78 @@ export class CustomItineraryService {
       }
     }
     return { severity: 'normal', alert: 'empty' };
+  }
+
+  /**
+   * Đổi status, đảm bảo chỉ 1 MAIN cho user trên cả hai collections
+   */
+  async updateStatusAll(
+    routeId: string,
+    userId: string,
+    status: 'DRAFT' | 'CONFIRMED' | 'MAIN',
+    extra?: { title?: string },
+  ) {
+    const userIdString = userId?.toString();
+    const userIdNormalized = Types.ObjectId.isValid(userId)
+      ? new Types.ObjectId(userId)
+      : userId;
+
+    // Tìm route trong custom-itineraries (ưu tiên match string, fallback ObjectId)
+    const customRoute = await this.customItineraryModel.findOne({
+      route_id: routeId,
+      user_id: userIdString,
+    });
+
+    // Nếu set MAIN, hạ MAIN khác ở cả hai collections
+    if (status === 'MAIN') {
+      await this.customItineraryModel.updateMany(
+        { user_id: userIdString, status: 'MAIN', route_id: { $ne: routeId } },
+        { status: 'CONFIRMED' },
+      );
+      await this.itineraryModel.updateMany(
+        { user_id: userIdNormalized, status: 'MAIN', route_id: { $ne: routeId } },
+        { status: 'CONFIRMED' },
+      );
+    }
+
+    if (customRoute) {
+      // Cập nhật custom route
+      customRoute.status = status;
+      if (extra?.title !== undefined) {
+        customRoute.title = extra.title;
+      }
+      await customRoute.save();
+      return customRoute;
+    }
+
+    // Không có trong custom, fallback sang itinerary service
+    const updatedItinerary = await this.itineraryService.updateStatus(
+      routeId,
+      userId,
+      status,
+      extra,
+    );
+    // ItineraryService đã hạ MAIN trong collection itinerary;
+    // Chúng ta đã hạ MAIN ở custom trước đó nếu status MAIN.
+    return updatedItinerary;
+  }
+
+  /**
+   * Lấy danh sách custom itineraries của user, optional lọc status
+   */
+  async listRoutes(
+    userId: string,
+    status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
+  ) {
+    const query: any = { user_id: userId };
+    if (status) {
+      query.status = status;
+    }
+    return this.customItineraryModel
+      .find(query)
+      .sort({ created_at: -1 })
+      .lean()
+      .exec();
   }
 
   async checkWeather(departureDate: string, returnDate: string, destination: string): Promise<WeatherCheckResponseDto> {

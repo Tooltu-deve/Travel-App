@@ -1,9 +1,11 @@
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Req, Patch, Param, Get, Query } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CustomItineraryService } from './custom-itinerary.service';
 import { CheckWeatherDto } from './dto/check-weather.dto';
 import { CalculateRoutesDto } from './dto/calculate-routes.dto';
 import { AutocompleteRequestDto } from './dto/autocomplete-request.dto';
+import { UpdateStatusDto } from './dto/update-status.dto';
+import { ItineraryService } from '../itinerary/itinerary.service';
 
 /**
  * Controller quản lý custom itinerary
@@ -15,6 +17,7 @@ import { AutocompleteRequestDto } from './dto/autocomplete-request.dto';
 export class CustomItineraryController {
   constructor(
     private readonly customItineraryService: CustomItineraryService,
+    private readonly itineraryService: ItineraryService,
   ) {}
 
   /**
@@ -35,8 +38,10 @@ export class CustomItineraryController {
    * Tính toán đường đi và polyline cho itinerary
    */
   @Post('calculate-routes')
-  async calculateRoutes(@Body() dto: CalculateRoutesDto) {
-    return this.customItineraryService.calculateRoutes(dto);
+  async calculateRoutes(@Body() dto: CalculateRoutesDto, @Req() req: any) {
+    // Lấy user_id từ JWT (ưu tiên userId, fallback id)
+    const userId = req?.user?.userId || req?.user?.id || null;
+    return this.customItineraryService.calculateRoutes(dto, userId);
   }
 
   /**
@@ -50,5 +55,48 @@ export class CustomItineraryController {
   @Post('autocomplete')
   async autocomplete(@Body() dto: AutocompleteRequestDto) {
     return this.customItineraryService.autocompletePlaces(dto.input, dto.sessionToken);
+  }
+
+  /**
+   * PATCH /custom-itinerary/status/:routeId
+   * Proxy đổi status, tái sử dụng logic từ itinerary module
+   * Body:
+   * - status: DRAFT | CONFIRMED | MAIN
+   * - title?: optional
+   */
+  @Patch('status/:routeId')
+  async updateStatus(
+    @Param('routeId') routeId: string,
+    @Body() dto: UpdateStatusDto,
+    @Req() req: any,
+  ) {
+    const userId = req?.user?.userId || req?.user?.id;
+    if (!userId) {
+      return { message: 'Unauthorized', status: 401 };
+    }
+    const updated = await this.customItineraryService.updateStatusAll(
+      routeId,
+      userId,
+      dto.status,
+      dto.title ? { title: dto.title } : undefined,
+    );
+    return updated || { message: 'Not found or no changes', status: 404 };
+  }
+
+  /**
+   * GET /custom-itinerary/routes
+   * Lấy danh sách custom-itineraries của user (có thể lọc theo status)
+   * Query: status? = DRAFT | CONFIRMED | MAIN
+   */
+  @Get('routes')
+  async getRoutes(
+    @Req() req: any,
+    @Query('status') status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
+  ) {
+    const userId = req?.user?.userId || req?.user?.id;
+    if (!userId) {
+      return { message: 'Unauthorized', status: 401 };
+    }
+    return this.customItineraryService.listRoutes(userId, status);
   }
 }
