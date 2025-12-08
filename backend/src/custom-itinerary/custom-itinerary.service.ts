@@ -160,11 +160,15 @@ export class CustomItineraryService {
         destination: itineraryData.destination,
         status: 'DRAFT',
         optimize: itineraryData.optimize ?? false,
+        start_date: itineraryData.start_date || null,
+        end_date: itineraryData.end_date || null,
         route_data_json: {
           days: processedDays,
           optimize: itineraryData.optimize,
           travelMode: itineraryData.travelMode,
           destination: itineraryData.destination,
+          start_date: itineraryData.start_date,
+          end_date: itineraryData.end_date,
         },
       });
 
@@ -177,6 +181,8 @@ export class CustomItineraryService {
         title: saved.title,
         destination: saved.destination,
         status: saved.status,
+        start_date: saved.start_date || null,
+        end_date: saved.end_date || null,
       };
     } catch (error) {
       this.logger.error(`Lỗi khi tính toán routes: ${error.message}`);

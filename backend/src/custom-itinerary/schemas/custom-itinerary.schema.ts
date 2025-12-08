@@ -23,6 +23,12 @@ export class CustomItinerary {
   @Prop({ type: Boolean, default: false })
   optimize?: boolean;
 
+  @Prop({ type: String, default: null })
+  start_date: string | null; // Ngày bắt đầu (ISO string)
+
+  @Prop({ type: String, default: null })
+  end_date: string | null; // Ngày kết thúc (ISO string)
+
   @Prop({ type: SchemaTypes.Mixed })
   route_data_json: any;
 }

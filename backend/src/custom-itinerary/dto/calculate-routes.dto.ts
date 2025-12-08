@@ -1,4 +1,4 @@
-import { IsArray, IsNotEmpty, ValidateNested } from 'class-validator';
+import { IsArray, IsNotEmpty, ValidateNested, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /**
@@ -66,4 +66,12 @@ export class CalculateRoutesDto {
   days: DayDto[];
 
   optimize?: boolean; // Tối ưu hóa lộ trình (waypoints)
+
+  @IsOptional()
+  @IsString()
+  start_date?: string; // Ngày bắt đầu (ISO string)
+
+  @IsOptional()
+  @IsString()
+  end_date?: string; // Ngày kết thúc (ISO string)
 }

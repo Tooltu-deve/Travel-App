@@ -56,4 +56,6 @@ export class CalculateRoutesResponseDto {
   title?: string | null;
   destination?: string | null;
   status?: 'DRAFT' | 'CONFIRMED' | 'MAIN' | null;
+  start_date?: string | null; // Ngày bắt đầu (ISO string)
+  end_date?: string | null; // Ngày kết thúc (ISO string)
 }
