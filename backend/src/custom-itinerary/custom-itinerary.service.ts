@@ -14,8 +14,6 @@ export class CustomItineraryService {
   private readonly googleDirectionsApiKey: string;
   private readonly googlePlacesApiKey: string;
   private readonly AUTOCOMPLETE_DELAY_MS = 150; // Debounce delay (ms) để hạn chế call liên tiếp
-  private readonly googlePlacesApiKey: string;
-  private readonly AUTOCOMPLETE_DELAY_MS = 150; // Debounce delay (ms) để hạn chế call liên tiếp
 
   constructor(
     private readonly httpService: HttpService,
@@ -124,13 +122,6 @@ export class CustomItineraryService {
         // Geocode startLocation để lấy tọa độ
         const startLocationCoordinates = await this.getCityCoordinates(day.startLocation);
         
-        if (!day.startLocation) {
-          throw new BadRequestException('Invalid input: each day must have startLocation');
-        }
-        
-        // Geocode startLocation để lấy tọa độ
-        const startLocationCoordinates = await this.getCityCoordinates(day.startLocation);
-        
         const processedPlaces = await this.calculateRoutesForDay(day.places, itineraryData.travelMode, itineraryData.optimize);
         processedDays.push({ 
           dayNumber: day.dayNumber, 
@@ -149,8 +140,8 @@ export class CustomItineraryService {
 
   // --- Places Autocomplete ---
   async autocompletePlaces(
-    input: string,
-    sessionToken?: string,
+    userInput: string,
+    token?: string,
   ): Promise<
     Array<{
       description: string;
@@ -161,7 +152,7 @@ export class CustomItineraryService {
       };
     }>
   > {
-    if (!input || input.trim().length === 0) {
+    if (!userInput || userInput.trim().length === 0) {
       throw new BadRequestException('input is required');
     }
 
@@ -173,33 +164,52 @@ export class CustomItineraryService {
     await new Promise((resolve) => setTimeout(resolve, this.AUTOCOMPLETE_DELAY_MS));
 
     try {
-      const url = 'https://maps.googleapis.com/maps/api/place/autocomplete/json';
-      const params: any = {
-        input,
-        key: this.googlePlacesApiKey,
-        language: 'vi',
-        components: 'country:VN', // Giới hạn Việt Nam
+      // Google Places API (new) v1 autocomplete
+      const url = 'https://places.googleapis.com/v1/places:autocomplete';
+      const body: any = {
+        input: userInput,
+        languageCode: 'vi',
+        includedRegionCodes: ['VN'], // Giới hạn Việt Nam
+        sessionToken: token || undefined,
       };
-      if (sessionToken) {
-        params.sessiontoken = sessionToken;
-      }
+      const headers = {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': this.googlePlacesApiKey,
+        'X-Goog-FieldMask':
+          'suggestions.placePrediction.placeId,' +
+          'suggestions.placePrediction.text,' +
+          'suggestions.placePrediction.structuredFormat',
+      };
 
-      const response = await firstValueFrom(this.httpService.get(url, { params }));
-      if (response.data.status !== 'OK') {
-        throw new BadRequestException(`Autocomplete API error: ${response.data.status}`);
-      }
-
-      const predictions = Array.isArray(response.data.predictions)
-        ? response.data.predictions.slice(0, 5)
+      const response = await firstValueFrom(this.httpService.post(url, body, { headers }));
+      const predictions = Array.isArray(response.data?.suggestions)
+        ? response.data.suggestions
         : [];
 
-      return predictions.map((p: any) => ({
-        description: p.description,
-        place_id: p.place_id,
-        structured_formatting: p.structured_formatting,
-      }));
+      return predictions
+        .map((p: any) => {
+          const place = p.placePrediction;
+          const struct = place?.structuredFormat;
+          return {
+            description: place?.text?.text,
+            place_id: place?.placeId,
+            structured_formatting: struct
+              ? {
+                  main_text: struct.mainText?.text,
+                  secondary_text: struct.secondaryText?.text,
+                }
+              : undefined,
+          };
+        })
+        .filter((p: any) => p.place_id && p.description)
+        .slice(0, 5);
     } catch (error: any) {
-      this.logger.error(`Lỗi khi gọi Places Autocomplete API: ${error.message}`);
+      const msg =
+        error?.response?.data?.error?.message ||
+        error?.response?.data?.status ||
+        error?.message ||
+        'Unknown error';
+      this.logger.error(`Lỗi khi gọi Places Autocomplete API: ${msg}`);
       throw new BadRequestException('Không thể lấy gợi ý địa điểm');
     }
   }

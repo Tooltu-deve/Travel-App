@@ -24,7 +24,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { calculateRoutesAPI, checkWeatherAPI, autocompleteAPI, AutocompletePrediction } from '../../services/api';
+import { calculateRoutesAPI, checkWeatherAPI, autocompleteAPI, AutocompletePrediction, saveManualRouteAPI } from '../../services/api';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const BOTTOM_SHEET_MAX_HEIGHT = SCREEN_HEIGHT * 0.75;
@@ -778,17 +778,46 @@ const ManualPlaceSelectionScreen: React.FC = () => {
 
       console.log('✅ Routes calculated:', routeResult);
 
-      // Navigate to route preview screen with the result
+      // Format route data với kết quả đã optimize (nếu có)
+      const formattedRouteData = {
+        optimized_route: routeResult.days.map((day: any) => ({
+          day: day.dayNumber,
+          day_start_time: tripInfo?.startDate || new Date().toISOString(),
+          activities: day.places.map((place: any) => ({
+            name: place.name,
+            location: place.location || { lat: 0, lng: 0 },
+            google_place_id: place.placeId,
+            address: place.address,
+            travel_duration_minutes: place.travel_duration_minutes,
+            encoded_polyline: place.encoded_polyline,
+          })),
+        })),
+        summary: {
+          title: `Lộ trình ${tripInfo?.destination || ''}`,
+          total_days: tripInfo?.durationDays || 1,
+          destination: tripInfo?.destination || '',
+        },
+        metadata: {
+          travel_mode: travelMode,
+          optimized: optimize,
+          created_at: new Date().toISOString(),
+          is_manual: true,
+        },
+      };
+
+      // Navigate to itinerary-details để xem bản đồ với dữ liệu manual (chưa lưu DB)
+      // Khi user confirm trong itinerary-details, sẽ tạo route trong DB
       router.push({
         pathname: '/create-itinerary/route-preview',
         params: {
-          routeData: JSON.stringify(routeResult),
+          routeData: JSON.stringify(formattedRouteData),
           destination: tripInfo?.destination || '',
           durationDays: tripInfo?.durationDays.toString() || '1',
+          startLocation: tripInfo?.currentLocation || '',
           startDate: tripInfo?.startDate || '',
-          endDate: tripInfo?.endDate || '',
           travelMode,
           isManualRoute: 'true',
+          optimize: optimize.toString(),
         },
       });
     } catch (error: any) {

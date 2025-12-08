@@ -19,7 +19,7 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import polyline from '@mapbox/polyline';
 import { COLORS } from '@/constants/colors';
 import { SPACING } from '@/constants/spacing';
-import { deleteRouteAPI, updateRouteStatusAPI, enrichPlaceAPI } from '@/services/api';
+import { deleteRouteAPI, updateRouteStatusAPI, enrichPlaceAPI, saveManualRouteAPI } from '@/services/api';
 import { POIDetailBottomSheet } from '@/components/place/POIDetailBottomSheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -55,10 +55,15 @@ interface RouteData {
 
 interface RoutePreviewParams {
   routeData: string; // JSON string của route data
-  routeId: string;
+  routeId?: string; // Optional for manual route (chưa tạo DB)
   destination: string;
   durationDays: string;
   currentLocation?: string; // JSON string của current location { lat, lng }
+  startLocation?: string;
+  startDate?: string;
+  travelMode?: string;
+  isManualRoute?: string; // 'true' nếu là manual route
+  optimize?: string; // 'true'/'false'
 }
 
 export default function RoutePreviewScreen() {
@@ -172,10 +177,7 @@ export default function RoutePreviewScreen() {
 
   // Format emotional tags
   const handleConfirm = async (titleValue?: string) => {
-    if (!params.routeId) {
-      Alert.alert('Lỗi', 'Không tìm thấy ID lộ trình.');
-      return;
-    }
+    const isManual = params.isManualRoute === 'true';
 
     setIsLoading(true);
     try {
@@ -195,7 +197,34 @@ export default function RoutePreviewScreen() {
 
       setRouteTitle(finalTitle);
 
-      await updateRouteStatusAPI(token, params.routeId, {
+      let routeId = params.routeId;
+
+      if (isManual) {
+        // Manual route: tạo route mới trong database
+        console.log('💾 Creating manual route in database...');
+        const createResponse = await saveManualRouteAPI(token, {
+          destination: params.destination || '',
+          duration_days: parseInt(params.durationDays || '1'),
+          start_location: params.startLocation || '',
+          start_datetime: params.startDate || new Date().toISOString(),
+          title: finalTitle,
+        });
+
+        if (!createResponse || !createResponse.route || !createResponse.route.route_id) {
+          throw new Error('Backend không trả về thông tin lộ trình hợp lệ');
+        }
+
+        routeId = createResponse.route.route_id;
+        console.log('✅ Manual route created with ID:', routeId);
+      }
+
+      if (!routeId) {
+        Alert.alert('Lỗi', 'Không tìm thấy ID lộ trình.');
+        return;
+      }
+
+      // Update status to CONFIRMED
+      await updateRouteStatusAPI(token, routeId, {
         status: 'CONFIRMED',
         title: finalTitle,
       });

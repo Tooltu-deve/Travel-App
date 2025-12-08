@@ -1087,6 +1087,48 @@ export const checkWeatherAPI = async (
 };
 
 /**
+ * saveManualRouteAPI: Lưu lộ trình thủ công vào database
+ * Gửi route đã tính toán sẵn (đã optimize nếu user chọn) lên backend
+ * 
+ * @param token JWT token
+ * @param data Request body với route_data_json đã format
+ * 
+ * Endpoint: POST /api/v1/itineraries/generate
+ * Headers: Authorization: Bearer <token>
+ * Response: { message, route }
+ */
+export const saveManualRouteAPI = async (
+  token: string,
+  data: {
+    destination: string;
+    duration_days: number;
+    start_location: string;
+    start_datetime: string;
+    title?: string;
+    route_data_json?: any; // Route data đã được calculate
+  },
+): Promise<GenerateRouteResponse> => {
+  // Gửi request với route_data_json nếu có (manual route đã tính)
+  return makeRequest<GenerateRouteResponse>('/api/v1/itineraries/generate', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      budget: 'affordable',
+      destination: data.destination,
+      user_mood: [],
+      duration_days: data.duration_days,
+      start_location: data.start_location,
+      start_datetime: data.start_datetime,
+      // Nếu có route_data_json, backend sẽ skip AI optimizer và dùng data này
+      ...(data.route_data_json && { route_data_json: data.route_data_json }),
+    }),
+  });
+};
+
+/**
  * Interface cho autocomplete prediction
  */
 export interface AutocompletePrediction {
@@ -1105,8 +1147,9 @@ export interface AutocompletePrediction {
  * @param input Chuỗi người dùng nhập
  * @param sessionToken Session token để gom billing
  * 
- * Endpoint: GET /api/v1/custom-itinerary/autocomplete
+ * Endpoint: POST /api/v1/custom-itinerary/autocomplete
  * Headers: Authorization: Bearer <token>
+ * Body: { input, sessionToken? }
  * Response: Array of predictions
  */
 export const autocompleteAPI = async (
@@ -1114,15 +1157,13 @@ export const autocompleteAPI = async (
   input: string,
   sessionToken?: string,
 ): Promise<AutocompletePrediction[]> => {
-  const params = new URLSearchParams({ input });
-  if (sessionToken) {
-    params.append('sessionToken', sessionToken);
-  }
-  return makeRequest<AutocompletePrediction[]>(`/api/v1/custom-itinerary/autocomplete?${params.toString()}`, {
-    method: 'GET',
+  return makeRequest<AutocompletePrediction[]>('/api/v1/custom-itinerary/autocomplete', {
+    method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ input, sessionToken }),
   });
 };
 
@@ -1160,4 +1201,5 @@ export default {
   calculateRoutesAPI,
   checkWeatherAPI,
   autocompleteAPI,
+  saveManualRouteAPI,
 };

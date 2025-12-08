@@ -1,5 +1,4 @@
 import { Controller, Post, Body, UseGuards } from '@nestjs/common';
-import { Get, Query } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CustomItineraryService } from './custom-itinerary.service';
 import { CheckWeatherDto } from './dto/check-weather.dto';
@@ -41,18 +40,15 @@ export class CustomItineraryController {
   }
 
   /**
-   * GET /custom-itinerary/autocomplete
+   * POST /custom-itinerary/autocomplete
    * Gợi ý địa điểm bằng Google Places Autocomplete, giới hạn trong Việt Nam
-   * Query params:
-   * - input: chuỗi người dùng nhập
+   * Body:
+   * - input: chuỗi người dùng nhập (bắt buộc)
    * - sessionToken: optional, để gom billing trong một session
-   * - delayMs: optional, debounce server-side (ms)
+   * Debounce 150ms phía server, trả tối đa 5 gợi ý
    */
-  @Get('autocomplete')
-  async autocomplete(
-    @Query('input') input: string,
-    @Query('sessionToken') sessionToken?: string,
-  ) {
-    return this.customItineraryService.autocompletePlaces(input, sessionToken);
+  @Post('autocomplete')
+  async autocomplete(@Body() dto: AutocompleteRequestDto) {
+    return this.customItineraryService.autocompletePlaces(dto.input, dto.sessionToken);
   }
 }
