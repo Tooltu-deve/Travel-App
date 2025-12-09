@@ -61,7 +61,22 @@ export class CustomItineraryService {
     }
   }
 
+  /**
+   * Calculate routes for a single day using Directions API
+   * Each day can have its own travelMode (driving, walking, bicycling, transit)
+   * This method calls Directions API for each segment between consecutive places
+   * @param places Array of places for this day
+   * @param travelMode Travel mode for this specific day (driving, walking, bicycling, transit)
+   * @param optimize Whether to optimize waypoints order
+   * @returns Array of places with route information (polyline, duration)
+   */
   private async calculateRoutesForDay(places: PlaceDto[], travelMode: string, optimize?: boolean): Promise<PlaceWithRouteDto[]> {
+    if (!travelMode) {
+      throw new BadRequestException('travelMode is required for each day and must be provided by the frontend');
+    }
+    
+    this.logger.debug(`Calculating routes for day with travelMode: ${travelMode}, ${places.length} places`);
+    
     const result: PlaceWithRouteDto[] = [];
     
     // Geocode tất cả places trước để có tọa độ
@@ -75,44 +90,57 @@ export class CustomItineraryService {
       })
     );
     
+    // For each place, calculate route to next place using this day's travelMode
     for (let i = 0; i < placesWithLocation.length; i++) {
       const currentPlace = placesWithLocation[i];
       let placeWithRoute: PlaceWithRouteDto;
+      
       if (i < placesWithLocation.length - 1) {
+        // Not the last place - calculate route to next place
         const nextPlace = placesWithLocation[i + 1];
-        if (!travelMode) {
-          throw new BadRequestException('travelMode is required for each day and must be provided by the frontend');
-        }
+        
+        this.logger.debug(
+          `Calling Directions API: ${currentPlace.name} -> ${nextPlace.name} with mode: ${travelMode}`
+        );
+        
+        // Call Directions API with this day's specific travelMode
         const directionsData = await this.getDirections(
           `${currentPlace.location.lat},${currentPlace.location.lng}`,
           `${nextPlace.location.lat},${nextPlace.location.lng}`,
-          travelMode,
+          travelMode, // Use the travelMode specific to this day
           optimize,
         );
+        
         const route = directionsData.routes[0];
         const leg = route.legs[0];
+        
         placeWithRoute = {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           address: currentPlace.address,
           location: currentPlace.location,
-          // travelMode chỉ dùng cho logic, không trả về response
           encoded_polyline: route.overview_polyline.points,
           travel_duration_minutes: Math.round(leg.duration.value / 60),
         };
+        
+        this.logger.debug(
+          `Route calculated: ${currentPlace.name} -> ${nextPlace.name}, duration: ${placeWithRoute.travel_duration_minutes} minutes`
+        );
       } else {
+        // Last place - no route to calculate
         placeWithRoute = {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           address: currentPlace.address,
           location: currentPlace.location,
-          // travelMode chỉ dùng cho logic, không trả về response
           encoded_polyline: null,
           travel_duration_minutes: null,
         };
       }
       result.push(placeWithRoute);
     }
+    
+    this.logger.debug(`Completed route calculation for day with travelMode: ${travelMode}`);
     return result;
   }
 
@@ -127,30 +155,46 @@ export class CustomItineraryService {
       if (!days || !Array.isArray(days)) {
         throw new BadRequestException('Invalid input: days must be an array');
       }
-      const processedDays: DayWithRoutesDto[] = [];
-      if (!itineraryData.travelMode) {
-        throw new BadRequestException('travelMode is required for the whole itinerary and must be provided by the frontend');
-      }
-      for (const day of days) {
+      // Process each day independently with its own travelMode
+      // Each day calls Directions API separately with its specific travel mode
+      const processedDaysPromises = days.map(async (day) => {
         if (!day.places || !Array.isArray(day.places)) {
           throw new BadRequestException('Invalid input: each day must have places array');
         }
         if (!day.startLocation) {
           throw new BadRequestException('Invalid input: each day must have startLocation');
         }
+        if (!day.travelMode) {
+          throw new BadRequestException('Invalid input: each day must have travelMode');
+        }
+        
+        this.logger.log(`Processing day ${day.dayNumber} with travelMode: ${day.travelMode}`);
         
         // Geocode startLocation để lấy tọa độ
         const startLocationCoordinates = await this.getCityCoordinates(day.startLocation);
         
-        const processedPlaces = await this.calculateRoutesForDay(day.places, itineraryData.travelMode, itineraryData.optimize);
-        processedDays.push({ 
-          dayNumber: day.dayNumber, 
+        // Call Directions API for this day with its specific travelMode
+        // calculateRoutesForDay will call getDirections for each place-to-place segment using day.travelMode
+        const processedPlaces = await this.calculateRoutesForDay(day.places, day.travelMode, itineraryData.optimize);
+        
+        this.logger.log(`Completed day ${day.dayNumber} with ${processedPlaces.length} places`);
+        
+        return {
+          dayNumber: day.dayNumber,
+          travelMode: day.travelMode,
           startLocation: day.startLocation,
           startLocationCoordinates,
           places: processedPlaces 
-        });
-      }
-      this.logger.log(`Successfully calculated routes for ${days.length} days`);
+        };
+      });
+      
+      // Process all days in parallel for better performance
+      const processedDays = await Promise.all(processedDaysPromises);
+      
+      // Sort by dayNumber to ensure correct order
+      processedDays.sort((a, b) => a.dayNumber - b.dayNumber);
+      
+      this.logger.log(`Successfully calculated routes for ${days.length} days with different travel modes`);
 
       // Lưu vào collection custom-itineraries
       const saved = await this.customItineraryModel.create({
@@ -165,7 +209,6 @@ export class CustomItineraryService {
         route_data_json: {
           days: processedDays,
           optimize: itineraryData.optimize,
-          travelMode: itineraryData.travelMode,
           destination: itineraryData.destination,
           start_date: itineraryData.start_date,
           end_date: itineraryData.end_date,

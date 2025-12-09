@@ -1,4 +1,4 @@
-import { IsArray, IsNotEmpty, ValidateNested, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsNotEmpty, ValidateNested, IsOptional, IsString, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /**
@@ -32,9 +32,12 @@ export class PlaceDto {
  * DTO cho một day trong itinerary
  */
 export class DayDto {
-    // travelMode đã chuyển lên CalculateRoutesDto
   @IsNotEmpty()
   dayNumber: number;
+
+  @IsNotEmpty()
+  @IsIn(['driving', 'walking', 'bicycling', 'transit'])
+  travelMode: string; // Phương tiện di chuyển cho ngày này: driving, walking, bicycling, transit
 
   @IsNotEmpty()
   startLocation: string; // Địa chỉ điểm xuất phát, sẽ được geocoding sang tọa độ
@@ -54,9 +57,6 @@ export class DayDto {
  * - Nested validation cho complex objects
  */
 export class CalculateRoutesDto {
-    @IsNotEmpty()
-    travelMode: string; // driving, walking, bicycling, transit
-
   @IsNotEmpty()
   destination: string; // Điểm đến chính của lộ trình
 

@@ -36,6 +36,7 @@ export class PlaceWithRouteDto {
  */
 export class DayWithRoutesDto {
   dayNumber: number;
+  travelMode: string; // Phương tiện di chuyển cho ngày này: driving, walking, bicycling, transit
   startLocation: string; // Địa chỉ điểm xuất phát gốc từ request
   startLocationCoordinates: {
     lat: number;
