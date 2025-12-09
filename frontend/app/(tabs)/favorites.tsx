@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated, ActivityIndicator, Alert, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -7,45 +7,74 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI, enrichPlaceAPI } from '../../services/api';
+import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI, enrichPlaceAPI, API_BASE_URL } from '../../services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { translatePlaceType } from '../../constants/placeTypes';
 import { POIDetailBottomSheet } from '@/components/place/POIDetailBottomSheet';
 
-const renderStars = (rating?: number | null) => {
-  const stars = [];
-  let ratingText = '0.0';
-  if (rating == null || Number.isNaN(rating)) {
-    for (let i = 0; i < 5; i++) {
-      stars.push(
-        <FontAwesome key={`e-${i}`} name="star-o" size={14} color={COLORS.textSecondary} style={{ marginRight: 6 }} />,
-      );
-    }
-  } else {
-    ratingText = rating.toFixed(1);
-    const full = Math.floor(rating);
-    const hasHalf = rating % 1 >= 0.5;
-    for (let i = 0; i < full; i++) {
-      stars.push(
-        <FontAwesome key={`s-${i}`} name="star" size={14} color={COLORS.ratingAlt} style={{ marginRight: 6 }} />,
-      );
-    }
-    if (hasHalf) {
-      stars.push(
-        <FontAwesome key="half" name="star-half-o" size={14} color={COLORS.ratingAlt} style={{ marginRight: 6 }} />,
-      );
-    }
-    const current = stars.length;
-    for (let i = current; i < 5; i++) {
-      stars.push(
-        <FontAwesome key={`e-${i}`} name="star-o" size={14} color={COLORS.textSecondary} style={{ marginRight: 6 }} />,
-      );
-    }
+const renderStars = (rating: number | null) => {
+  if (rating === null || rating === undefined) {
+    return (
+      <View style={styles.ratingRow}>
+        <Text style={styles.ratingText}>0.0</Text>
+        <View style={styles.starsRow}>
+          {[...Array(5)].map((_, i) => (
+            <FontAwesome key={i} name="star-o" size={14} color={COLORS.textSecondary} />
+          ))}
+        </View>
+      </View>
+    );
   }
-  return <View style={{ flexDirection: 'row', alignItems: 'center' }}>{stars}<Text style={styles.placeRating}>{ratingText}</Text></View>;
+  const stars = [];
+  const full = Math.floor(rating);
+  const hasHalf = rating % 1 >= 0.5;
+  const total = 5;
+  // full stars
+  for (let i = 0; i < full; i++) {
+    stars.push(
+      <FontAwesome
+        key={`s-${i}`}
+        name="star"
+        size={14}
+        color={COLORS.ratingAlt}
+        style={{ marginRight: i === total - 1 ? 0 : 4 }}
+      />,
+    );
+  }
+  // half star
+  if (hasHalf) {
+    stars.push(
+      <FontAwesome
+        key="half"
+        name="star-half-full"
+        size={14}
+        color={COLORS.ratingAlt}
+        style={{ marginRight: (full === total - 1) ? 0 : 4 }}
+      />,
+    );
+  }
+  // empty stars to reach total
+  const current = stars.length;
+  for (let i = current; i < total; i++) {
+    stars.push(
+      <FontAwesome
+        key={`e-${i}`}
+        name="star-o"
+        size={14}
+        color={COLORS.textSecondary}
+        style={{ marginRight: i === total - 1 ? 0 : 4 }}
+      />,
+    );
+  }
+  return (
+    <View style={styles.ratingRow}>
+      <Text style={styles.ratingText}>{rating.toFixed(1)}</Text>
+      <View style={styles.starsRow}>{stars}</View>
+    </View>
+  );
 };
 
-const normalizePlace = (p: any) => {
+  const normalizePlace = (p: any) => {
   let moods: string[] = [];
   if (Array.isArray(p.moods) && p.moods.length) moods = p.moods;
   else if (p.mood) moods = [p.mood];
@@ -80,6 +109,11 @@ const normalizePlace = (p: any) => {
     if (!Number.isNaN(parsed)) ratingVal = parsed;
   }
 
+  // Get photo name from photos array
+  const photoName = p.photos && Array.isArray(p.photos) && p.photos.length > 0 
+    ? p.photos[0].name 
+    : null;
+
   return {
     id: p.placeId || p.id || p._id || p.place_id || p.google_place_id || p.googlePlaceId || '',
     name,
@@ -87,10 +121,9 @@ const normalizePlace = (p: any) => {
     moods,
     rating: ratingVal,
     googlePlaceId: p.google_place_id || p.googlePlaceId || '',
+    photoName: photoName,
   };
-};
-
-const FavoritesScreen: React.FC = () => {
+};const FavoritesScreen: React.FC = () => {
   const [moods, setMoods] = useState<Array<{ key: string; label: string }>>([]);
   const [selectedMood, setSelectedMood] = useState<string>('all');
   const [moodsExpanded, setMoodsExpanded] = useState<boolean>(false);
@@ -178,7 +211,9 @@ const FavoritesScreen: React.FC = () => {
           const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
           places = list.map(normalizePlace).filter(p => p.name !== 'Không rõ');
         } else {
+          console.log('[Favorites] Fetching by mood:', selectedMood);
           const remote = await getFavoritesByMoodAPI(token, selectedMood);
+          console.log('[Favorites] API response:', remote);
           if (Array.isArray(remote)) {
             places = await Promise.all(remote.map(async (p: any) => {
               let norm = normalizePlace(p);
@@ -443,47 +478,74 @@ const FavoritesScreen: React.FC = () => {
             </View>
           )}
           {favorites.map((place) => (
-            <TouchableOpacity
-              key={place.id}
-              style={styles.card}
-              onPress={() => handlePlacePress(place)}
-              disabled={isEnriching}
-              activeOpacity={0.7}
-            >
-              <View style={styles.cardInner}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
-                  <View style={styles.rowSmall}>
-                    <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
+            <View key={place.id} style={styles.placeCard}>
+              {/* Heart Button - Top Right Corner */}
+              <TouchableOpacity
+                style={styles.likeButton}
+                activeOpacity={0.85}
+                onPress={async () => {
+                  try {
+                    await handleLikePlace(place.id, place.googlePlaceId);
+                  } catch (e) {
+                    console.error('Failed to toggle like', e);
+                  }
+                }}
+                disabled={isLiking !== null}
+              >
+                <FontAwesome name="heart" size={20} color="#E53E3E" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.placeContent}
+                onPress={() => handlePlacePress(place)}
+                disabled={isEnriching}
+                activeOpacity={0.7}
+              >
+                {/* Image Section - Left Side */}
+                {place.photoName ? (
+                  <Image
+                    source={{
+                      uri: `${API_BASE_URL}/api/v1/places/photo?name=${encodeURIComponent(place.photoName)}&maxWidthPx=400`,
+                    }}
+                    style={styles.placeImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.placeholderImage}>
+                    <FontAwesome name="image" size={32} color={COLORS.textSecondary} />
+                  </View>
+                )}
+
+                {/* Content Section - Right Side */}
+                <View style={styles.placeInfo}>
+                  <View style={styles.placeHeader}>
+                    <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
+                  </View>
+                  <View style={styles.placeRow}>
+                    <FontAwesome name="map-marker" size={14} color={COLORS.primary} />
                     <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
                   </View>
-                  <View style={[styles.rowSmall, { marginTop: 8, alignItems: 'center' }]}> 
-                    {renderStars(place.rating)}
+
+                  <View style={styles.placeFooter}>
+                    <View style={styles.leftCol}>
+                      {renderStars(place.rating)}
+                    </View>
+                    <View style={styles.moodTags}>
+                      {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
+                        <View key={i} style={styles.moodTag}>
+                          <Text style={styles.moodTagText} numberOfLines={1}>{m}</Text>
+                        </View>
+                      ))}
+                      {place.moods && place.moods.length > 3 && <Text style={styles.moreMoodsText}>+{place.moods.length - 3}</Text>}
+                    </View>
                   </View>
-                  <View style={{ flexDirection: 'row', marginTop: 8, flexWrap: 'wrap' }}>
-                    {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
-                      <View key={i} style={styles.moodPill}><Text style={styles.moodPillText}>{m}</Text></View>
-                    ))}
-                    {place.moods && place.moods.length > 3 && (
-                      <View style={styles.moodPill}><Text style={styles.moodPillText}>+{place.moods.length - 3}</Text></View>
-                    )}
-                  </View>
-                  {isEnriching && place.googlePlaceId === selectedPlaceData?.googlePlaceId && (
-                    <ActivityIndicator size="small" color={COLORS.primary} style={{ marginTop: 8 }} />
-                  )}
                 </View>
-                <TouchableOpacity
-                  style={styles.heartFloat}
-                  onPress={(e) => {
-                    e.stopPropagation(); // Ngăn trigger handlePlacePress
-                    handleLikePlace(place.id, place.googlePlaceId);
-                  }}
-                  disabled={isLiking !== null}
-                >
-                  <FontAwesome name="heart" size={18} color="#E53E3E" />
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+
+              {isEnriching && place.googlePlaceId === selectedPlaceData?.googlePlaceId && (
+                <ActivityIndicator size="small" color={COLORS.primary} style={{ position: 'absolute', bottom: SPACING.md, right: SPACING.md }} />
+              )}
+            </View>
           ))}
         </View>
       </ScrollView>
@@ -513,15 +575,161 @@ const styles = StyleSheet.create({
   toggleButton: { padding: 8, marginLeft: SPACING.sm },
   moodsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: SPACING.sm, marginBottom: SPACING.md, paddingHorizontal: 4 },
   listContainer: { flexDirection: 'column', gap: SPACING.md },
-  card: { backgroundColor: COLORS.textWhite, borderRadius: 12, padding: SPACING.md, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 4, borderWidth: 1, borderColor: COLORS.borderLight },
-  cardInner: { flexDirection: 'row', alignItems: 'flex-start' },
-  placeName: { fontSize: 16, fontWeight: '800', color: COLORS.textDark, flex: 1 },
-  placeAddress: { color: COLORS.textSecondary, marginLeft: 6, marginTop: 2 },
-  rowSmall: { flexDirection: 'row', alignItems: 'center' },
-  moodPill: { backgroundColor: 'rgba(0,163,255,0.08)', borderRadius: 12, paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs, borderWidth: 1, borderColor: 'rgba(0,163,255,0.12)', marginRight: SPACING.xs, marginTop: SPACING.xs },
-  moodPillText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
-  placeRating: { color: COLORS.ratingAlt, marginLeft: 8, fontWeight: '700' },
-  heartFloat: { width: 38, height: 38, borderRadius: 20, backgroundColor: COLORS.textWhite, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 4, marginLeft: 12 },
+  placeCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    marginBottom: SPACING.lg,
+    shadowColor: '#3083FF',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(48, 131, 255, 0.08)',
+    overflow: 'hidden',
+  },
+  placeContent: {
+    flexDirection: 'row',
+    padding: SPACING.lg,
+  },
+  placeImage: {
+    width: 96,
+    height: 96,
+    borderRadius: 16,
+    backgroundColor: COLORS.bgLight,
+    borderWidth: 2,
+    borderColor: 'rgba(48, 131, 255, 0.1)',
+  },
+  placeholderImage: {
+    width: 96,
+    height: 96,
+    borderRadius: 16,
+    backgroundColor: 'rgba(48, 131, 255, 0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(48, 131, 255, 0.1)',
+    borderStyle: 'dashed',
+  },
+  placeInfo: {
+    flex: 1,
+    marginLeft: SPACING.md + 2,
+    justifyContent: 'space-between',
+  },
+  placeHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: SPACING.xs,
+  },
+  placeName: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#1A1A1A',
+    marginBottom: 6,
+    lineHeight: 22,
+    letterSpacing: 0.3,
+    paddingRight: SPACING.sm,
+  },
+  placeAddress: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginLeft: 6,
+    flex: 1,
+    lineHeight: 18,
+  },
+  likeButton: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderBottomLeftRadius: 20,
+    borderTopRightRadius: 20,
+    shadowColor: '#3083FF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(48, 131, 255, 0.15)',
+    zIndex: 10,
+  },
+  placeFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: SPACING.xs,
+    paddingTop: SPACING.xs,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(48, 131, 255, 0.06)',
+  },
+  leftCol: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  ratingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(251, 191, 36, 0.1)',
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs - 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 191, 36, 0.2)',
+  },
+  starsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 6,
+  },
+  ratingText: {
+    color: '#F59E0B',
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.2,
+  },
+  placeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  moodTags: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    flex: 1,
+    maxWidth: '100%',
+  },
+  moodTag: {
+    backgroundColor: 'rgba(48, 131, 255, 0.1)',
+    borderRadius: 10,
+    paddingHorizontal: SPACING.sm + 2,
+    paddingVertical: SPACING.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(48, 131, 255, 0.2)',
+    marginRight: SPACING.xs,
+    marginBottom: 4,
+    maxWidth: 120,
+  },
+  moodTagText: {
+    fontSize: 11,
+    color: '#3083FF',
+    fontWeight: '700',
+    letterSpacing: 0.2,
+    numberOfLines: 1,
+  },
+  moreMoodsText: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontWeight: '700',
+    backgroundColor: 'rgba(156, 163, 175, 0.1)',
+    paddingHorizontal: SPACING.xs + 2,
+    paddingVertical: SPACING.xs - 2,
+    borderRadius: 8,
+  },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textDark, marginBottom: SPACING.sm, marginTop: SPACING.md },
   emptyWrap: { alignItems: 'center', paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md },
