@@ -17,9 +17,7 @@ export const TYPE_TRANSLATIONS: Record<string, string> = {
   botanical_garden: 'Vườn bách thảo',
   brunch_restaurant: 'Quán brunch',
   cafe: 'Quán cà phê',
-  campground: 'Khu cắm trại',
-  church: 'Nhà thờ',
-  coffee_shop: 'Quán cà phê',
+  coffee_shop: 'Cửa hàng cà phê', // Khác biệt với cafe
   condominium_complex: 'Khu chung cư',
   corporate_office: 'Văn phòng công ty',
   cultural_center: 'Trung tâm văn hóa',

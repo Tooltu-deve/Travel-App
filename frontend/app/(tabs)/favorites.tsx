@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Animated, ActivityIndicator, Alert, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI, enrichPlaceAPI } from '../../services/api';
+import { getMoodsAPI, getFavoritesByMoodAPI, getPlaceByIdAPI, enrichPlaceAPI, API_BASE_URL } from '../../services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { translatePlaceType } from '../../constants/placeTypes';
 import { POIDetailBottomSheet } from '@/components/place/POIDetailBottomSheet';
@@ -45,7 +45,7 @@ const renderStars = (rating?: number | null) => {
   return <View style={{ flexDirection: 'row', alignItems: 'center' }}>{stars}<Text style={styles.placeRating}>{ratingText}</Text></View>;
 };
 
-const normalizePlace = (p: any) => {
+  const normalizePlace = (p: any) => {
   let moods: string[] = [];
   if (Array.isArray(p.moods) && p.moods.length) moods = p.moods;
   else if (p.mood) moods = [p.mood];
@@ -80,6 +80,11 @@ const normalizePlace = (p: any) => {
     if (!Number.isNaN(parsed)) ratingVal = parsed;
   }
 
+  // Get photo name from photos array
+  const photoName = p.photos && Array.isArray(p.photos) && p.photos.length > 0 
+    ? p.photos[0].name 
+    : null;
+
   return {
     id: p.placeId || p.id || p._id || p.place_id || p.google_place_id || p.googlePlaceId || '',
     name,
@@ -87,10 +92,9 @@ const normalizePlace = (p: any) => {
     moods,
     rating: ratingVal,
     googlePlaceId: p.google_place_id || p.googlePlaceId || '',
+    photoName: photoName,
   };
-};
-
-const FavoritesScreen: React.FC = () => {
+};const FavoritesScreen: React.FC = () => {
   const [moods, setMoods] = useState<Array<{ key: string; label: string }>>([]);
   const [selectedMood, setSelectedMood] = useState<string>('all');
   const [moodsExpanded, setMoodsExpanded] = useState<boolean>(false);
@@ -178,7 +182,9 @@ const FavoritesScreen: React.FC = () => {
           const list = Array.isArray(ctxFavorites) ? ctxFavorites : [];
           places = list.map(normalizePlace).filter(p => p.name !== 'Không rõ');
         } else {
+          console.log('[Favorites] Fetching by mood:', selectedMood);
           const remote = await getFavoritesByMoodAPI(token, selectedMood);
+          console.log('[Favorites] API response:', remote);
           if (Array.isArray(remote)) {
             places = await Promise.all(remote.map(async (p: any) => {
               let norm = normalizePlace(p);
@@ -451,37 +457,62 @@ const FavoritesScreen: React.FC = () => {
               activeOpacity={0.7}
             >
               <View style={styles.cardInner}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
-                  <View style={styles.rowSmall}>
-                    <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
-                    <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
+                {/* Image Section - Left Side */}
+                {place.photoName ? (
+                  <Image
+                    source={{
+                      uri: `${API_BASE_URL}/api/v1/places/photo?name=${encodeURIComponent(place.photoName)}&maxWidthPx=400`,
+                    }}
+                    style={styles.placeImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.placeholderImage}>
+                    <FontAwesome name="image" size={32} color={COLORS.textSecondary} />
                   </View>
-                  <View style={[styles.rowSmall, { marginTop: 8, alignItems: 'center' }]}> 
-                    {renderStars(place.rating)}
+                )}
+
+                {/* Content Section - Right Side */}
+                <View style={styles.placeInfo}>
+                  <View style={styles.placeHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
+                      <View style={styles.rowSmall}>
+                        <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
+                        <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
+                      </View>
+                    </View>
+                    
+                    <TouchableOpacity
+                      style={styles.heartFloat}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleLikePlace(place.id, place.googlePlaceId);
+                      }}
+                      disabled={isLiking !== null}
+                    >
+                      <FontAwesome name="heart" size={20} color="#E53E3E" />
+                    </TouchableOpacity>
                   </View>
-                  <View style={{ flexDirection: 'row', marginTop: 8, flexWrap: 'wrap' }}>
-                    {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
-                      <View key={i} style={styles.moodPill}><Text style={styles.moodPillText}>{m}</Text></View>
-                    ))}
-                    {place.moods && place.moods.length > 3 && (
-                      <View style={styles.moodPill}><Text style={styles.moodPillText}>+{place.moods.length - 3}</Text></View>
-                    )}
+
+                  <View style={styles.placeFooter}>
+                    <View style={styles.rowSmall}>
+                      {renderStars(place.rating)}
+                    </View>
+                    <View style={styles.moodTags}>
+                      {place.moods && place.moods.slice(0, 2).map((m: string, i: number) => (
+                        <View key={i} style={styles.moodPill}><Text style={styles.moodPillText}>{m}</Text></View>
+                      ))}
+                      {place.moods && place.moods.length > 2 && (
+                        <Text style={styles.moreMoodsText}>+{place.moods.length - 2}</Text>
+                      )}
+                    </View>
                   </View>
+
                   {isEnriching && place.googlePlaceId === selectedPlaceData?.googlePlaceId && (
                     <ActivityIndicator size="small" color={COLORS.primary} style={{ marginTop: 8 }} />
                   )}
                 </View>
-                <TouchableOpacity
-                  style={styles.heartFloat}
-                  onPress={(e) => {
-                    e.stopPropagation(); // Ngăn trigger handlePlacePress
-                    handleLikePlace(place.id, place.googlePlaceId);
-                  }}
-                  disabled={isLiking !== null}
-                >
-                  <FontAwesome name="heart" size={18} color="#E53E3E" />
-                </TouchableOpacity>
               </View>
             </TouchableOpacity>
           ))}
@@ -513,15 +544,22 @@ const styles = StyleSheet.create({
   toggleButton: { padding: 8, marginLeft: SPACING.sm },
   moodsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: SPACING.sm, marginBottom: SPACING.md, paddingHorizontal: 4 },
   listContainer: { flexDirection: 'column', gap: SPACING.md },
-  card: { backgroundColor: COLORS.textWhite, borderRadius: 12, padding: SPACING.md, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 4, borderWidth: 1, borderColor: COLORS.borderLight },
-  cardInner: { flexDirection: 'row', alignItems: 'flex-start' },
-  placeName: { fontSize: 16, fontWeight: '800', color: COLORS.textDark, flex: 1 },
-  placeAddress: { color: COLORS.textSecondary, marginLeft: 6, marginTop: 2 },
+  card: { backgroundColor: COLORS.textWhite, borderRadius: 16, padding: SPACING.md, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 3, borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)', overflow: 'hidden' },
+  cardInner: { flexDirection: 'row' },
+  placeImage: { width: 80, height: 80, borderRadius: 12, backgroundColor: COLORS.bgLight },
+  placeholderImage: { width: 80, height: 80, borderRadius: 12, backgroundColor: COLORS.bgLight, justifyContent: 'center', alignItems: 'center' },
+  placeInfo: { flex: 1, marginLeft: SPACING.md },
+  placeHeader: { flexDirection: 'row', alignItems: 'flex-start' },
+  placeName: { fontSize: 16, fontWeight: '700', color: COLORS.textMain, marginBottom: 6 },
+  placeAddress: { color: COLORS.textSecondary, marginLeft: 6, fontSize: 13 },
+  placeFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SPACING.xs },
   rowSmall: { flexDirection: 'row', alignItems: 'center' },
-  moodPill: { backgroundColor: 'rgba(0,163,255,0.08)', borderRadius: 12, paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs, borderWidth: 1, borderColor: 'rgba(0,163,255,0.12)', marginRight: SPACING.xs, marginTop: SPACING.xs },
+  moodTags: { flexDirection: 'row', alignItems: 'center' },
+  moodPill: { backgroundColor: 'rgba(0,163,255,0.08)', borderRadius: 12, paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs, borderWidth: 1, borderColor: 'rgba(0,163,255,0.12)', marginRight: SPACING.xs },
   moodPillText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
-  placeRating: { color: COLORS.ratingAlt, marginLeft: 8, fontWeight: '700' },
-  heartFloat: { width: 38, height: 38, borderRadius: 20, backgroundColor: COLORS.textWhite, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 4, marginLeft: 12 },
+  moreMoodsText: { fontSize: 11, color: COLORS.textSecondary, fontWeight: '600' },
+  placeRating: { color: COLORS.ratingAlt, marginLeft: 8, fontWeight: '600' },
+  heartFloat: { padding: SPACING.xs, marginLeft: SPACING.sm, justifyContent: 'center', alignItems: 'center' },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textDark, marginBottom: SPACING.sm, marginTop: SPACING.md },
   emptyWrap: { alignItems: 'center', paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md },
