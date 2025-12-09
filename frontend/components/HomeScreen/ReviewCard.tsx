@@ -243,7 +243,7 @@ export const ReviewCard: React.FC = () => {
               <View style={styles.moodTags}>
                 {place.moods.slice(0, 3).map((m: string, i: number) => (
                   <View key={i} style={styles.moodTag}>
-                    <Text style={styles.moodTagText}>{m}</Text>
+                    <Text style={styles.moodTagText} numberOfLines={1}>{m}</Text>
                   </View>
                 ))}
                 {place.moods.length > 3 && <Text style={styles.moreMoodsText}>+{place.moods.length - 3}</Text>}
@@ -414,6 +414,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
+    flex: 1,
+    maxWidth: '100%',
   },
   moodTag: {
     backgroundColor: 'rgba(48, 131, 255, 0.1)',
@@ -424,12 +426,14 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(48, 131, 255, 0.2)',
     marginRight: SPACING.xs,
     marginBottom: 4,
+    maxWidth: 120,
   },
   moodTagText: {
     fontSize: 11,
     color: '#3083FF',
     fontWeight: '700',
     letterSpacing: 0.2,
+    numberOfLines: 1,
   },
   moreMoodsText: {
     fontSize: 11,
