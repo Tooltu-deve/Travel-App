@@ -17,12 +17,10 @@ import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Calendar } from 'react-native-calendars';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { Platform } from 'react-native';
+import { Calendar, DateData } from 'react-native-calendars';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { generateRouteAPI } from '../../services/api';
+import { generateRouteAPI, getProfileAPI } from '../../services/api';
 
 const SmartAgentFormScreen: React.FC = () => {
   const router = useRouter();
@@ -32,15 +30,15 @@ const SmartAgentFormScreen: React.FC = () => {
   // Form state
   const [budget, setBudget] = useState<string>('affordable');
   const [destination, setDestination] = useState<string>('');
-  const [userMood, setUserMood] = useState<string>('');
-  const [durationDays, setDurationDays] = useState<string>('3');
+  const [profileMoods, setProfileMoods] = useState<string[]>([]);
   const [currentLocationText, setCurrentLocationText] = useState<string>('');
-  const [currentLocationCoords, setCurrentLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [isGeocoding, setIsGeocoding] = useState(false);
   const [startDate, setStartDate] = useState<Date | null>(null);
-  const [startTime, setStartTime] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
-  const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
+  const [isEndDatePickerOpen, setIsEndDatePickerOpen] = useState(false);
+  const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'bicycling' | 'transit'>('driving');
+  const [poiPerDay, setPoiPerDay] = useState<string>('3');
+  const [currentStep, setCurrentStep] = useState<number>(1);
 
   // Available options - Sử dụng đúng các giá trị budget từ database
   const budgetOptions = [
@@ -48,11 +46,6 @@ const SmartAgentFormScreen: React.FC = () => {
     { value: 'cheap', label: 'Rẻ' },
     { value: 'affordable', label: 'Hợp lý' },
     { value: 'expensive', label: 'Đắt' },
-  ];
-
-  const moodOptions = [
-    'adventurous', 'relaxed', 'romantic', 'family-friendly', 
-    'cultural', 'nature', 'foodie', 'nightlife'
   ];
 
   // Danh sách các thành phố từ scrape_poi_reviews.py
@@ -81,74 +74,46 @@ const SmartAgentFormScreen: React.FC = () => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     setStartDate(tomorrow);
-    
-    // Set default time to 9:00 AM
-    const defaultTime = new Date();
-    defaultTime.setHours(9, 0, 0, 0);
-    setStartTime(defaultTime);
+    // Default end date = start date + 2 (3-day trip)
+    const end = new Date(tomorrow);
+    end.setDate(end.getDate() + 2);
+    setEndDate(end);
+  }, []);
+
+  // Fetch profile to get moods
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const token = await AsyncStorage.getItem('userToken');
+        if (!token) return;
+        const profile = await getProfileAPI(token);
+        if (profile?.preferenced_tags && Array.isArray(profile.preferenced_tags)) {
+          setProfileMoods(profile.preferenced_tags.map((t: any) => String(t)));
+        }
+      } catch (err) {
+        console.warn('Fetch profile for moods failed', err);
+      }
+    };
+    fetchProfile();
   }, []);
 
   const handleGoBack = () => {
     router.back();
   };
 
-  const geocodeAddress = async (address: string): Promise<{ lat: number; lng: number } | null> => {
-    if (!address.trim()) {
-      return null;
-    }
-
-    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
-    if (!apiKey) {
-      throw new Error('Google Geocoding API key chưa được cấu hình. Vui lòng thêm EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY vào .env');
-    }
-
-    try {
-      setIsGeocoding(true);
-      const encodedAddress = encodeURIComponent(address);
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${apiKey}`;
-
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.status === 'OK' && data.results && data.results.length > 0) {
-        const location = data.results[0].geometry.location;
-        return {
-          lat: location.lat,
-          lng: location.lng,
-        };
-      } else {
-        const errorMessage = data.error_message || `Geocoding failed: ${data.status}`;
-        throw new Error(errorMessage);
-      }
-    } catch (error: any) {
-      console.error('❌ Geocoding error:', error);
-      throw error;
-    } finally {
-      setIsGeocoding(false);
-    }
+  const formatDate = (date: Date | null): string => {
+    if (!date) return '';
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
   };
 
-  const handleGeocodeLocation = async () => {
-    if (!currentLocationText.trim()) {
-      Alert.alert('Lỗi', 'Vui lòng nhập địa chỉ');
-      return;
-    }
-
-    try {
-      const coords = await geocodeAddress(currentLocationText);
-      if (coords) {
-        setCurrentLocationCoords(coords);
-        Alert.alert(
-          'Thành công',
-          `Đã tìm thấy vị trí:\nLatitude: ${coords.lat.toFixed(6)}\nLongitude: ${coords.lng.toFixed(6)}`
-        );
-      } else {
-        Alert.alert('Lỗi', 'Không tìm thấy vị trí cho địa chỉ này');
-      }
-    } catch (error: any) {
-      Alert.alert('Lỗi', error.message || 'Không thể chuyển đổi địa chỉ thành tọa độ');
-      setCurrentLocationCoords(null);
-    }
+  const calculateDurationDays = (): number => {
+    if (!startDate || !endDate) return 0;
+    const diffTime = endDate.getTime() - startDate.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    return diffDays;
   };
 
   const handleSubmit = async () => {
@@ -158,19 +123,25 @@ const SmartAgentFormScreen: React.FC = () => {
       return;
     }
 
-    if (!userMood.trim()) {
-      Alert.alert('Lỗi', 'Vui lòng chọn tâm trạng');
+    if (!startDate || !endDate) {
+      Alert.alert('Lỗi', 'Vui lòng chọn ngày đi và ngày về');
+      return;
+    }
+    // Tính duration days (bao gồm cả ngày đi và về)
+    const diffMs = endDate.getTime() - startDate.getTime();
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+    if (days < 1) {
+      Alert.alert('Lỗi', 'Ngày về phải sau ngày đi');
       return;
     }
 
-    const days = parseInt(durationDays);
-    if (isNaN(days) || days < 1) {
-      Alert.alert('Lỗi', 'Số ngày phải lớn hơn 0');
+    if (!currentLocationText.trim()) {
+      Alert.alert('Lỗi', 'Vui lòng nhập địa chỉ xuất phát');
       return;
     }
 
-    if (!currentLocationCoords) {
-      Alert.alert('Lỗi', 'Vui lòng nhập và xác nhận vị trí hiện tại');
+    if (!profileMoods || profileMoods.length === 0) {
+      Alert.alert('Lỗi', 'Hồ sơ người dùng chưa có tâm trạng (moods). Vui lòng cập nhật profile.');
       return;
     }
 
@@ -189,20 +160,16 @@ const SmartAgentFormScreen: React.FC = () => {
       const requestBody: any = {
         budget,
         destination: destination.trim(),
-        user_mood: userMood.trim(),
+        user_mood: profileMoods, // từ profile
         duration_days: days,
-        current_location: {
-          lat: currentLocationCoords.lat,
-          lng: currentLocationCoords.lng,
-        },
+        start_location: currentLocationText.trim(), // gửi string, backend geocode
+        travel_mode: travelMode,
+        poi_per_day: parseInt(poiPerDay) || 3,
       };
 
       // Add optional fields
-      if (startDate && startTime) {
-        // Combine date and time into ISO 8601 format
-        const dateTime = new Date(startDate);
-        dateTime.setHours(startTime.getHours(), startTime.getMinutes(), startTime.getSeconds(), 0);
-        requestBody.start_datetime = dateTime.toISOString();
+      if (startDate) {
+        requestBody.start_datetime = startDate.toISOString();
       }
 
       // Set default ECS score threshold to 0.1
@@ -219,13 +186,12 @@ const SmartAgentFormScreen: React.FC = () => {
       router.push({
         pathname: '/create-itinerary/route-preview',
         params: {
-          routeData: JSON.stringify(response.route.route_data_json),
-          routeId: response.route.route_id,
+          routeData: JSON.stringify(response.route?.route_data_json || {}),
+          routeId: response.route?.route_id,
           destination: destination,
-          durationDays: durationDays,
+          durationDays: String(days),
           currentLocation: JSON.stringify({
-            lat: currentLocationCoords.lat,
-            lng: currentLocationCoords.lng,
+            address: currentLocationText.trim(),
           }),
         },
       });
@@ -240,414 +206,495 @@ const SmartAgentFormScreen: React.FC = () => {
     }
   };
 
+  const handleNextStep = () => {
+    switch (currentStep) {
+      case 1:
+        if (!startDate) {
+          Alert.alert('Lỗi', 'Vui lòng chọn ngày đi');
+          return;
+        }
+        break;
+      case 2:
+        if (!endDate) {
+          Alert.alert('Lỗi', 'Vui lòng chọn ngày về');
+          return;
+        }
+        if (endDate < startDate!) {
+          Alert.alert('Lỗi', 'Ngày về phải sau ngày đi');
+          return;
+        }
+        break;
+      case 3:
+        if (!destination) {
+          Alert.alert('Lỗi', 'Vui lòng chọn điểm đến');
+          return;
+        }
+        break;
+      case 4:
+        if (!currentLocationText.trim()) {
+          Alert.alert('Lỗi', 'Vui lòng nhập địa chỉ xuất phát');
+          return;
+        }
+        handleSubmit();
+        return;
+    }
+    setCurrentStep(currentStep + 1);
+  };
+
+  const getStepTitle = () => {
+    switch (currentStep) {
+      case 1:
+        return 'Chọn ngày đi';
+      case 2:
+        return 'Chọn ngày về';
+      case 3:
+        return 'Chọn điểm đến';
+      case 4:
+        return 'Thông tin hành trình';
+      default:
+        return 'Tạo lộ trình';
+    }
+  };
+
+  const getStepSubtitle = () => {
+    switch (currentStep) {
+      case 1:
+        return 'Bạn dự định đi du lịch vào ngày nào?';
+      case 2:
+        return 'Bạn dự định về vào ngày nào?';
+      case 3:
+        return 'Bạn muốn đi đâu?';
+      case 4:
+        return 'Chọn phương tiện, POI/ngày và địa chỉ xuất phát';
+      default:
+        return '';
+    }
+  };
+
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 1:
   return (
-    <LinearGradient
-      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={[0, 0.3, 0.6, 1]}
-      style={styles.gradientContainer}
-    >
-      <ScrollView 
-        style={styles.container}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: SPACING.xxxl }}
-      >
-        {/* Header */}
-        <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}>
+          <View style={styles.stepContent}>
+            <View style={styles.calendarContainer}>
+              <Calendar
+                minDate={new Date().toISOString().split('T')[0]}
+                onDayPress={(day: DateData) => {
+                  setStartDate(new Date(day.dateString));
+                }}
+                markedDates={
+                  startDate
+                    ? {
+                        [startDate.toISOString().split('T')[0]]: {
+                          selected: true,
+                          selectedColor: COLORS.primary,
+                        },
+                      }
+                    : {}
+                }
+                theme={{
+                  backgroundColor: 'transparent',
+                  calendarBackground: 'transparent',
+                  textSectionTitleColor: COLORS.textSecondary,
+                  selectedDayBackgroundColor: COLORS.primary,
+                  selectedDayTextColor: COLORS.textWhite,
+                  todayTextColor: COLORS.primary,
+                  dayTextColor: COLORS.textMain,
+                  textDisabledColor: COLORS.disabled,
+                  arrowColor: COLORS.primary,
+                  monthTextColor: COLORS.textDark,
+                  indicatorColor: COLORS.primary,
+                  textDayFontWeight: '500',
+                  textMonthFontWeight: '700',
+                  textDayHeaderFontWeight: '600',
+                }}
+              />
+            </View>
+            {startDate && (
+              <View style={styles.selectedDateContainer}>
+                <FontAwesome name="calendar" size={18} color={COLORS.primary} />
+                <Text style={styles.selectedDateText}>
+                  Ngày đi: {formatDate(startDate)}
+                </Text>
+              </View>
+            )}
+          </View>
+        );
+
+      case 2:
+        return (
+          <View style={styles.stepContent}>
+            <View style={styles.calendarContainer}>
+              <Calendar
+                minDate={startDate?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0]}
+                onDayPress={(day: DateData) => {
+                  setEndDate(new Date(day.dateString));
+                }}
+                markedDates={{
+                  ...(startDate
+                    ? {
+                        [startDate.toISOString().split('T')[0]]: {
+                          marked: true,
+                          dotColor: COLORS.success,
+                        },
+                      }
+                    : {}),
+                  ...(endDate
+                    ? {
+                        [endDate.toISOString().split('T')[0]]: {
+                          selected: true,
+                          selectedColor: COLORS.primary,
+                        },
+                      }
+                    : {}),
+                }}
+                theme={{
+                  backgroundColor: 'transparent',
+                  calendarBackground: 'transparent',
+                  textSectionTitleColor: COLORS.textSecondary,
+                  selectedDayBackgroundColor: COLORS.primary,
+                  selectedDayTextColor: COLORS.textWhite,
+                  todayTextColor: COLORS.primary,
+                  dayTextColor: COLORS.textMain,
+                  textDisabledColor: COLORS.disabled,
+                  arrowColor: COLORS.primary,
+                  monthTextColor: COLORS.textDark,
+                  indicatorColor: COLORS.primary,
+                  textDayFontWeight: '500',
+                  textMonthFontWeight: '700',
+                  textDayHeaderFontWeight: '600',
+                }}
+              />
+            </View>
+            <View style={styles.dateInfoContainer}>
+              <View style={styles.selectedDateContainer}>
+                <FontAwesome name="calendar" size={18} color={COLORS.success} />
+                <Text style={styles.selectedDateText}>
+                  Ngày đi: {formatDate(startDate)}
+                </Text>
+              </View>
+              {endDate && (
+                <>
+                  <View style={styles.selectedDateContainer}>
+                    <FontAwesome name="calendar-check-o" size={18} color={COLORS.primary} />
+                    <Text style={styles.selectedDateText}>
+                      Ngày về: {formatDate(endDate)}
+                    </Text>
+                  </View>
+                  <View style={styles.durationContainer}>
+                    <FontAwesome name="clock-o" size={18} color={COLORS.accent} />
+                    <Text style={styles.durationText}>
+                      Tổng: {calculateDurationDays()} ngày
+                    </Text>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        );
+
+      case 3:
+        return (
+          <View style={styles.stepContent}>
           <TouchableOpacity 
-            style={styles.backButton}
-            onPress={handleGoBack}
+              style={styles.dropdownButton}
+              onPress={() => setIsDestinationDropdownOpen(true)}
             activeOpacity={0.7}
           >
-            <FontAwesome name="arrow-left" size={20} color={COLORS.textDark} />
+              <FontAwesome name="map-marker" size={18} color={destination ? COLORS.primary : COLORS.textSecondary} />
+              <Text style={[styles.dropdownButtonText, !destination && styles.dropdownButtonTextPlaceholder]}>
+                {destination || 'Chọn điểm đến...'}
+              </Text>
+              <FontAwesome name="chevron-down" size={16} color={COLORS.textSecondary} />
           </TouchableOpacity>
-          <View style={styles.headerTextContainer}>
-            <Text style={styles.headerTitle}>Tạo với SmartAgent</Text>
-            <Text style={styles.headerSubtitle}>Nhập thông tin để tạo lộ trình</Text>
+            {destination && (
+              <View style={styles.selectedDestinationContainer}>
+                <FontAwesome name="check-circle" size={18} color={COLORS.success} />
+                <Text style={styles.selectedDestinationText}>
+                  Đã chọn: {destination}
+                </Text>
           </View>
+            )}
         </View>
+        );
 
-        {/* Form */}
-        <View style={styles.formContainer}>
-          {/* Budget Selection */}
+      case 4:
+        return (
+          <View style={styles.stepContent}>
+            {/* Travel Mode */}
           <View style={styles.section}>
-            <Text style={styles.label}>Ngân sách *</Text>
+              <Text style={styles.label}>Phương tiện di chuyển</Text>
             <View style={styles.optionsRow}>
-              {budgetOptions.map((option) => (
+                {['driving','walking','bicycling','transit'].map((mode) => (
                 <TouchableOpacity
-                  key={option.value}
+                    key={mode}
                   style={[
                     styles.optionButton,
-                    budget === option.value && styles.optionButtonActive,
+                      travelMode === mode && styles.optionButtonActive,
                   ]}
-                  onPress={() => setBudget(option.value)}
+                    onPress={() => setTravelMode(mode as any)}
                   activeOpacity={0.7}
                 >
                   <Text
                     style={[
                       styles.optionButtonText,
-                      budget === option.value && styles.optionButtonTextActive,
+                        travelMode === mode && styles.optionButtonTextActive,
                     ]}
                   >
-                    {option.label}
+                      {mode === 'driving' && 'Ô tô'}
+                      {mode === 'walking' && 'Đi bộ'}
+                      {mode === 'bicycling' && 'Xe đạp'}
+                      {mode === 'transit' && 'Công cộng'}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
 
-          {/* Destination */}
+            {/* POI mỗi ngày */}
           <View style={styles.section}>
-            <Text style={styles.label}>Điểm đến *</Text>
-            <TouchableOpacity
-              style={styles.dropdownButton}
-              onPress={() => setIsDestinationDropdownOpen(true)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.dropdownButtonText, !destination && styles.dropdownButtonTextPlaceholder]}>
-                {destination || 'Chọn thành phố...'}
-              </Text>
-              <FontAwesome name="chevron-down" size={16} color={COLORS.textSecondary} />
-            </TouchableOpacity>
+              <Text style={styles.label}>Số POI mỗi ngày</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="3"
+                placeholderTextColor={COLORS.textSecondary}
+                value={poiPerDay}
+                onChangeText={setPoiPerDay}
+                keyboardType="numeric"
+              />
           </View>
 
-          {/* Destination Dropdown Modal */}
-          <Modal
-            visible={isDestinationDropdownOpen}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={() => setIsDestinationDropdownOpen(false)}
-          >
+            {/* Budget */}
+            <View style={styles.section}>
+              <Text style={styles.label}>Ngân sách</Text>
+              <View style={styles.optionsRow}>
+                {budgetOptions.map((option) => (
             <TouchableOpacity
-              style={styles.modalOverlay}
-              activeOpacity={1}
-              onPress={() => setIsDestinationDropdownOpen(false)}
-            >
-              <View style={styles.modalContent}>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Chọn thành phố</Text>
-                  <TouchableOpacity
-                    onPress={() => setIsDestinationDropdownOpen(false)}
-                    style={styles.modalCloseButton}
-                  >
-                    <FontAwesome name="times" size={20} color={COLORS.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-                <FlatList
-                  data={vietnamCities}
-                  keyExtractor={(item) => item}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
+                    key={option.value}
                       style={[
-                        styles.dropdownItem,
-                        destination === item && styles.dropdownItemActive,
+                      styles.optionButton,
+                      budget === option.value && styles.optionButtonActive,
                       ]}
-                      onPress={() => {
-                        setDestination(item);
-                        setIsDestinationDropdownOpen(false);
-                      }}
+                    onPress={() => setBudget(option.value)}
                       activeOpacity={0.7}
                     >
                       <Text
                         style={[
-                          styles.dropdownItemText,
-                          destination === item && styles.dropdownItemTextActive,
+                        styles.optionButtonText,
+                        budget === option.value && styles.optionButtonTextActive,
                         ]}
                       >
-                        {item}
+                      {option.label}
                       </Text>
-                      {destination === item && (
-                        <FontAwesome name="check" size={16} color={COLORS.primary} />
-                      )}
                     </TouchableOpacity>
-                  )}
-                  style={styles.dropdownList}
-                />
+                ))}
               </View>
-            </TouchableOpacity>
-          </Modal>
-
-          {/* User Mood */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Tâm trạng *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Ví dụ: adventurous, relaxed, romantic..."
-              placeholderTextColor={COLORS.textSecondary}
-              value={userMood}
-              onChangeText={setUserMood}
-            />
-            <Text style={styles.hint}>
-              Gợi ý: adventurous, relaxed, romantic, family-friendly, cultural, nature, foodie, nightlife
-            </Text>
-          </View>
-
-          {/* Duration Days */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Số ngày du lịch *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="3"
-              placeholderTextColor={COLORS.textSecondary}
-              value={durationDays}
-              onChangeText={setDurationDays}
-              keyboardType="numeric"
-            />
           </View>
 
           {/* Current Location */}
           <View style={styles.section}>
-            <Text style={styles.label}>Vị trí hiện tại *</Text>
-            <View style={styles.locationInputRow}>
+              <Text style={styles.label}>Địa chỉ xuất phát *</Text>
               <TextInput
                 style={[styles.input, styles.locationTextInput]}
                 placeholder="Ví dụ: Hà Nội, 123 Đường ABC, Quận 1, TP.HCM..."
                 placeholderTextColor={COLORS.textSecondary}
                 value={currentLocationText}
                 onChangeText={setCurrentLocationText}
-                editable={!isGeocoding}
+                multiline
+                numberOfLines={2}
               />
-              <TouchableOpacity
-                style={[styles.geocodeButton, isGeocoding && styles.geocodeButtonDisabled]}
-                onPress={handleGeocodeLocation}
-                disabled={isGeocoding}
-                activeOpacity={0.7}
-              >
-                {isGeocoding ? (
-                  <ActivityIndicator size="small" color={COLORS.textWhite} />
-                ) : (
-                  <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
-                )}
-              </TouchableOpacity>
+              <Text style={styles.hint}>
+                Nhập địa chỉ xuất phát, backend sẽ geocode.
+              </Text>
             </View>
-            {currentLocationCoords && (
-              <View style={styles.coordsDisplay}>
-                <Text style={styles.coordsText}>
-                  <FontAwesome name="check-circle" size={14} color={COLORS.success} />{' '}
-                  Tọa độ: {currentLocationCoords.lat.toFixed(6)}, {currentLocationCoords.lng.toFixed(6)}
+
+            {/* Summary */}
+            <View style={styles.summaryContainer}>
+              <Text style={styles.summaryTitle}>Tóm tắt</Text>
+              <View style={styles.summaryItem}>
+                <FontAwesome name="calendar" size={16} color={COLORS.textSecondary} />
+                <Text style={styles.summaryText}>
+                  {formatDate(startDate)} - {formatDate(endDate)} ({calculateDurationDays()} ngày)
                 </Text>
               </View>
-            )}
-            <Text style={styles.hint}>
-              Nhập địa chỉ và nhấn nút để chuyển đổi thành tọa độ GPS
+              <View style={styles.summaryItem}>
+                <FontAwesome name="map-marker" size={16} color={COLORS.textSecondary} />
+                <Text style={styles.summaryText}>{destination}</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <FontAwesome name="car" size={16} color={COLORS.textSecondary} />
+                <Text style={styles.summaryText}>
+                  Phương tiện: {travelMode === 'driving' && 'Ô tô'}
+                  {travelMode === 'walking' && ' Đi bộ'}
+                  {travelMode === 'bicycling' && ' Xe đạp'}
+                  {travelMode === 'transit' && ' Công cộng'}
             </Text>
           </View>
-
-          {/* Start Date and Time */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Thời gian khởi hành (Tùy chọn)</Text>
-            <View style={styles.datetimeRow}>
-              {/* Date Picker */}
-              <TouchableOpacity
-                style={styles.datetimeButton}
-                onPress={() => setIsDatePickerOpen(true)}
-                activeOpacity={0.7}
-              >
-                <FontAwesome name="calendar" size={16} color={COLORS.primary} />
-                <Text style={[styles.datetimeButtonText, !startDate && styles.datetimeButtonTextPlaceholder]}>
-                  {startDate
-                    ? startDate.toLocaleDateString('vi-VN', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                      })
-                    : 'Chọn ngày'}
+              <View style={styles.summaryItem}>
+                <FontAwesome name="map-pin" size={16} color={COLORS.textSecondary} />
+                <Text style={styles.summaryText}>
+                  {poiPerDay} POI/ngày
                 </Text>
-                <FontAwesome name="chevron-down" size={12} color={COLORS.textSecondary} />
-              </TouchableOpacity>
-
-              {/* Time Picker */}
-              <TouchableOpacity
-                style={styles.datetimeButton}
-                onPress={() => setIsTimePickerOpen(true)}
-                activeOpacity={0.7}
-              >
-                <FontAwesome name="clock-o" size={16} color={COLORS.primary} />
-                <Text style={[styles.datetimeButtonText, !startTime && styles.datetimeButtonTextPlaceholder]}>
-                  {startTime
-                    ? startTime.toLocaleTimeString('vi-VN', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      })
-                    : 'Chọn giờ'}
-                </Text>
-                <FontAwesome name="chevron-down" size={12} color={COLORS.textSecondary} />
-              </TouchableOpacity>
+              </View>
             </View>
-            {startDate && startTime && (
-              <Text style={styles.hint}>
-                Đã chọn: {startDate.toLocaleDateString('vi-VN', {
-                  weekday: 'long',
-                  day: '2-digit',
-                  month: 'long',
-                  year: 'numeric',
-                })} lúc {startTime.toLocaleTimeString('vi-VN', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </Text>
-            )}
+          </View>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <LinearGradient
+      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
+      locations={[0, 0.3, 0.6, 1]}
+      style={styles.gradientContainer}
+    >
+      <View style={styles.container}>
+        {/* Header */}
+        <View style={[styles.headerContainer, { paddingTop: insets.top + SPACING.md }]}>
+              <TouchableOpacity
+            style={styles.backButton}
+            onPress={handleGoBack}
+                activeOpacity={0.7}
+              >
+            <FontAwesome name="arrow-left" size={20} color={COLORS.textDark} />
+              </TouchableOpacity>
+          <View style={styles.headerTextContainer}>
+            <Text style={styles.headerTitle}>{getStepTitle()}</Text>
+            <Text style={styles.headerSubtitle}>{getStepSubtitle()}</Text>
+          </View>
+        </View>
+
+        {/* Progress Indicator */}
+        <View style={styles.progressContainer}>
+          {[1, 2, 3, 4].map((step) => (
+            <React.Fragment key={step}>
+              <View style={styles.progressStepContainer}>
+              <TouchableOpacity
+                  style={[
+                    styles.progressDot,
+                    currentStep >= step && styles.progressDotActive,
+                    currentStep === step && styles.progressDotCurrent,
+                  ]}
+                  onPress={() => setCurrentStep(step)}
+                activeOpacity={0.7}
+              >
+                  {currentStep > step ? (
+                    <FontAwesome name="check" size={12} color={COLORS.textWhite} />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.progressDotText,
+                        currentStep >= step && styles.progressDotTextActive,
+                      ]}
+                    >
+                      {step}
+                </Text>
+                  )}
+              </TouchableOpacity>
+                {step < 4 && (
+                  <View
+                    style={[
+                      styles.progressLine,
+                      currentStep > step && styles.progressLineActive,
+                    ]}
+                  />
+                )}
+              </View>
+            </React.Fragment>
+          ))}
           </View>
 
-          {/* Date Picker Modal */}
+        {/* Content */}
+        <View style={styles.contentContainer}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: SPACING.lg }}
+          >
+            {renderStepContent()}
+          </ScrollView>
+        </View>
+
+        {/* Destination Dropdown Modal */}
           <Modal
-            visible={isDatePickerOpen}
+          visible={isDestinationDropdownOpen}
             transparent={true}
             animationType="fade"
-            onRequestClose={() => setIsDatePickerOpen(false)}
+          onRequestClose={() => setIsDestinationDropdownOpen(false)}
           >
             <TouchableOpacity
               style={styles.modalOverlay}
               activeOpacity={1}
-              onPress={() => setIsDatePickerOpen(false)}
+            onPress={() => setIsDestinationDropdownOpen(false)}
             >
-              <View style={styles.pickerModalContent} onStartShouldSetResponder={() => true}>
-                <View style={styles.pickerModalHeader}>
-                  <Text style={styles.pickerModalTitle}>Chọn ngày</Text>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Chọn điểm đến</Text>
                   <TouchableOpacity
-                    onPress={() => setIsDatePickerOpen(false)}
+                  onPress={() => setIsDestinationDropdownOpen(false)}
                     style={styles.modalCloseButton}
                   >
                     <FontAwesome name="times" size={20} color={COLORS.textSecondary} />
                   </TouchableOpacity>
                 </View>
-                <Calendar
-                  current={startDate ? startDate.toISOString().split('T')[0] : undefined}
-                  minDate={new Date().toISOString().split('T')[0]}
-                  maxDate={(() => {
-                    const maxDate = new Date();
-                    maxDate.setDate(maxDate.getDate() + 365);
-                    return maxDate.toISOString().split('T')[0];
-                  })()}
-                  onDayPress={(day: { dateString: string }) => {
-                    const selectedDate = new Date(day.dateString);
-                    setStartDate(selectedDate);
-                    setIsDatePickerOpen(false);
+              <ScrollView style={styles.modalScrollView}>
+                {vietnamCities.map((city) => (
+                  <TouchableOpacity
+                    key={city}
+                    style={[
+                      styles.modalItem,
+                      destination === city && styles.modalItemActive,
+                    ]}
+                    onPress={() => {
+                      setDestination(city);
+                      setIsDestinationDropdownOpen(false);
                   }}
-                  markedDates={{
-                    ...(startDate && {
-                      [startDate.toISOString().split('T')[0]]: {
-                        selected: true,
-                        selectedColor: COLORS.primary,
-                        selectedTextColor: COLORS.textWhite,
-                      },
-                    }),
-                  }}
-                  theme={{
-                    backgroundColor: COLORS.bgMain,
-                    calendarBackground: COLORS.bgMain,
-                    textSectionTitleColor: COLORS.textMain,
-                    selectedDayBackgroundColor: COLORS.primary,
-                    selectedDayTextColor: COLORS.textWhite,
-                    todayTextColor: COLORS.primary,
-                    dayTextColor: COLORS.textMain,
-                    textDisabledColor: COLORS.textSecondary,
-                    dotColor: COLORS.primary,
-                    selectedDotColor: COLORS.textWhite,
-                    arrowColor: COLORS.primary,
-                    monthTextColor: COLORS.textDark,
-                    textDayFontWeight: '500',
-                    textMonthFontWeight: '700',
-                    textDayHeaderFontWeight: '600',
-                    textDayFontSize: 14,
-                    textMonthFontSize: 18,
-                    textDayHeaderFontSize: 13,
-                  }}
-                  style={styles.calendar}
-                />
-              </View>
-            </TouchableOpacity>
-          </Modal>
-
-          {/* Time Picker - Using @react-native-community/datetimepicker */}
-          {isTimePickerOpen && Platform.OS === 'android' && (
-            <DateTimePicker
-              value={startTime || new Date()}
-              mode="time"
-              is24Hour={true}
-              display="default"
-              onChange={(event: any, selectedTime?: Date) => {
-                setIsTimePickerOpen(false);
-                if (event.type === 'set' && selectedTime) {
-                  setStartTime(selectedTime);
-                }
-              }}
-            />
-          )}
-          
-          {/* iOS Time Picker Modal - Only show on iOS */}
-          {Platform.OS === 'ios' && isTimePickerOpen && (
-            <Modal
-              visible={isTimePickerOpen}
-              transparent={true}
-              animationType="slide"
-              onRequestClose={() => setIsTimePickerOpen(false)}
-            >
-              <TouchableOpacity
-                style={styles.modalOverlay}
-                activeOpacity={1}
-                onPress={() => setIsTimePickerOpen(false)}
-              >
-                <View style={styles.iosPickerModalContent}>
-                  <View style={styles.iosPickerModalHeader}>
-                    <TouchableOpacity
-                      onPress={() => setIsTimePickerOpen(false)}
-                      style={styles.iosPickerCancelButton}
-                    >
-                      <Text style={styles.iosPickerCancelText}>Hủy</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.iosPickerModalTitle}>Chọn giờ</Text>
-                    <TouchableOpacity
-                      onPress={() => setIsTimePickerOpen(false)}
-                      style={styles.iosPickerDoneButton}
-                    >
-                      <Text style={styles.iosPickerDoneText}>Xong</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.iosPickerContainer}>
-                    <DateTimePicker
-                      value={startTime || new Date()}
-                      mode="time"
-                      is24Hour={true}
-                      display="spinner"
-                      onChange={(event: any, selectedTime?: Date) => {
-                        if (event.type === 'set' && selectedTime) {
-                          setStartTime(selectedTime);
-                        }
-                      }}
-                      style={styles.iosDateTimePicker}
+                    activeOpacity={0.7}
+                  >
+                    <FontAwesome
+                      name="map-marker"
+                      size={18}
+                      color={destination === city ? COLORS.primary : COLORS.textSecondary}
                     />
-                  </View>
+                    <Text
+                      style={[
+                        styles.modalItemText,
+                        destination === city && styles.modalItemTextActive,
+                      ]}
+                    >
+                      {city}
+                    </Text>
+                    {destination === city && (
+                      <FontAwesome name="check" size={16} color={COLORS.primary} />
+                    )}
+                    </TouchableOpacity>
+                ))}
+              </ScrollView>
                 </View>
               </TouchableOpacity>
             </Modal>
-          )}
 
-          {/* Submit Button */}
+        {/* Footer */}
+        <View style={[styles.footer, { paddingBottom: insets.bottom + SPACING.md }]}>
           <TouchableOpacity 
-            style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
-            onPress={handleSubmit}
+            style={[styles.footerButton, styles.nextButton, isLoading && styles.submitButtonDisabled]}
+            onPress={handleNextStep}
+            activeOpacity={0.7}
             disabled={isLoading}
-            activeOpacity={0.8}
           >
-            <LinearGradient
-              colors={[COLORS.primary, COLORS.gradientSecondary]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.submitButtonGradient}
-            >
-              {isLoading ? (
-                <ActivityIndicator color={COLORS.textWhite} />
-              ) : (
-                <>
-                  <FontAwesome name="magic" size={18} color={COLORS.textWhite} />
-                  <Text style={styles.submitButtonText}>Tạo lộ trình</Text>
-                </>
-              )}
-            </LinearGradient>
+            <Text style={styles.nextButtonText}>
+              {currentStep === 4 ? (isLoading ? 'Đang tạo...' : 'Tạo lộ trình') : 'Tiếp theo'}
+            </Text>
+            <FontAwesome
+              name={currentStep === 4 ? 'check' : 'arrow-right'}
+              size={16}
+              color={COLORS.textWhite}
+            />
           </TouchableOpacity>
         </View>
-      </ScrollView>
+      </View>
     </LinearGradient>
   );
 };
@@ -1077,6 +1124,197 @@ const styles = StyleSheet.create({
   iosDateTimePicker: {
     width: '100%',
     height: 200,
+  },
+  modalScrollView: {
+    maxHeight: 400,
+  },
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  modalItemActive: {
+    backgroundColor: COLORS.bgLightBlue,
+  },
+  modalItemText: {
+    flex: 1,
+    fontSize: 16,
+    color: COLORS.textMain,
+  },
+  modalItemTextActive: {
+    color: COLORS.primary,
+    fontWeight: '700',
+  },
+  footer: {
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.md,
+    backgroundColor: 'transparent',
+  },
+  footerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    paddingVertical: SPACING.lg,
+    borderRadius: SPACING.md,
+  },
+  nextButton: {
+    backgroundColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  nextButtonText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textWhite,
+  },
+  // Wizard styles (similar to manual-form)
+  progressContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.md,
+  },
+  progressStepContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  progressDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 2,
+    borderColor: COLORS.borderLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressDotActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  progressDotCurrent: {
+    borderColor: COLORS.accent,
+    borderWidth: 3,
+  },
+  progressDotText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  progressDotTextActive: {
+    color: COLORS.textWhite,
+  },
+  progressLine: {
+    width: 40,
+    height: 3,
+    backgroundColor: COLORS.border,
+    marginHorizontal: SPACING.xs,
+  },
+  progressLineActive: {
+    backgroundColor: COLORS.primary,
+  },
+  contentContainer: {
+    flex: 1,
+    paddingHorizontal: SPACING.lg,
+    paddingBottom: SPACING.md,
+  },
+  stepContent: {
+    gap: SPACING.lg,
+  },
+  calendarContainer: {
+    backgroundColor: COLORS.bgMain,
+    borderRadius: SPACING.lg,
+    padding: SPACING.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  selectedDateContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.bgMain,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderRadius: SPACING.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  selectedDateText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  dateInfoContainer: {
+    gap: SPACING.sm,
+  },
+  durationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.bgLightBlue,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderRadius: SPACING.md,
+  },
+  durationText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
+  selectedDestinationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.bgLightBlue,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderRadius: SPACING.md,
+  },
+  selectedDestinationText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  summaryContainer: {
+    backgroundColor: COLORS.bgMain,
+    borderRadius: SPACING.lg,
+    padding: SPACING.lg,
+    gap: SPACING.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  summaryTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: SPACING.xs,
+  },
+  summaryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  summaryText: {
+    fontSize: 15,
+    color: COLORS.textMain,
   },
 });
 

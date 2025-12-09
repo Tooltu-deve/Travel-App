@@ -594,14 +594,14 @@ export default function ManualPreviewScreen() {
           }
 
           return {
-            dayNumber: day.day,
+          dayNumber: day.day,
             travelMode: travelModes[day.day] || 'driving', // Get travelMode for this specific day
             startLocation: dayStartLocation,
-            places: day.places.map((place) => ({
-              placeId: place.placeId,
-              name: place.name,
-              address: place.address,
-            })),
+          places: day.places.map((place) => ({
+            placeId: place.placeId,
+            name: place.name,
+            address: place.address,
+        })),
           };
         }),
       };
@@ -657,16 +657,16 @@ export default function ManualPreviewScreen() {
       setRouteIdToConfirm(null);
       setItineraryTitle('');
 
-      Alert.alert(
-        'Thành công',
-        'Lộ trình đã được lưu thành công!',
-        [
-          {
-            text: 'OK',
-            onPress: () => router.replace('/(tabs)/itinerary'),
-          },
-        ]
-      );
+        Alert.alert(
+          'Thành công',
+          'Lộ trình đã được lưu thành công!',
+          [
+            {
+              text: 'OK',
+              onPress: () => router.replace('/(tabs)/itinerary'),
+            },
+          ]
+        );
     } catch (error: any) {
       console.error('Confirm title error:', error);
       Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình. Vui lòng thử lại.');

@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
+import { ItineraryViewScreen } from '@/components/itinerary/ItineraryViewScreen';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -32,6 +33,9 @@ const ItineraryScreen: React.FC = () => {
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(true);
   const [routesError, setRoutesError] = useState<string | null>(null);
   const [isActivating, setIsActivating] = useState<string | null>(null);
+  const [viewerRouteId, setViewerRouteId] = useState<string | null>(null);
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
+  const [viewerRouteData, setViewerRouteData] = useState<TravelRoute | null>(null);
   
   useEffect(() => {
     let isMounted = true;
@@ -152,11 +156,10 @@ const ItineraryScreen: React.FC = () => {
     }
   };
 
-  const handleViewRoute = (routeId: string) => {
-    router.push({
-      pathname: '/itinerary-details',
-      params: { routeId },
-    });
+  const handleViewRoute = (route: TravelRoute) => {
+    setViewerRouteId(route.route_id);
+    setViewerRouteData(route);
+    setIsViewerVisible(true);
   };
 
   const handleCreateItinerary = () => {
@@ -229,6 +232,11 @@ const ItineraryScreen: React.FC = () => {
   };
 
   const getRouteDuration = (route: TravelRoute) => {
+    // Prefer custom itinerary days length if present
+    const daysFromCustom = Array.isArray(route.route_data_json?.days)
+      ? route.route_data_json.days.length
+      : undefined;
+
     return (
       route.duration_days ||
       route.route_data_json?.duration_days ||
@@ -236,6 +244,7 @@ const ItineraryScreen: React.FC = () => {
       (Array.isArray(route.route_data_json?.optimized_route)
         ? route.route_data_json.optimized_route.length
         : undefined) ||
+      daysFromCustom ||
       0
     );
   };
@@ -245,11 +254,21 @@ const ItineraryScreen: React.FC = () => {
       route.start_datetime ||
       route.route_data_json?.start_datetime ||
       route.route_data_json?.startDate ||
-      route.route_data_json?.summary?.startDate;
+      route.route_data_json?.summary?.startDate ||
+      (route as any)?.start_date ||
+      route.route_data_json?.start_date;
     return start ? new Date(start) : null;
   };
 
   const getRouteEndDate = (route: TravelRoute) => {
+    // If end_date provided, use it directly
+    const explicitEnd =
+      (route as any)?.end_date || route.route_data_json?.end_date;
+    if (explicitEnd) {
+      const dt = new Date(explicitEnd);
+      if (!isNaN(dt.getTime())) return dt;
+    }
+
     const startDate = getRouteStartDate(route);
     const duration = getRouteDuration(route);
     if (!startDate || !duration) return null;
@@ -264,6 +283,15 @@ const ItineraryScreen: React.FC = () => {
     if (Array.isArray(optimized)) {
       return optimized.reduce(
         (sum, day) => sum + (day?.activities?.length || 0),
+        0,
+      );
+    }
+
+    // custom itinerary: sum of days.places
+    const days = route.route_data_json?.days;
+    if (Array.isArray(days)) {
+      return days.reduce(
+        (sum, day) => sum + ((day?.places && Array.isArray(day.places)) ? day.places.length : 0),
         0,
       );
     }
@@ -325,7 +353,7 @@ const ItineraryScreen: React.FC = () => {
           ) : mainRoute ? (
             <TouchableOpacity 
               style={styles.currentItineraryCard}
-              onPress={() => handleViewRoute(mainRoute.route_id)}
+              onPress={() => handleViewRoute(mainRoute)}
               activeOpacity={0.9}
             >
               <LinearGradient
@@ -457,7 +485,7 @@ const ItineraryScreen: React.FC = () => {
                   key={route.route_id}
                   style={styles.itineraryCard}
                   activeOpacity={0.9}
-                  onPress={() => handleViewRoute(route.route_id)}
+                  onPress={() => handleViewRoute(route)}
                 >
                   <View style={styles.cardContent}>
                     <View style={styles.cardHeader}>
@@ -570,6 +598,34 @@ const ItineraryScreen: React.FC = () => {
           </View>
         )}
       </ScrollView>
+
+      {/* Route viewer modal (reuse ItineraryViewScreen) */}
+      {viewerRouteId && (
+        <ItineraryViewScreen
+          visible={isViewerVisible}
+          routeId={viewerRouteId}
+          isManual={activeTab === 'manual'}
+          customRouteData={
+            activeTab === 'manual'
+              ? {
+                  route_id: viewerRouteId,
+                  title: viewerRouteData?.title,
+                  destination: viewerRouteData?.destination,
+                  status: viewerRouteData?.status as any,
+                  start_date: (viewerRouteData as any)?.start_date,
+                  end_date: (viewerRouteData as any)?.end_date,
+                  start_location: (viewerRouteData as any)?.start_location,
+                  route_data_json: viewerRouteData?.route_data_json,
+                }
+              : undefined
+          }
+          onClose={() => {
+            setIsViewerVisible(false);
+            setViewerRouteId(null);
+            setViewerRouteData(null);
+          }}
+        />
+      )}
     </LinearGradient>
   );
 };
