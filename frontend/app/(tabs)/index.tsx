@@ -2,7 +2,7 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useRef, useState } from 'react';
-import { Dimensions, Image, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Image, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatButton } from '../../components/HomeScreen/ChatButton';
 import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
@@ -10,7 +10,8 @@ import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
 import { useAuth } from '../../contexts/AuthContext';
-import { featuredDestinations, reviews } from '../mockData';
+import { getPlacesAPI, API_BASE_URL } from '../../services/api';
+import { translatePlaceType } from '../../constants/placeTypes';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH;
@@ -25,12 +26,78 @@ const HomeScreen: React.FC = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
   const [isCarouselScrolling, setIsCarouselScrolling] = useState(false);
+  const [featuredDestinations, setFeaturedDestinations] = useState<any[]>([]);
+  const [isLoadingDestinations, setIsLoadingDestinations] = useState(true);
   const scrollViewRef = useRef<ScrollView>(null);
   const carouselRef = useRef<ScrollView>(null);
   const autoScrollTimeout = useRef<number | null>(null);
   const lastScrollY = useRef(0);
 
-  const displayedReviews = showAllReviews ? reviews : reviews.slice(0, INITIAL_REVIEWS_COUNT);
+  // Fetch top 5 destinations with highest rating
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setIsLoadingDestinations(true);
+      try {
+        const allPlaces = await getPlacesAPI();
+        if (!mounted) return;
+        
+        if (Array.isArray(allPlaces) && allPlaces.length) {
+          // Filter places with photos and rating, then get top 5
+          const topPlaces = allPlaces
+            .filter((p: any) => {
+              const hasPhoto = p.photos && Array.isArray(p.photos) && p.photos.length > 0;
+              const hasRating = typeof p.rating === 'number' && p.rating > 0;
+              return hasPhoto && hasRating;
+            })
+            .sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0))
+            .slice(0, 5)
+            .map((p: any, index: number) => {
+              // Map to DestinationCard format
+              const photoName = p.photos[0]?.name || '';
+              const imageUri = photoName 
+                ? `${API_BASE_URL}/api/v1/places/photo?name=${encodeURIComponent(photoName)}&maxWidthPx=800`
+                : '';
+              
+              // Extract location/region from address
+              const addressParts = (p.address || '').split(',').map((s: string) => s.trim());
+              const location = addressParts[addressParts.length - 2] || addressParts[0] || 'Vietnam';
+              const region = addressParts[addressParts.length - 1] || 'VIETNAM';
+              
+              // Get type label
+              const typeLabel = translatePlaceType(p.type || 'other');
+              
+              // Only show type as amenity
+              const amenities: string[] = [typeLabel];
+              
+              return {
+                id: p._id?.toString() || p.googlePlaceId || String(index),
+                name: p.name || 'Địa điểm',
+                location: location,
+                region: region.toUpperCase(),
+                size: typeLabel, // Use type as size
+                distance: p.address ? addressParts[0] : '',
+                guests: p.reviews?.length || 0,
+                duration: p.budgetRange || 'Miễn phí',
+                amenities: amenities,
+                price: '', // Removed price display
+                reviews: `${p.reviews?.length || 0} đánh giá`,
+                rating: p.rating || 0,
+                image: { uri: imageUri },
+                googlePlaceId: p.googlePlaceId,
+              };
+            });
+          
+          setFeaturedDestinations(topPlaces);
+        }
+      } catch (error) {
+        console.error('Error fetching featured destinations:', error);
+      } finally {
+        setIsLoadingDestinations(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   useEffect(() => {
     if (!isAutoScrollEnabled) return;
@@ -126,43 +193,57 @@ const HomeScreen: React.FC = () => {
         </View>
 
         <View style={homeStyles.carouselWrapper}>
-          <ScrollView
-            ref={carouselRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            pagingEnabled={false}
-            scrollEventThrottle={16}
-            decelerationRate="fast"
-            snapToInterval={SNAP_INTERVAL}
-            snapToAlignment="start"
-            directionalLockEnabled={true}
-            alwaysBounceVertical={false}
-            bounces={false}
-            onScroll={handleScroll}
-            onScrollBeginDrag={handleUserTouch}
-            onMomentumScrollEnd={handleMomentumScrollEnd}
-            contentContainerStyle={homeStyles.carouselContent}
-          >
-            {featuredDestinations.map((destination) => (
-              <DestinationCard 
-                key={destination.id} 
-                destination={destination}
-                onInteraction={handleUserTouch}
-              />
-            ))}
-          </ScrollView>
+          {isLoadingDestinations ? (
+            <View style={homeStyles.loadingContainer}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
+              <Text style={homeStyles.loadingText}>Đang tải điểm đến...</Text>
+            </View>
+          ) : featuredDestinations.length > 0 ? (
+            <>
+              <ScrollView
+                ref={carouselRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                pagingEnabled={false}
+                scrollEventThrottle={16}
+                decelerationRate="fast"
+                snapToInterval={SNAP_INTERVAL}
+                snapToAlignment="start"
+                directionalLockEnabled={true}
+                alwaysBounceVertical={false}
+                bounces={false}
+                onScroll={handleScroll}
+                onScrollBeginDrag={handleUserTouch}
+                onMomentumScrollEnd={handleMomentumScrollEnd}
+                contentContainerStyle={homeStyles.carouselContent}
+              >
+                {featuredDestinations.map((destination) => (
+                  <DestinationCard 
+                    key={destination.id} 
+                    destination={destination}
+                    onInteraction={handleUserTouch}
+                  />
+                ))}
+              </ScrollView>
 
-          <View style={homeStyles.cardDotsContainer} pointerEvents="none">
-            {featuredDestinations.map((_, j) => (
-              <View
-                key={j}
-                style={[
-                  homeStyles.dot,
-                  currentIndex === j ? homeStyles.dotActive : homeStyles.dotInactive,
-                ]}
-              />
-            ))}
-          </View>
+              <View style={homeStyles.cardDotsContainer} pointerEvents="none">
+                {featuredDestinations.map((_, j) => (
+                  <View
+                    key={j}
+                    style={[
+                      homeStyles.dot,
+                      currentIndex === j ? homeStyles.dotActive : homeStyles.dotInactive,
+                    ]}
+                  />
+                ))}
+              </View>
+            </>
+          ) : (
+            <View style={homeStyles.emptyContainer}>
+              <FontAwesome name="map-marker" size={48} color={COLORS.textSecondary} />
+              <Text style={homeStyles.emptyText}>Chưa có điểm đến nào</Text>
+            </View>
+          )}
         </View>
 
         {/* Divider before reviews */}
@@ -347,6 +428,29 @@ const homeStyles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.primary,
+  },
+  loadingContainer: {
+    height: 300,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
+  emptyContainer: {
+    height: 300,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+    marginTop: SPACING.sm,
   },
 });
 

@@ -1,9 +1,10 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { COLORS, SPACING } from '../../constants';
+import { useFavorites } from '@/contexts/FavoritesContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
@@ -22,56 +23,44 @@ interface DestinationCardProps {
     price: string;
     reviews: string;
     rating: number;
-    image: any;
+    image: any; // Can be require() or { uri: string }
+    googlePlaceId?: string;
   };
   onInteraction?: () => void;
 }
 
 export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, onInteraction }) => {
-  const [isFavorite, setIsFavorite] = useState(false);
+  const { isLiked, toggleLike } = useFavorites();
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  
+  const placeId = destination.googlePlaceId || destination.id;
+  const isFavorite = isLiked(placeId);
 
-  const handleFavoritePress = () => {
+  const handleFavoritePress = async () => {
     // Tắt auto-scroll khi người dùng bấm nút tim
     if (onInteraction) {
       onInteraction();
     }
 
-    // Animation bounce chỉ khi thêm tim (không phải bỏ tim)
-    if (!isFavorite) {
-      // Thêm tim: chạy animation bounce
+    try {
+      await toggleLike(placeId);
+      
+      // Animation đơn giản, không block UI
       Animated.sequence([
-        Animated.spring(scaleAnim, {
-          toValue: 1.3,
-          friction: 3,
-          tension: 100,
+        Animated.timing(scaleAnim, {
+          toValue: 1.2,
+          duration: 100,
           useNativeDriver: true,
         }),
-        Animated.spring(scaleAnim, {
+        Animated.timing(scaleAnim, {
           toValue: 1,
-          friction: 3,
-          tension: 100,
+          duration: 100,
           useNativeDriver: true,
         }),
       ]).start();
-    } else {
-      // Bỏ tim: scale nhỏ nhanh
-      Animated.spring(scaleAnim, {
-        toValue: 0.85,
-        friction: 3,
-        tension: 100,
-        useNativeDriver: true,
-      }).start(() => {
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          friction: 3,
-          tension: 100,
-          useNativeDriver: true,
-        }).start();
-      });
+    } catch (error) {
+      console.error('Failed to toggle like:', error);
     }
-
-    setIsFavorite(!isFavorite);
   };
 
   return (
@@ -86,59 +75,50 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
         
         <View style={styles.bottomContent}>
           <View style={styles.textContainer}>
-            <Text style={styles.regionLabel}>{destination.region}</Text>
+            {destination.region && <Text style={styles.regionLabel}>{destination.region}</Text>}
             
             <View style={styles.nameAndLocationContainer}>
               <Text style={styles.destinationName}>{destination.name}</Text>
-              <Text style={styles.destinationLocation}>{destination.location}</Text>
+              {destination.location && <Text style={styles.destinationLocation}>{destination.location}</Text>}
             </View>
 
-            <View style={styles.reviewsRow}>
-              <FontAwesome name="star" size={14} color={COLORS.ratingAlt} />
-              <Text style={styles.rating}>{destination.rating}</Text>
-              <Text style={styles.reviews}>({destination.reviews})</Text>
-            </View>
+            {destination.rating > 0 && (
+              <View style={styles.reviewsRow}>
+                <FontAwesome name="star" size={14} color={COLORS.ratingAlt} />
+                <Text style={styles.rating}>{destination.rating.toFixed(1)}</Text>
+                {destination.reviews && <Text style={styles.reviews}>({destination.reviews})</Text>}
+              </View>
+            )}
           </View>
 
-          <View style={styles.amenitiesWithFavoriteRow}>
-            <View style={styles.amenitiesRow}>
-              {destination.amenities.map((amenity, idx) => (
-                <BlurView key={idx} intensity={30} tint="dark" style={styles.amenityTag}>
-                  <Text style={styles.amenityText}>{amenity}</Text>
-                </BlurView>
-              ))}
-            </View>
+          {destination.amenities && destination.amenities.length > 0 && (
+            <View style={styles.amenitiesWithFavoriteRow}>
+              <View style={styles.amenitiesRow}>
+                {destination.amenities.map((amenity, idx) => (
+                  <BlurView key={idx} intensity={30} tint="dark" style={styles.amenityTag}>
+                    <Text style={styles.amenityText}>{amenity}</Text>
+                  </BlurView>
+                ))}
+              </View>
 
-            <TouchableOpacity 
-              style={[
-                styles.favoriteButton,
-                isFavorite && styles.favoriteButtonActive
-              ]}
-              onPress={handleFavoritePress}
-              activeOpacity={0.8}
-            >
-              <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-                <FontAwesome 
-                  name={isFavorite ? "heart" : "heart-o"} 
-                  size={20} 
-                  color={isFavorite ? COLORS.favoriteActive : COLORS.textWhite} 
-                />
-              </Animated.View>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.bottomRow}>
-            <View style={styles.priceContainer}>
-              <Text style={styles.priceLabel}>From</Text>
-              <Text style={styles.price}>{destination.price}/night</Text>
-            </View>
-            
-            <View style={styles.actionsColumn}>
-              <TouchableOpacity style={styles.bookButton}>
-                <Text style={styles.bookButtonText}>Book Now</Text>
+              <TouchableOpacity 
+                style={[
+                  styles.favoriteButton,
+                  isFavorite && styles.favoriteButtonActive
+                ]}
+                onPress={handleFavoritePress}
+                activeOpacity={0.8}
+              >
+                <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+                  <FontAwesome 
+                    name={isFavorite ? "heart" : "heart-o"} 
+                    size={20} 
+                    color={isFavorite ? COLORS.favoriteActive : COLORS.textWhite} 
+                  />
+                </Animated.View>
               </TouchableOpacity>
             </View>
-          </View>
+          )}
         </View>
       </LinearGradient>
     </TouchableOpacity>
@@ -179,9 +159,8 @@ const styles = StyleSheet.create({
   fullOverlay: {
     width: '100%',
     height: '100%',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.lg,
     paddingBottom: SPACING.md,
   },
 
@@ -192,7 +171,7 @@ const styles = StyleSheet.create({
   },
 
   bottomContent: {
-    gap: SPACING.xs,
+    gap: SPACING.md,
   },
 
   headerWithFavoriteRow: {
@@ -229,7 +208,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: SPACING.md,
-    marginTop: -SPACING.sm,
   },
 
   imageTextContainer: {
@@ -328,65 +306,8 @@ const styles = StyleSheet.create({
   },
 
   amenityText: {
-    fontSize: 11,
+    fontSize: 13.2,
     color: COLORS.textWhite,
     fontWeight: '600',
-  },
-
-  bottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    marginTop: -SPACING.xs,
-  },
-
-  priceContainer: {
-    gap: 2,
-  },
-
-  actionsColumn: {
-    flexDirection: 'column',
-    alignItems: 'flex-end',
-    gap: SPACING.xs,
-  },
-
-  priceLabel: {
-    fontSize: 12,
-    color: COLORS.textLight,
-    fontWeight: '500',
-    textShadowColor: 'rgba(0, 0, 0, 0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-
-  price: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textWhite,
-    textShadowColor: 'rgba(0, 0, 0, 0.8)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
-  },
-
-  bookButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.sm,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'center',
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 6,
-  },
-
-  bookButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textWhite,
-    letterSpacing: 0.5,
   },
 });

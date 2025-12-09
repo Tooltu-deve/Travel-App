@@ -474,7 +474,6 @@ const NotificationScreen: React.FC = () => {
         {/* Filters */}
         <View style={styles.filtersContainer}>
           {renderFilterButton('all', 'Tất cả', 'list')}
-          {renderFilterButton('favorite', 'Yêu thích', 'heart')}
           {renderFilterButton('itinerary', 'Lộ trình', 'map')}
           {renderFilterButton('account', 'Tài khoản', 'person')}
           {renderFilterButton('system', 'Hệ thống', 'information-circle')}
