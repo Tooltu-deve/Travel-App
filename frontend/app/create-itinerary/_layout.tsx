@@ -26,6 +26,20 @@ export default function CreateItineraryLayout() {
         }}
       />
       <Stack.Screen
+        name="manual-form"
+        options={{
+          title: 'Tạo lộ trình thủ công',
+        }}
+      />
+      <Stack.Screen
+        name="manual-preview"
+        options={{
+          title: 'Xem trước lộ trình thủ công',
+          presentation: 'card',
+          animation: 'slide_from_bottom',
+        }}
+      />
+      <Stack.Screen
         name="route-preview"
         options={{
           title: 'Xem trước lộ trình',
