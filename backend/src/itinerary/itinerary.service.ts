@@ -1116,6 +1116,8 @@ export class ItineraryService {
             current_location: currentLocation,
             start_datetime: generateDto.start_datetime,
             ecs_score_threshold: generateDto.ecs_score_threshold || 0.15,
+            travel_mode: generateDto.travel_mode || 'driving',
+            poi_per_day: generateDto.poi_per_day || 3,
           },
           {
             timeout: 120000,

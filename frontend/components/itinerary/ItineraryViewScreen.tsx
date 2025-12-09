@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, ReactNode } from 'react';
 import {
   View,
   Text,
@@ -54,23 +54,62 @@ interface DayPlan {
   day: number;
   activities: Activity[];
   day_start_time?: string;
+  startLocationCoordinates?: { lat: number; lng: number };
+}
+
+// Custom itinerary DTO (partial) to support manual routes
+interface CustomPlaceWithRoute {
+  placeId: string;
+  name: string;
+  address?: string;
+  location: { lat: number; lng: number };
+  encoded_polyline?: string | null;
+  travel_duration_minutes?: number | null;
+}
+
+interface CustomDayWithRoutes {
+  dayNumber?: number;
+  day?: number;
+  places: CustomPlaceWithRoute[];
+  startLocationCoordinates?: { lat: number; lng: number };
+}
+
+interface CustomItineraryResponse {
+  route_id?: string;
+  user_id?: string;
+  title?: string;
+  destination?: string;
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN';
+  start_date?: string;
+  end_date?: string;
+  start_location?: { lat: number; lng: number };
+  route_data_json?: any;
+  days?: CustomDayWithRoutes[];
 }
 
 interface ItineraryViewScreenProps {
   visible: boolean;
   onClose: () => void;
   routeId: string;
+  footerContent?: ReactNode;
+  customRouteData?: CustomItineraryResponse | null; // manual/custom itinerary data
+  isManual?: boolean;
 }
 
 export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   visible,
   onClose,
   routeId,
+  footerContent,
+  customRouteData = null,
+  isManual = false,
 }) => {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
 
-  const [routeDetails, setRouteDetails] = useState<TravelRoute | null>(null);
+  const [routeDetails, setRouteDetails] = useState<TravelRoute | CustomItineraryResponse | null>(
+    customRouteData,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<number>(1);
@@ -84,9 +123,18 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
   const [isEnriching, setIsEnriching] = useState(false);
 
-  // Fetch route details
+  // Sync custom route data (manual)
   useEffect(() => {
-    if (!visible || !routeId) return;
+    if (customRouteData) {
+      setRouteDetails(customRouteData);
+      setIsLoading(false);
+      setError(null);
+    }
+  }, [customRouteData]);
+
+  // Fetch AI route details when not provided externally
+  useEffect(() => {
+    if (!visible || !routeId || customRouteData) return;
 
     const fetchRouteDetails = async () => {
       try {
@@ -110,23 +158,54 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     };
 
     fetchRouteDetails();
-  }, [visible, routeId]);
+  }, [visible, routeId, customRouteData]);
 
-  // Parse route data - with null safety
-  const routeData = routeDetails?.route_data_json as any;
-  const optimizedRoute = routeData?.optimized_route || [];
-  const totalDays = optimizedRoute.length || routeDetails?.duration_days || 1;
+  // Parse route data - with null safety (support manual/custom itinerary structure)
+  const routeData = (routeDetails as any)?.route_data_json || (routeDetails as any) || {};
+  const isManualRoute = isManual || !!customRouteData || Array.isArray(routeData?.days);
+
+  // Normalize optimized_route: prefer existing optimized_route; fallback to days array from custom itinerary
+  const optimizedRoute: DayPlan[] =
+    routeData?.optimized_route ||
+    (Array.isArray(routeData?.days)
+      ? routeData.days.map((d: CustomDayWithRoutes, idx: number) => ({
+          day: d.day ?? d.dayNumber ?? idx + 1,
+          activities: (d.places || []).map((p) => ({
+            name: p.name,
+            location: p.location,
+            google_place_id: (p as any).google_place_id || p.placeId,
+            encoded_polyline: p.encoded_polyline || undefined,
+            travel_duration_minutes:
+              p.travel_duration_minutes != null ? Number(p.travel_duration_minutes) : undefined,
+            estimated_arrival: (p as any).estimated_arrival,
+            estimated_departure: (p as any).estimated_departure,
+          })),
+          day_start_time: (d as any).day_start_time,
+        }))
+      : []);
+
+  const totalDays = optimizedRoute.length || (routeDetails as any)?.duration_days || 1;
+
+  // Start location (for start marker)
+  const startLocation =
+    (routeDetails as any)?.start_location ||
+    routeData?.start_location ||
+    routeData?.metadata?.start_location ||
+    routeData?.startLocation ||
+    routeData?.startLocationCoordinates ||
+    optimizedRoute?.[0]?.startLocationCoordinates ||
+    null;
 
   // Get title
   const title =
-    routeDetails?.title ||
+    (routeDetails as any)?.title ||
     routeData?.summary?.title ||
     routeData?.metadata?.title ||
-    `Lộ trình ${routeDetails?.destination || ''}`;
+    `Lộ trình ${(routeDetails as any)?.destination || ''}`;
 
   // Get destination
   const destination =
-    routeDetails?.destination ||
+    (routeDetails as any)?.destination ||
     routeData?.destination ||
     routeData?.city ||
     'Điểm đến';
@@ -215,14 +294,22 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   };
 
   // Calculate map region
-  const calculateMapRegion = (activities: Activity[]) => {
-    if (activities.length === 0) return null;
+  const calculateMapRegion = (
+    activities: Activity[],
+    center?: { lat: number; lng: number },
+  ) => {
+    if ((!activities || activities.length === 0) && !center) return null;
 
     const coords = activities
       .map((a) => a.location || a.place?.location)
       .filter(Boolean)
       .map(toMapCoordinate)
       .filter(Boolean) as { latitude: number; longitude: number }[];
+
+    if (center) {
+      const c = toMapCoordinate(center);
+      if (c) coords.push(c);
+    }
 
     if (coords.length === 0) return null;
 
@@ -252,12 +339,12 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
   // Update map region when day changes
   useEffect(() => {
-    const region = calculateMapRegion(activities);
+    const region = calculateMapRegion(activities, startLocation);
     if (region) {
       setMapRegion(region);
       mapRef.current?.animateToRegion(region, 500);
     }
-  }, [selectedDay, activities]);
+  }, [selectedDay, activities, startLocation]);
 
   // Fit to markers
   const handleFitToMarkers = () => {
@@ -412,6 +499,15 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 />
               ))}
 
+              {/* Start marker */}
+              {startLocation && toMapCoordinate(startLocation) && (
+                <Marker coordinate={toMapCoordinate(startLocation)!} title="Điểm bắt đầu">
+                  <View style={styles.startMarker}>
+                    <Text style={styles.markerText}>BĐ</Text>
+                  </View>
+                </Marker>
+              )}
+
               {/* Markers */}
               {activities.map((activity, index) => {
                 const coord = toMapCoordinate(activity.location || activity.place?.location);
@@ -419,7 +515,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
                 return (
                   <Marker key={`marker-${index}`} coordinate={coord}>
-                    <View style={index === 0 ? styles.startMarker : styles.marker}>
+                    <View style={styles.marker}>
                       <Text style={styles.markerText}>{index + 1}</Text>
                     </View>
                   </Marker>
@@ -525,23 +621,14 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           </Text>
                           
                           {/* Time Row */}
-                          <View style={styles.cardRow}>
-                            <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
-                            <Text style={styles.cardTime}>
-                              {formatTime(arrival)}
-                              {duration && ` • ${duration}`}
-                            </Text>
-                          </View>
-
-                          {/* Rating & ECS */}
-                          {rating !== undefined && (
-                            <View style={styles.cardRow}>
-                              <FontAwesome name="star" size={12} color="#FFB800" />
-                              <Text style={styles.cardRating}>
-                                Phù hợp: {rating.toFixed(1)}/10
-                              </Text>
-                            </View>
-                          )}
+                        <View style={styles.cardRow}>
+                          <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
+                          <Text style={styles.cardTime}>
+                            {isManualRoute
+                              ? 'Thời gian tự chọn'
+                              : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
+                          </Text>
+                        </View>
 
                           {/* Loading indicator */}
                           {isEnriching && (
@@ -586,6 +673,9 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             placeData={selectedPlaceData}
           />
         )}
+
+        {/* External footer actions (optional) */}
+        {footerContent && <View style={styles.externalFooter}>{footerContent}</View>}
       </LinearGradient>
     </Modal>
   );
@@ -835,12 +925,12 @@ const styles = StyleSheet.create({
   },
   cardNumberBadge: {
     position: 'absolute',
-    top: -8,
-    left: SPACING.lg,
+    top: SPACING.md,
+    left: SPACING.md,
     zIndex: 10,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     overflow: 'hidden',
     shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 3 },
@@ -875,6 +965,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: SPACING.md,
     paddingTop: SPACING.lg,
+    // Dành chỗ cho huy hiệu (badge rộng 44 + margin), tránh đè lên text
+    paddingLeft: SPACING.xl + 44,
     gap: SPACING.md,
   },
   numberBadge: {
@@ -895,8 +987,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   numberBadgeText: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '700',
     color: COLORS.textWhite,
   },
   cardInfo: {
@@ -947,6 +1039,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.textSecondary,
     fontStyle: 'italic',
+  },
+  externalFooter: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: SPACING.lg,
+    paddingBottom: SPACING.lg + 8,
+    paddingTop: SPACING.md,
+    backgroundColor: 'transparent',
   },
 });
 
