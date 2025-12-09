@@ -23,7 +23,7 @@ const CreateItineraryScreen: React.FC = () => {
   };
 
   const handleManual = () => {
-    console.log('Create manually');
+    router.push('/create-itinerary/manual-form' as any);
   };
 
   const handleGoBack = () => {

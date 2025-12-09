@@ -968,6 +968,201 @@ export const getPlacePhotoAPI = (
 };
 
 // ============================================
+// CUSTOM ITINERARY API
+// ============================================
+
+/**
+ * Kiểm tra thời tiết cho chuyến đi
+ */
+export const checkWeatherAPI = async (
+  departureDate: string,
+  returnDate: string,
+  destination: string,
+  token: string
+): Promise<any> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/weather-check`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        departureDate,
+        returnDate,
+        destination,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to check weather');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Check weather error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Tính toán routes và lưu custom itinerary
+ */
+export const calculateRoutesAPI = async (
+  payload: {
+    destination: string;
+    days: Array<{
+      dayNumber: number;
+      travelMode: string;
+      startLocation: string;
+      places: Array<{
+        placeId: string;
+        name: string;
+        address: string;
+      }>;
+    }>;
+    optimize?: boolean;
+    start_date?: string;
+    end_date?: string;
+  },
+  token: string
+): Promise<any> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/calculate-routes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to calculate routes');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Calculate routes error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Autocomplete địa điểm (Google Places)
+ */
+export const autocompletePlacesAPI = async (
+  input: string,
+  sessionToken?: string,
+  token?: string
+): Promise<any> => {
+  try {
+    const headers: any = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/autocomplete`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        input,
+        sessionToken,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to autocomplete places');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Autocomplete places error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Cập nhật status của custom itinerary
+ */
+export const updateCustomItineraryStatusAPI = async (
+  routeId: string,
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN',
+  title?: string,
+  token?: string
+): Promise<any> => {
+  try {
+    const headers: any = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/status/${routeId}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        status,
+        title,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update status');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Update custom itinerary status error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Lấy danh sách custom itineraries
+ */
+export const getCustomItinerariesAPI = async (
+  token: string,
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN'
+): Promise<any> => {
+  try {
+    const queryParams = status ? `?status=${status}` : '';
+    
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/routes${queryParams}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to get custom itineraries');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Get custom itineraries error:', error);
+    throw error;
+  }
+};
+
+// ============================================
 // EXPORT
 // ============================================
 export default {
@@ -998,4 +1193,9 @@ export default {
   getPlacesAPI,
   chatWithAIAPI,
   resetConversationAPI,
+  checkWeatherAPI,
+  calculateRoutesAPI,
+  autocompletePlacesAPI,
+  updateCustomItineraryStatusAPI,
+  getCustomItinerariesAPI,
 };
