@@ -177,7 +177,7 @@ def get_estimated_visit_duration(poi: Dict[str, Any]) -> int:
 class OptimizerRequest(BaseModel):
     """ Input cho API tối ưu lộ trình """
     poi_list: List[Dict[str, Any]]  # POI chưa có ecs_score (cần có: google_place_id, emotional_tags, location)
-    user_mood: str  # Mood để tính ECS
+    user_mood: List[str]  # Mood để tính ECS (có thể nhiều mood)
     duration_days: int  # Số ngày du lịch
     current_location: Dict[str, float]  # { lat, lng } - vị trí hiện tại của user
     start_datetime: Optional[str] = None  # ISO 8601 datetime bắt đầu chuyến đi
@@ -187,6 +187,10 @@ class OptimizerRequest(BaseModel):
     eta_matrix: Optional[Dict[str, Dict[str, float]]] = None
     # ETA từ vị trí hiện tại đến từng POI, ví dụ: { "poiA": 8, "poiB": 15 }
     eta_from_current: Optional[Dict[str, float]] = None
+    # Travel mode cho Distance Matrix (driving/walking/bicycling/transit)
+    travel_mode: Optional[str] = "driving"
+    # Số POI mỗi ngày (fallback 3 nếu không truyền)
+    poi_per_day: Optional[int] = 3
 
 
 
@@ -195,8 +199,8 @@ class OptimizerRequest(BaseModel):
 # Lưu ý: Hàm get_city_from_location đã được di chuyển sang Backend (NestJS)
 # AI Optimizer Service chỉ tập trung vào tính ECS, kiểm tra giờ mở cửa, và tối ưu lộ trình
 
-def fetch_distance_matrix_minutes(origin: Dict[str, float], destinations: List[Dict[str, Any]]) -> Dict[str, float]:
-    """Return {poi_id: minutes} using Google Distance Matrix for origin -> each destination."""
+def fetch_distance_matrix_minutes(origin: Dict[str, float], destinations: List[Dict[str, Any]], mode: str = "driving") -> Dict[str, float]:
+    """Return {poi_id: minutes} using Google Distance Matrix for origin -> each destination. Supports travel mode."""
     if not GOOGLE_DISTANCE_MATRIX_API_KEY or not destinations:
         return {}
     origins_param = f"{origin['lat']},{origin['lng']}"
@@ -216,7 +220,7 @@ def fetch_distance_matrix_minutes(origin: Dict[str, float], destinations: List[D
         "https://maps.googleapis.com/maps/api/distancematrix/json"
         f"?origins={origins_param}"
         f"&destinations={'|'.join(dest_param_list)}"
-        "&mode=driving&units=metric"
+        f"&mode={mode or 'driving'}&units=metric"
         f"&key={GOOGLE_DISTANCE_MATRIX_API_KEY}"
     )
     try:
@@ -488,14 +492,27 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         distance = haversine_km(lat, lng, start_lat, start_lng)
         return distance <= max_distance_km
     
-    def calculate_ecs_score(poi: Dict[str, Any], mood: str) -> float:
-        """Tính ECS score cho một POI dựa trên mood"""
+    def calculate_ecs_score_single(poi: Dict[str, Any], mood: str) -> float:
+        """Tính ECS score cho một POI dựa trên 1 mood"""
         weights = MOOD_WEIGHTS.get(mood, {})
         tags = poi.get('emotional_tags', {})
         ecs_score = 0.0
         for tag_name, weight in weights.items():
             ecs_score += tags.get(tag_name, 0.0) * weight
         return ecs_score
+
+    def calculate_ecs_score(poi: Dict[str, Any], moods: Any) -> float:
+        """
+        Tính ECS score cho POI dựa trên danh sách mood.
+        - Nếu moods là chuỗi: tính theo 1 mood
+        - Nếu là list: tính cho từng mood và lấy max để ưu tiên mood phù hợp nhất
+        """
+        if isinstance(moods, str):
+            return calculate_ecs_score_single(poi, moods)
+        if isinstance(moods, list):
+            scores = [calculate_ecs_score_single(poi, str(m)) for m in moods if m is not None]
+            return max(scores) if scores else 0.0
+        return 0.0
 
     # BƯỚC 1: Lọc POIs đang mở cửa tại thời điểm khởi hành (TỐI ƯU: lọc TRƯỚC khi tính ECS để giảm số lượng POI cần tính)
     print(f"Bước 1: Lọc POI đang mở cửa tại thời điểm khởi hành ({start_datetime.isoformat()})...")
@@ -507,7 +524,7 @@ async def optimize_for_chatbot(request: OptimizerRequest):
     print(f"  → Còn lại {len(open_pois)} POI sau khi lọc mở cửa (từ {len(request.poi_list)} POI)")
 
     # BƯỚC 2: Tính ECS cho các POI đã lọc (sau khi lọc mở cửa - ít POI hơn)
-    print(f"Bước 2: Tính ECS cho {len(open_pois)} POI với mood '{request.user_mood}'...")
+    print(f"Bước 2: Tính ECS cho {len(open_pois)} POI với mood {request.user_mood}...")
     scored_pois: List[Dict[str, Any]] = []
     for poi in open_pois:
         ecs_score = calculate_ecs_score(poi, request.user_mood)
@@ -525,8 +542,10 @@ async def optimize_for_chatbot(request: OptimizerRequest):
     print(f"  → Còn lại {len(high_score_pois)} POI sau khi lọc theo ECS threshold")
 
     # Nếu thiếu eta_from_current, tính bằng Distance Matrix (sau khi lọc ECS)
+    # Dùng travel mode mặc định driving (có thể mở rộng lấy từ request nếu cần)
+    eta_mode = request.travel_mode or "driving"
     eta_from_current = request.eta_from_current or fetch_distance_matrix_minutes(
-        request.current_location, high_score_pois
+        request.current_location, high_score_pois, mode=eta_mode
     )
 
     # BƯỚC 4: Sắp xếp theo điểm ECS (giảm dần) để ưu tiên POI phù hợp nhất
@@ -556,7 +575,7 @@ async def optimize_for_chatbot(request: OptimizerRequest):
             types = get_poi_types(poi)
             print(f"  → POI '{poi.get('name')}' có types: {types}")
         return {"optimized_route": []}
-    
+
     # Kiểm tra số lượng POI tối thiểu
     MIN_POIS_PER_DAY = 3
     required_pois = MIN_POIS_PER_DAY * request.duration_days
@@ -764,13 +783,21 @@ async def optimize_with_kmeans(request: OptimizerRequest):
         distance = haversine_km(lat, lng, start_lat, start_lng)
         return distance <= max_distance_km
     
-    def calculate_ecs_score(poi: Dict[str, Any], mood: str) -> float:
+    def calculate_ecs_score_single(poi: Dict[str, Any], mood: str) -> float:
         weights = MOOD_WEIGHTS.get(mood, {})
         tags = poi.get('emotional_tags', {})
         ecs_score = 0.0
         for tag_name, weight in weights.items():
             ecs_score += tags.get(tag_name, 0.0) * weight
         return ecs_score
+
+    def calculate_ecs_score(poi: Dict[str, Any], moods: Any) -> float:
+        if isinstance(moods, str):
+            return calculate_ecs_score_single(poi, moods)
+        if isinstance(moods, list):
+            scores = [calculate_ecs_score_single(poi, str(m)) for m in moods if m is not None]
+            return max(scores) if scores else 0.0
+        return 0.0
 
     # BƯỚC 1: Lọc mở cửa
     print(f"Bước 1: Lọc POI mở cửa...")
@@ -828,31 +855,62 @@ async def optimize_with_kmeans(request: OptimizerRequest):
 
     sorted_clusters = sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)
 
+    # Danh sách mood (có thể là 1 hoặc nhiều mood)
+    moods_list = request.user_mood if isinstance(request.user_mood, list) else [request.user_mood]
+    if not moods_list:
+        moods_list = ['']  # fallback tránh lỗi chia 0
+
     cluster_sequences = []
+    cluster_mood_rank: Dict[int, Dict[str, List[Dict[str, Any]]]] = {}
+    cluster_mood_ptr: Dict[int, Dict[str, int]] = {}
     for cluster_id, cluster_pois in sorted_clusters:
         non_restaurant_pois = [p for p in cluster_pois if not is_restaurant_poi(p)]
         if not non_restaurant_pois:
             continue
         sorted_list = sorted(non_restaurant_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
         cluster_sequences.append((cluster_id, sorted_list))
+        # Sắp xếp theo từng mood để lấy POI phù hợp nhất cho mood đó
+        cluster_mood_rank[cluster_id] = {}
+        cluster_mood_ptr[cluster_id] = {}
+        for mood in moods_list:
+            ranked = sorted(
+                non_restaurant_pois,
+                key=lambda p: calculate_ecs_score_single(p, str(mood)),
+                reverse=True,
+            )
+            cluster_mood_rank[cluster_id][str(mood)] = ranked
+            cluster_mood_ptr[cluster_id][str(mood)] = 0
         print(f"  → Cluster {cluster_id}: {len(sorted_list)} POI")
 
     # BƯỚC 5: Phân bổ POI theo ngày từ clusters
     print(f"Bước 5: Phân bổ POI theo ngày từ K-Means clusters...")
-    pois_per_day = 3
-    global_pool = sorted([p for p in pois_within_radius if not is_restaurant_poi(p)],
-                         key=lambda p: p.get('ecs_score', 0), reverse=True)
-    global_pointer = 0
+    pois_per_day = request.poi_per_day or 3
+    base_pool = [p for p in pois_within_radius if not is_restaurant_poi(p)]
+
+    # Global pool sắp xếp theo từng mood
+    global_pool_rank: Dict[str, List[Dict[str, Any]]] = {}
+    global_pool_ptr: Dict[str, int] = {}
+    for mood in moods_list:
+        ranked = sorted(
+            base_pool,
+            key=lambda p: calculate_ecs_score_single(p, str(mood)),
+            reverse=True,
+        )
+        global_pool_rank[str(mood)] = ranked
+        global_pool_ptr[str(mood)] = 0
     used_poi_ids = set()
 
-    def pick_from_global():
-        nonlocal global_pointer
-        while global_pointer < len(global_pool):
-            poi = global_pool[global_pointer]
-            global_pointer += 1
+    def pick_from_global(mood: str):
+        ptr = global_pool_ptr.get(mood, 0)
+        pool = global_pool_rank.get(mood, [])
+        while ptr < len(pool):
+            poi = pool[ptr]
+            ptr += 1
             pid = get_poi_id(poi)
             if pid and pid not in used_poi_ids:
+                global_pool_ptr[mood] = ptr
                 return poi
+        global_pool_ptr[mood] = ptr
         return None
 
     cluster_pointers = {cluster_id: 0 for cluster_id, _ in cluster_sequences}
@@ -860,27 +918,52 @@ async def optimize_with_kmeans(request: OptimizerRequest):
 
     for day in range(request.duration_days):
         day_pois = []
+        mood_count = len(moods_list)
         if cluster_sequences:
             attempts = 0
             start_idx = day % len(cluster_sequences)
             while len(day_pois) < pois_per_day and attempts < len(cluster_sequences) * pois_per_day:
                 cluster_id, cluster_list = cluster_sequences[(start_idx + attempts) % len(cluster_sequences)]
-                ptr = cluster_pointers[cluster_id]
-                while ptr < len(cluster_list):
-                    poi = cluster_list[ptr]
-                    ptr += 1
+                # Mood cho slot hiện tại (round-robin moods)
+                mood = str(moods_list[len(day_pois) % mood_count])
+
+                # Lấy POI tốt nhất cho mood từ cluster này
+                mood_ptr = cluster_mood_ptr[cluster_id][mood]
+                mood_rank = cluster_mood_rank[cluster_id][mood]
+                chosen = None
+                while mood_ptr < len(mood_rank):
+                    poi = mood_rank[mood_ptr]
+                    mood_ptr += 1
                     pid = get_poi_id(poi)
                     if pid and pid not in used_poi_ids:
-                        day_pois.append(poi)
-                        used_poi_ids.add(pid)
+                        chosen = poi
                         break
-                cluster_pointers[cluster_id] = ptr
+                cluster_mood_ptr[cluster_id][mood] = mood_ptr
+
+                # Nếu chưa chọn được cho mood, fallback sang danh sách chung của cluster
+                if not chosen:
+                    ptr = cluster_pointers[cluster_id]
+                    while ptr < len(cluster_list):
+                        poi = cluster_list[ptr]
+                        ptr += 1
+                        pid = get_poi_id(poi)
+                        if pid and pid not in used_poi_ids:
+                            chosen = poi
+                            cluster_pointers[cluster_id] = ptr
+                            break
+                    cluster_pointers[cluster_id] = ptr
+
+                if chosen:
+                    day_pois.append(chosen)
+                    used_poi_ids.add(get_poi_id(chosen))
+
                 if len(day_pois) >= pois_per_day:
                     break
                 attempts += 1
 
         while len(day_pois) < pois_per_day:
-            fallback_poi = pick_from_global()
+            mood = str(moods_list[len(day_pois) % mood_count])
+            fallback_poi = pick_from_global(mood)
             if not fallback_poi:
                 break
             pid = get_poi_id(fallback_poi)
