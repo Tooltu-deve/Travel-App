@@ -55,15 +55,15 @@ export class UserService {
     userId: string,
     dto: UpdateUserPreferencesDto,
   ): Promise<User> {
-  const { preferencedTags } = dto;
+    const { preferencedTags } = dto;
 
-  const updatedUser = await this.userModel
-    .findByIdAndUpdate(
-    userId,
-    { $set: { preferencedTags: preferencedTags } },
-    { new: true }, // Trả về tài liệu user đã được cập nhật
-    )
-    .exec();
+    const updatedUser = await this.userModel
+      .findByIdAndUpdate(
+        userId,
+        { $set: { preferencedTags: preferencedTags } },
+        { new: true }, // Trả về tài liệu user đã được cập nhật
+      )
+      .exec();
 
     if (!updatedUser) {
       throw new NotFoundException('Không tìm thấy người dùng');
@@ -71,6 +71,14 @@ export class UserService {
 
     updatedUser.password = undefined; // Luôn ẩn password khi trả về
     return updatedUser;
+  }
+
+  async deleteById(userId: string): Promise<void> {
+    await this.userModel.findByIdAndDelete(userId).exec();
+  }
+
+  async findByVerificationToken(token: string): Promise<UserDocument | null> {
+    return this.userModel.findOne({ verificationToken: token }).exec();
   }
 }
 

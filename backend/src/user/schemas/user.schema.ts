@@ -27,6 +27,16 @@ export class CreateUserDto {
   @IsOptional()
   @IsString()
   facebookId?: string;
+
+  @IsOptional()
+  isVerified?: boolean;
+
+  @IsOptional()
+  @IsString()
+  verificationToken?: string;
+
+  @IsOptional()
+  verificationTokenExpiry?: Date;
 }
 
 export type UserDocument =
@@ -73,6 +83,24 @@ export class User {
    */
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Place' }], default: [] })
   likedPlaces: Types.ObjectId[];
+
+  /**
+   * Email verification status
+   */
+  @Prop({ type: Boolean, default: false })
+  isVerified: boolean;
+
+  /**
+   * Token for email verification
+   */
+  @Prop({ type: String, required: false })
+  verificationToken?: string;
+
+  /**
+   * Expiry time for verification token
+   */
+  @Prop({ type: Date, required: false })
+  verificationTokenExpiry?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
