@@ -2,15 +2,14 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Dimensions, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Image, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CategorySection } from '../../components/HomeScreen/CategorySection';
 import { ChatButton } from '../../components/HomeScreen/ChatButton';
 import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
 import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
-import { SearchBar } from '../../components/HomeScreen/SearchBar';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
+import { useAuth } from '../../contexts/AuthContext';
 import { featuredDestinations, reviews } from '../mockData';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -20,29 +19,18 @@ const INITIAL_REVIEWS_COUNT = 2;
 
 const HomeScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
-  const [isCategoryExpanded, setIsCategoryExpanded] = useState(false);
+  const { userData } = useAuth();
   const [showAllReviews, setShowAllReviews] = useState(false);
-  const [showChatButton, setShowChatButton] = useState(false);
+  const [showChatButton, setShowChatButton] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
   const [isCarouselScrolling, setIsCarouselScrolling] = useState(false);
-  const [welcomeOpacity] = useState(new Animated.Value(1));
   const scrollViewRef = useRef<ScrollView>(null);
   const carouselRef = useRef<ScrollView>(null);
   const autoScrollTimeout = useRef<number | null>(null);
-  const hideTimeout = useRef<number | null>(null);
   const lastScrollY = useRef(0);
 
   const displayedReviews = showAllReviews ? reviews : reviews.slice(0, INITIAL_REVIEWS_COUNT);
-
-  useEffect(() => {
-    Animated.timing(welcomeOpacity, {
-      toValue: isSearchExpanded ? 0 : 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [isSearchExpanded]);
 
   useEffect(() => {
     if (!isAutoScrollEnabled) return;
@@ -80,22 +68,6 @@ const HomeScreen: React.FC = () => {
 
   const handleMainScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const currentScrollY = event.nativeEvent.contentOffset.y;
-    const scrollDirection = currentScrollY > lastScrollY.current ? 'down' : 'up';
-    if (scrollDirection === 'up') {
-      setShowChatButton(false);
-      if (hideTimeout.current) {
-        clearTimeout(hideTimeout.current);
-        hideTimeout.current = null;
-      }
-    } else if (scrollDirection === 'down' && currentScrollY > 100) {
-      setShowChatButton(true);
-      if (hideTimeout.current) {
-        clearTimeout(hideTimeout.current);
-      }
-      hideTimeout.current = setTimeout(() => {
-        setShowChatButton(false);
-      }, 3000);
-    }
     lastScrollY.current = currentScrollY;
   };
 
@@ -121,24 +93,33 @@ const HomeScreen: React.FC = () => {
         scrollEventThrottle={16}
         scrollEnabled={!isCarouselScrolling}
       >
-        <View style={[homeStyles.headerContainer, { paddingTop: insets.top + SPACING.md }]}>
-          <Animated.View 
-            style={[
-              homeStyles.headerTextContainer,
-              { opacity: welcomeOpacity }
-            ]}
-            pointerEvents={isSearchExpanded ? 'none' : 'auto'}
-          >
+        <View style={[homeStyles.headerContainer, { paddingTop: insets.top }]}>
+          <View style={homeStyles.headerTextContainer}>
             <Text style={homeStyles.welcomeText}>Welcome !</Text>
-            <Text style={homeStyles.subtitleText}>Trần Minh Thanh</Text>
-          </Animated.View>
-          <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}> 
-            <SearchBar onExpandChange={setIsSearchExpanded} />
-            <TouchableOpacity style={homeStyles.headerButton}> 
-              <FontAwesome name="cog" size={22} color={COLORS.primary} />
-            </TouchableOpacity>
+            <Text style={homeStyles.subtitleText}>{userData?.fullName || 'User'}</Text>
+          </View>
+          <View style={homeStyles.logoWrapper}>
+            <LinearGradient
+              colors={['rgba(48, 131, 255, 0.2)', 'rgba(48, 131, 255, 0.1)', 'rgba(48, 131, 255, 0.02)', 'rgba(48, 131, 255, 0)']}
+              style={homeStyles.glowContainer}
+              start={{ x: 0.5, y: 0.5 }}
+              end={{ x: 0, y: 0 }}
+            />
+            <Image
+              source={require('@/assets/images/logo.png')}
+              style={homeStyles.logo}
+              resizeMode="contain"
+            />
           </View>
         </View>
+
+        {/* Divider after header */}
+        <LinearGradient
+          colors={[COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={homeStyles.sectionDivider}
+        />
 
         <View style={homeStyles.featuredSection}>
           <Text style={homeStyles.featuredTitle}>Điểm đến nổi bật</Text>
@@ -184,19 +165,6 @@ const HomeScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* Divider before categories */}
-        <LinearGradient
-          colors={[COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={homeStyles.sectionDivider}
-        />
-
-        <CategorySection
-          isExpanded={isCategoryExpanded}
-          onToggleExpanded={() => setIsCategoryExpanded(!isCategoryExpanded)}
-        />
-
         {/* Divider before reviews */}
         <LinearGradient
           colors={[COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
@@ -206,7 +174,7 @@ const HomeScreen: React.FC = () => {
         />
 
         <View style={homeStyles.reviewsSection}>
-          <Text style={homeStyles.reviewsTitle}>Đánh giá</Text>
+          <Text style={homeStyles.reviewsTitle}>Có thể bạn sẽ thích</Text>
           <ReviewCard />
         </View>
 
@@ -241,6 +209,24 @@ const homeStyles = StyleSheet.create({
     gap: SPACING.sm,
     alignItems: 'center',
     zIndex: 1000,
+  },
+  logoWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 100,
+    width: 100,
+  },
+  glowContainer: {
+    position: 'absolute',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    zIndex: 0,
+  },
+  logo: {
+    width: 100,
+    height: 100,
+    zIndex: 1,
   },
   headerButton: {
     width: 50,
@@ -280,7 +266,7 @@ const homeStyles = StyleSheet.create({
   sectionDivider: {
     height: 1.5,
     marginHorizontal: SPACING.xl,
-    marginVertical: SPACING.lg,
+    marginVertical: SPACING.sm,
     borderRadius: 1,
   },
   featuredSection: {
