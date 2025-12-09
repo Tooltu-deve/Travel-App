@@ -57,7 +57,8 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
         return Math.abs(gestureState.dy) > 5;
       },
       onPanResponderGrant: () => {
-        panY.setOffset(panY._value);
+        const current = (panY as any)?._value ?? 0;
+        panY.setOffset(current);
       },
       onPanResponderMove: (_, gestureState) => {
         // Chỉ cho phép kéo xuống
@@ -286,10 +287,9 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
             ],
           },
         ]}
-        {...panResponder.panHandlers}
       >
         {/* Drag Handle */}
-        <View style={styles.dragHandleContainer}>
+        <View style={styles.dragHandleContainer} {...panResponder.panHandlers}>
           <View style={styles.dragHandle} />
         </View>
 
