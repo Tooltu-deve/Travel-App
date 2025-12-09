@@ -250,6 +250,21 @@ export const registerAPI = async (
 };
 
 /**
+ * resendVerificationAPI: Gửi lại email xác thực
+ * 
+ * @param email - Email cần gửi lại verification
+ * @returns Success message
+ */
+export const resendVerificationAPI = async (
+  email: string
+): Promise<{ success: boolean; message: string }> => {
+  return makeRequest<{ success: boolean; message: string }>('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+};
+
+/**
  * validateTokenAPI: Validate token với backend
  * Dùng để check xem token còn hợp lệ không khi app khởi động
  * 
@@ -444,8 +459,8 @@ export const getRouteByIdAPI = async (
 export const getItineraryAPI = async (
   token: string,
   itineraryId: string,
-): Promise<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'; [key: string]: any }> => {
-  return makeRequest<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'; [key: string]: any }>(
+): Promise<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';[key: string]: any }> => {
+  return makeRequest<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';[key: string]: any }>(
     `/api/v1/itineraries/${itineraryId}`,
     {
       method: 'GET',
@@ -661,7 +676,7 @@ export const changePasswordAPI = async (
   data: { currentPassword: string; newPassword: string },
 ): Promise<{ message: string }> => {
   const url = `${API_BASE_URL}/api/v1/auth/change-password`;
-  
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -672,12 +687,12 @@ export const changePasswordAPI = async (
   });
 
   const result = await response.json();
-  
+
   if (!response.ok) {
     // Throw error với message từ backend
     throw new Error(result.message || 'Lỗi đổi mật khẩu');
   }
-  
+
   return result;
 };
 
@@ -754,7 +769,7 @@ export const getNotificationsAPI = async (
     queryParams.append('type', params.type);
   }
   const query = queryParams.toString() ? `?${queryParams.toString()}` : '';
-  
+
   return makeRequest<Notification[]>(`/api/v1/notifications${query}`, {
     method: 'GET',
     headers: {
@@ -893,7 +908,7 @@ export const chatWithAIAPI = async (
   if (context) {
     requestBody.context = context;
   }
-  
+
   return makeRequest<any>('/api/v1/ai/chat', {
     method: 'POST',
     headers: {
@@ -924,7 +939,7 @@ export const resetConversationAPI = async (
   if (sessionId) {
     requestBody.sessionId = sessionId;
   }
-  
+
   return makeRequest<any>('/api/v1/ai/reset', {
     method: 'POST',
     headers: {
