@@ -25,7 +25,6 @@ const HomeScreen: React.FC = () => {
   const [showChatButton, setShowChatButton] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
-  const [isCarouselScrolling, setIsCarouselScrolling] = useState(false);
   const [featuredDestinations, setFeaturedDestinations] = useState<any[]>([]);
   const [isLoadingDestinations, setIsLoadingDestinations] = useState(true);
   const scrollViewRef = useRef<ScrollView>(null);
@@ -117,7 +116,6 @@ const HomeScreen: React.FC = () => {
 
   const handleUserTouch = () => {
     setIsAutoScrollEnabled(false);
-    setIsCarouselScrolling(true);
     if (autoScrollTimeout.current) {
       clearTimeout(autoScrollTimeout.current);
     }
@@ -127,7 +125,6 @@ const HomeScreen: React.FC = () => {
     const contentOffsetX = event.nativeEvent.contentOffset.x;
     const index = Math.round(contentOffsetX / SNAP_INTERVAL);
     setCurrentIndex(index);
-    setIsCarouselScrolling(false);
     setTimeout(() => {
       setIsAutoScrollEnabled(true);
     }, 5000);
@@ -158,7 +155,6 @@ const HomeScreen: React.FC = () => {
         showsVerticalScrollIndicator={false}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
-        scrollEnabled={!isCarouselScrolling}
       >
         <View style={[homeStyles.headerContainer, { paddingTop: insets.top }]}>
           <View style={homeStyles.headerTextContainer}>

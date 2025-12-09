@@ -36,31 +36,30 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
   const placeId = destination.googlePlaceId || destination.id;
   const isFavorite = isLiked(placeId);
 
-  const handleFavoritePress = async () => {
+  const handleFavoritePress = () => {
     // Tắt auto-scroll khi người dùng bấm nút tim
     if (onInteraction) {
       onInteraction();
     }
 
-    try {
-      await toggleLike(placeId);
-      
-      // Animation đơn giản, không block UI
-      Animated.sequence([
-        Animated.timing(scaleAnim, {
-          toValue: 1.2,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-        Animated.timing(scaleAnim, {
-          toValue: 1,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } catch (error) {
+    // Animation trước khi call API (responsive hơn)
+    Animated.sequence([
+      Animated.timing(scaleAnim, {
+        toValue: 1.2,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    // Call API không đợi (fire and forget)
+    toggleLike(placeId).catch((error) => {
       console.error('Failed to toggle like:', error);
-    }
+    });
   };
 
   return (
