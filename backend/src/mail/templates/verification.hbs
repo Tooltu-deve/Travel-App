@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xác thực tài khoản</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 50px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+
+        .content {
+            padding: 40px 30px;
+            color: #333333;
+        }
+
+        .content h2 {
+            color: #667eea;
+            margin-top: 0;
+        }
+
+        .content p {
+            line-height: 1.6;
+            font-size: 16px;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 15px 40px;
+            margin: 20px 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .button:hover {
+            opacity: 0.9;
+        }
+
+        .footer {
+            background-color: #f9f9f9;
+            padding: 20px;
+            text-align: center;
+            color: #777777;
+            font-size: 14px;
+        }
+
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎉 Chào mừng đến với Travel App!</h1>
+        </div>
+        <div class="content">
+            <h2>Xin chào {{name}}!</h2>
+            <p>Cảm ơn bạn đã đăng ký tài khoản. Để hoàn tất quá trình đăng ký, vui lòng xác thực địa chỉ email của bạn
+                bằng cách nhấn vào nút bên dưới:</p>
+
+            <div style="text-align: center;">
+                <a href="{{url}}" class="button">Xác thực tài khoản</a>
+            </div>
+
+            <div class="note">
+                <strong>⏰ Lưu ý:</strong> Link xác thực này chỉ có hiệu lực trong vòng <strong>24 giờ</strong>.
+            </div>
+
+            <p>Nếu bạn không thể nhấn vào nút trên, hãy sao chép và dán link sau vào trình duyệt:</p>
+            <p style="word-break: break-all; color: #667eea;">{{url}}</p>
+
+            <p style="margin-top: 30px;">Nếu bạn không đăng ký tài khoản này, vui lòng bỏ qua email này.</p>
+        </div>
+        <div class="footer">
+            <p>© 2025 Travel App. All rights reserved.</p>
+            <p>Email này được gửi tự động, vui lòng không phản hồi.</p>
+        </div>
+    </div>
+</body>
+
+</html>
