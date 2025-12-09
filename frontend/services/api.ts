@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://10.0.2.2:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
 // ============================================
 // TYPES
 // ============================================
@@ -1012,10 +1012,10 @@ export const checkWeatherAPI = async (
  */
 export const calculateRoutesAPI = async (
   payload: {
-    travelMode: string;
     destination: string;
     days: Array<{
       dayNumber: number;
+      travelMode: string;
       startLocation: string;
       places: Array<{
         placeId: string;

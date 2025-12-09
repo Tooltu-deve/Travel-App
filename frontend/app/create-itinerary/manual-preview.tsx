@@ -21,7 +21,7 @@ import { FontAwesome, MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { COLORS } from '@/constants/colors';
 import { SPACING, BORDER_RADIUS } from '@/constants/spacing';
-import { calculateRoutesAPI, autocompletePlacesAPI } from '../../services/api';
+import { calculateRoutesAPI, autocompletePlacesAPI, updateCustomItineraryStatusAPI } from '../../services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const BOTTOM_SHEET_MIN_HEIGHT = 250;
@@ -70,6 +70,7 @@ export default function ManualPreviewScreen() {
   const [itinerary, setItinerary] = useState<DayItinerary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [travelMode, setTravelMode] = useState<'driving' | 'bicycling' | 'walking' | 'transit'>('driving');
   const [destinationCoords, setDestinationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [routePolylines, setRoutePolylines] = useState<Array<{ latitude: number; longitude: number }[]>>([]);
   const [startLocationCoords, setStartLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -98,6 +99,12 @@ export default function ManualPreviewScreen() {
   // Preview saved itinerary
   const [savedRouteData, setSavedRouteData] = useState<any | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  
+  // Input title modal
+  const [showTitleInputModal, setShowTitleInputModal] = useState(false);
+  const [routeIdToConfirm, setRouteIdToConfirm] = useState<string | null>(null);
+  const [itineraryTitle, setItineraryTitle] = useState('');
+  const [isConfirming, setIsConfirming] = useState(false);
 
   // Generate unique session token (not in useCallback to avoid dependency issues)
   const generateSessionToken = () => {
@@ -563,52 +570,102 @@ export default function ManualPreviewScreen() {
 
       // Prepare payload for backend API
       const payload = {
-        travelMode: 'driving', // Default travel mode
         destination: destination,
         start_date: startDate.toISOString(),
         end_date: endDate.toISOString(),
         optimize: false,
-        days: itinerary.map((day) => ({
-          dayNumber: day.day,
-          startLocation: day.day === 1 ? currentLocationText : itinerary[day.day - 2]?.places[itinerary[day.day - 2]?.places.length - 1]?.address || currentLocationText,
-          places: day.places.map((place) => ({
-            placeId: place.placeId,
-            name: place.name,
-            address: place.address,
-          })),
-        })),
+        days: itinerary.map((day) => {
+          // Calculate start location for each day:
+          // Day 1: Use current location text
+          // Other days: Use last place of previous day, or fallback to current location
+          let dayStartLocation = currentLocationText;
+          if (day.day > 1) {
+            const previousDay = itinerary[day.day - 2];
+            if (previousDay && previousDay.places.length > 0) {
+              const lastPlace = previousDay.places[previousDay.places.length - 1];
+              dayStartLocation = lastPlace.address || currentLocationText;
+            }
+          }
+
+          return {
+            dayNumber: day.day,
+            travelMode: travelMode, // Each day has its own travelMode (currently all days use the same selected mode)
+            startLocation: dayStartLocation,
+            places: day.places.map((place) => ({
+              placeId: place.placeId,
+              name: place.name,
+              address: place.address,
+            })),
+          };
+        }),
       };
 
       // Call backend API to calculate routes and save
       const result = await calculateRoutesAPI(payload, token);
 
-      // Save result for preview
-      if (result && result.days) {
-        setSavedRouteData({
-          ...result,
-          destination: destination,
-          title: result.title || `Lộ trình ${destination}`,
-          durationDays: durationDays,
-        });
-        setShowPreviewModal(true);
+      // Check if route_id exists in response
+      if (result && result.route_id) {
+        // Save route_id and show input title modal
+        setRouteIdToConfirm(result.route_id);
+        setItineraryTitle(result.title || `Lộ trình ${destination}`);
+        setShowTitleInputModal(true);
       } else {
-        // Fallback: just show success message
-        Alert.alert(
-          'Thành công',
-          'Lộ trình đã được lưu thành công!',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.replace('/(tabs)/itinerary'),
-            },
-          ]
-        );
+        // Fallback: show error
+        Alert.alert('Lỗi', 'Không thể lưu lộ trình. Vui lòng thử lại.');
       }
     } catch (error: any) {
       console.error('Save itinerary error:', error);
       Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình. Vui lòng thử lại.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Handle confirm title and update status
+  const handleConfirmTitle = async () => {
+    if (!routeIdToConfirm || !itineraryTitle.trim()) {
+      Alert.alert('Thông báo', 'Vui lòng nhập tên lộ trình.');
+      return;
+    }
+
+    setIsConfirming(true);
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để lưu lộ trình.');
+        router.replace('/(auth)/login');
+        return;
+      }
+
+      // Call update status API to set status to CONFIRMED and update title
+      await updateCustomItineraryStatusAPI(
+        routeIdToConfirm,
+        'CONFIRMED',
+        itineraryTitle.trim(),
+        token
+      );
+
+      // Close modal and navigate
+      setShowTitleInputModal(false);
+      setRouteIdToConfirm(null);
+      setItineraryTitle('');
+
+      Alert.alert(
+        'Thành công',
+        'Lộ trình đã được lưu thành công!',
+        [
+          {
+            text: 'OK',
+            onPress: () => router.replace('/(tabs)/itinerary'),
+          },
+        ]
+      );
+    } catch (error: any) {
+      console.error('Confirm title error:', error);
+      Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình. Vui lòng thử lại.');
+    } finally {
+      setIsConfirming(false);
     }
   };
 
@@ -772,6 +829,104 @@ export default function ManualPreviewScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+        </View>
+
+        {/* Travel Mode Tabs */}
+        <View style={styles.travelModeContainer}>
+          <Text style={styles.travelModeLabel}>Phương tiện di chuyển</Text>
+          <View style={styles.travelModeTabs}>
+            <TouchableOpacity
+              style={[
+                styles.travelModeTab,
+                travelMode === 'driving' && styles.travelModeTabActive,
+              ]}
+              onPress={() => setTravelMode('driving')}
+              activeOpacity={0.7}
+            >
+              <FontAwesome
+                name="car"
+                size={18}
+                color={travelMode === 'driving' ? COLORS.textWhite : COLORS.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.travelModeTabText,
+                  travelMode === 'driving' && styles.travelModeTabTextActive,
+                ]}
+              >
+                Ô tô
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.travelModeTab,
+                travelMode === 'bicycling' && styles.travelModeTabActive,
+              ]}
+              onPress={() => setTravelMode('bicycling')}
+              activeOpacity={0.7}
+            >
+              <FontAwesome
+                name="bicycle"
+                size={18}
+                color={travelMode === 'bicycling' ? COLORS.textWhite : COLORS.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.travelModeTabText,
+                  travelMode === 'bicycling' && styles.travelModeTabTextActive,
+                ]}
+              >
+                Xe đạp
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.travelModeTab,
+                travelMode === 'walking' && styles.travelModeTabActive,
+              ]}
+              onPress={() => setTravelMode('walking')}
+              activeOpacity={0.7}
+            >
+              <FontAwesome
+                name="user"
+                size={18}
+                color={travelMode === 'walking' ? COLORS.textWhite : COLORS.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.travelModeTabText,
+                  travelMode === 'walking' && styles.travelModeTabTextActive,
+                ]}
+              >
+                Đi bộ
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.travelModeTab,
+                travelMode === 'transit' && styles.travelModeTabActive,
+              ]}
+              onPress={() => setTravelMode('transit')}
+              activeOpacity={0.7}
+            >
+              <FontAwesome
+                name="bus"
+                size={18}
+                color={travelMode === 'transit' ? COLORS.textWhite : COLORS.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.travelModeTabText,
+                  travelMode === 'transit' && styles.travelModeTabTextActive,
+                ]}
+              >
+                Công cộng
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Multi-select toolbar */}
@@ -1033,6 +1188,93 @@ export default function ManualPreviewScreen() {
             >
               <Text style={styles.previewButtonText}>Xem danh sách lộ trình</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Input Title Modal */}
+      <Modal
+        visible={showTitleInputModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          if (!isConfirming) {
+            setShowTitleInputModal(false);
+            setRouteIdToConfirm(null);
+            setItineraryTitle('');
+          }
+        }}
+      >
+        <View style={styles.titleModalOverlay}>
+          <View style={[styles.titleModalContent, { paddingBottom: insets.bottom + SPACING.lg }]}>
+            {/* Modal Header */}
+            <View style={styles.titleModalHeader}>
+              <Text style={styles.titleModalTitle}>Đặt tên lộ trình</Text>
+              {!isConfirming && (
+                <TouchableOpacity
+                  style={styles.titleModalCloseButton}
+                  onPress={() => {
+                    setShowTitleInputModal(false);
+                    setRouteIdToConfirm(null);
+                    setItineraryTitle('');
+                  }}
+                >
+                  <FontAwesome name="times" size={24} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Input Field */}
+            <View style={styles.titleInputContainer}>
+              <Text style={styles.titleInputLabel}>Tên lộ trình</Text>
+              <TextInput
+                style={styles.titleInput}
+                placeholder="Nhập tên lộ trình..."
+                placeholderTextColor={COLORS.textSecondary}
+                value={itineraryTitle}
+                onChangeText={setItineraryTitle}
+                autoFocus
+                editable={!isConfirming}
+                maxLength={100}
+              />
+              <Text style={styles.titleInputHint}>
+                {itineraryTitle.length}/100 ký tự
+              </Text>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.titleModalActions}>
+              {!isConfirming && (
+                <TouchableOpacity
+                  style={[styles.titleModalButton, styles.titleModalCancelButton]}
+                  onPress={() => {
+                    setShowTitleInputModal(false);
+                    setRouteIdToConfirm(null);
+                    setItineraryTitle('');
+                  }}
+                >
+                  <Text style={styles.titleModalCancelText}>Hủy</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[
+                  styles.titleModalButton,
+                  styles.titleModalConfirmButton,
+                  (!itineraryTitle.trim() || isConfirming) && styles.titleModalConfirmButtonDisabled,
+                ]}
+                onPress={handleConfirmTitle}
+                disabled={!itineraryTitle.trim() || isConfirming}
+              >
+                {isConfirming ? (
+                  <ActivityIndicator size="small" color={COLORS.textWhite} />
+                ) : (
+                  <>
+                    <FontAwesome name="check" size={16} color={COLORS.textWhite} />
+                    <Text style={styles.titleModalConfirmText}>Xác nhận</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1336,6 +1578,49 @@ const styles = StyleSheet.create({
   },
   dayTabDateActive: {
     color: 'rgba(255,255,255,0.8)',
+  },
+  travelModeContainer: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+  },
+  travelModeLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.sm,
+  },
+  travelModeTabs: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+  },
+  travelModeTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.xs,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.xs,
+    borderRadius: SPACING.md,
+    backgroundColor: COLORS.bgMain,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  travelModeTabActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  travelModeTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  travelModeTabTextActive: {
+    color: COLORS.textWhite,
+    fontWeight: '700',
   },
   multiSelectToolbar: {
     flexDirection: 'row',
@@ -1760,6 +2045,98 @@ const styles = StyleSheet.create({
   previewButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
+    color: COLORS.textWhite,
+  },
+  // Title Input Modal Styles
+  titleModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.lg,
+  },
+  titleModalContent: {
+    backgroundColor: COLORS.bgMain,
+    borderRadius: SPACING.xl,
+    width: '100%',
+    maxWidth: 400,
+    padding: SPACING.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  titleModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: SPACING.lg,
+  },
+  titleModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  titleModalCloseButton: {
+    padding: SPACING.xs,
+  },
+  titleInputContainer: {
+    marginBottom: SPACING.lg,
+  },
+  titleInputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: SPACING.sm,
+  },
+  titleInput: {
+    backgroundColor: COLORS.bgCard,
+    borderRadius: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
+    fontSize: 16,
+    color: COLORS.textDark,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  titleInputHint: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: SPACING.xs,
+    textAlign: 'right',
+  },
+  titleModalActions: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+  },
+  titleModalButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    paddingVertical: SPACING.md,
+    borderRadius: SPACING.md,
+  },
+  titleModalCancelButton: {
+    backgroundColor: COLORS.bgCard,
+  },
+  titleModalCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  titleModalConfirmButton: {
+    backgroundColor: COLORS.success,
+  },
+  titleModalConfirmButtonDisabled: {
+    backgroundColor: COLORS.disabled,
+    opacity: 0.6,
+  },
+  titleModalConfirmText: {
+    fontSize: 16,
+    fontWeight: '600',
     color: COLORS.textWhite,
   },
 });
