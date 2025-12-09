@@ -1,5 +1,5 @@
 // ItineraryScreen - Trang lịch trình du lịch
-import { getRoutesAPI, TravelRoute, updateRouteStatusAPI } from '@/services/api';
+import { getRoutesAPI, TravelRoute, updateRouteStatusAPI, getCustomItinerariesAPI, updateCustomItineraryStatusAPI } from '@/services/api';
 import { FontAwesome } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,9 +21,12 @@ import { SPACING } from '../../constants/spacing';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+type TabType = 'ai' | 'manual';
+
 const ItineraryScreen: React.FC = () => {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [activeTab, setActiveTab] = useState<TabType>('ai');
   const [mainRoute, setMainRoute] = useState<TravelRoute | null>(null);
   const [confirmedRoutes, setConfirmedRoutes] = useState<TravelRoute[]>([]);
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(true);
@@ -44,16 +47,28 @@ const ItineraryScreen: React.FC = () => {
           return;
         }
 
-        // Fetch MAIN route
-        const mainResponse = await getRoutesAPI(token, 'MAIN');
-        if (isMounted) {
-          setMainRoute(mainResponse.routes?.[0] || null);
-        }
+        if (activeTab === 'ai') {
+          // Fetch AI routes (itinerary endpoint)
+          const mainResponse = await getRoutesAPI(token, 'MAIN');
+          if (isMounted) {
+            setMainRoute(mainResponse.routes?.[0] || null);
+          }
 
-        // Fetch CONFIRMED routes
-        const confirmedResponse = await getRoutesAPI(token, 'CONFIRMED');
-        if (isMounted) {
-          setConfirmedRoutes(confirmedResponse.routes || []);
+          const confirmedResponse = await getRoutesAPI(token, 'CONFIRMED');
+          if (isMounted) {
+            setConfirmedRoutes(confirmedResponse.routes || []);
+          }
+        } else {
+          // Fetch Manual routes (custom-itinerary endpoint)
+          const mainResponse = await getCustomItinerariesAPI(token, 'MAIN');
+          if (isMounted) {
+            setMainRoute(mainResponse?.[0] || null);
+          }
+
+          const confirmedResponse = await getCustomItinerariesAPI(token, 'CONFIRMED');
+          if (isMounted) {
+            setConfirmedRoutes(Array.isArray(confirmedResponse) ? confirmedResponse : []);
+          }
         }
       } catch (error: any) {
         console.error('❌ Fetch routes error:', error);
@@ -72,7 +87,7 @@ const ItineraryScreen: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [activeTab]);
 
   const handleActivateRoute = async (routeId: string) => {
     try {
@@ -97,15 +112,28 @@ const ItineraryScreen: React.FC = () => {
             onPress: async () => {
               setIsActivating(routeId);
               try {
-                // Update to MAIN status
-                const response = await updateRouteStatusAPI(token, routeId, {
-                  status: 'MAIN',
-                });
+                // Update to MAIN status based on active tab
+                if (activeTab === 'ai') {
+                  // Use itinerary endpoint
+                  const response = await updateRouteStatusAPI(token, routeId, {
+                    status: 'MAIN',
+                  });
 
-                if (response.route) {
-                  // Move from confirmed to main
-                  setMainRoute(response.route);
-                  setConfirmedRoutes(prev => prev.filter(r => r.route_id !== routeId));
+                  if (response.route) {
+                    // Move from confirmed to main
+                    setMainRoute(response.route);
+                    setConfirmedRoutes(prev => prev.filter(r => r.route_id !== routeId));
+                  }
+                } else {
+                  // Use custom-itinerary endpoint
+                  await updateCustomItineraryStatusAPI(routeId, 'MAIN', undefined, token);
+                  
+                  // Refresh routes after update
+                  const mainResponse = await getCustomItinerariesAPI(token, 'MAIN');
+                  setMainRoute(mainResponse?.[0] || null);
+                  
+                  const confirmedResponse = await getCustomItinerariesAPI(token, 'CONFIRMED');
+                  setConfirmedRoutes(Array.isArray(confirmedResponse) ? confirmedResponse : []);
                 }
               } catch (error: any) {
                 console.error('❌ Activate route error:', error);
@@ -358,6 +386,38 @@ const ItineraryScreen: React.FC = () => {
               </Text>
             </View>
           )}
+        </View>
+
+        {/* Tab Selector for AI / Manual */}
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'ai' && styles.tabActive]}
+            onPress={() => setActiveTab('ai')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome
+              name="magic"
+              size={16}
+              color={activeTab === 'ai' ? COLORS.textWhite : COLORS.textSecondary}
+            />
+            <Text style={[styles.tabText, activeTab === 'ai' && styles.tabTextActive]}>
+              AI
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'manual' && styles.tabActive]}
+            onPress={() => setActiveTab('manual')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome
+              name="edit"
+              size={16}
+              color={activeTab === 'manual' ? COLORS.textWhite : COLORS.textSecondary}
+            />
+            <Text style={[styles.tabText, activeTab === 'manual' && styles.tabTextActive]}>
+              Thủ công
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Other Itineraries Section */}
@@ -860,6 +920,44 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: COLORS.textSecondary,
     textAlign: 'center',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.lg,
+    marginBottom: SPACING.md,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: 12,
+    padding: 4,
+    gap: 4,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.xs,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: 10,
+    backgroundColor: 'transparent',
+  },
+  tabActive: {
+    backgroundColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  tabText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  tabTextActive: {
+    color: COLORS.textWhite,
+    fontWeight: '700',
   },
 });
 
