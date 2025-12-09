@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Types } from 'mongoose';
 import { UserService } from 'src/user/user.service';
@@ -7,6 +7,8 @@ import { JwtService } from '@nestjs/jwt';
 import { CreateUserDto } from 'src/user/dto/create-user.dto';
 import { Document } from 'mongoose';
 import { User, UserDocument } from 'src/user/schemas/user.schema';
+import { MailService } from '../mail/mail.service';
+import * as crypto from 'crypto';
 
 // Interface for Google User
 interface GoogleUser {
@@ -23,6 +25,7 @@ export class AuthService {
     private userService: UserService,
     private jwtService: JwtService,
     private readonly notificationsService: NotificationsService,
+    private readonly mailService: MailService,
   ) { }
 
   /**
@@ -33,6 +36,12 @@ export class AuthService {
     const user = await this.userService.findOneByEmail(email);
     // Phải kiểm tra user.password tồn tại (vì user Google sẽ không có)
     if (user && user.password && (await bcrypt.compare(pass, user.password))) {
+      // Kiểm tra email đã được xác thực chưa
+      if (!user.isVerified) {
+        throw new UnauthorizedException(
+          'Email chưa được xác thực. Vui lòng kiểm tra email để xác thực tài khoản.',
+        );
+      }
       // Chuyển đổi Mongoose document thành plain object
       const userObject = user instanceof Document ? (user as any).toObject() : user;
       const { password, ...result } = userObject;
@@ -125,25 +134,39 @@ export class AuthService {
       throw new ConflictException('Email đã tồn tại');
     }
 
-    // Tạo user mới (preferredTags sẽ có default [] từ schema)
-    const user = await this.userService.create(createUserDto);
+    // Tạo verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 giờ
 
-    // Gửi notification chào mừng (không throw error nếu fail)
+    // Tạo user mới với isVerified = false
+    const user = await this.userService.create({
+      ...createUserDto,
+      isVerified: false,
+      verificationToken,
+      verificationTokenExpiry,
+    });
+
+    // Gửi email xác thực
     try {
-      await this.notificationsService.createNotification({
-        userId: user._id instanceof Types.ObjectId ? user._id : new Types.ObjectId(user._id),
-        type: 'account',
-        title: 'Đăng ký tài khoản thành công',
-        message: 'Chào mừng bạn đến với hệ thống!',
-        entityType: 'system',
-        entityId: null,
-      });
-    } catch (notifError) {
-      console.error('Lỗi khi tạo notification đăng ký:', notifError);
+      await this.mailService.sendVerificationEmail(
+        user.email,
+        user.fullName,
+        verificationToken,
+      );
+    } catch (emailError) {
+      console.error('Lỗi khi gửi email xác thực:', emailError);
+      // Xóa user nếu không gửi được email
+      await this.userService.deleteById(user._id.toString());
+      throw new InternalServerErrorException(
+        'Không thể gửi email xác thực. Vui lòng thử lại sau.',
+      );
     }
 
-    // Trả về token và thông tin user
-    return this.login(user);
+    // Trả về thông báo thành công (không login ngay)
+    return {
+      message: 'Đăng ký thành công! Vui lòng kiểm tra email để xác thực tài khoản.',
+      email: user.email,
+    };
   }
   /**
    * Đổi mật khẩu cho user
@@ -238,5 +261,99 @@ export class AuthService {
         error.message || 'Error processing Google login',
       );
     }
+  }
+
+  /**
+   * Xác thực email với token
+   */
+  async verifyEmail(token: string) {
+    const user = await this.userService.findByVerificationToken(token);
+
+    if (!user) {
+      throw new BadRequestException('Token xác thực không hợp lệ');
+    }
+
+    // Kiểm tra token đã hết hạn chưa
+    if (user.verificationTokenExpiry && user.verificationTokenExpiry < new Date()) {
+      throw new BadRequestException('Token xác thực đã hết hạn');
+    }
+
+    // Kiểm tra đã verify chưa
+    if (user.isVerified) {
+      throw new BadRequestException('Email đã được xác thực trước đó');
+    }
+
+    // Cập nhật trạng thái verify
+    await this.userService.update(user._id.toString(), {
+      isVerified: true,
+      verificationToken: undefined,
+      verificationTokenExpiry: undefined,
+    });
+
+    // Gửi email chào mừng
+    try {
+      await this.mailService.sendWelcomeEmail(user.email, user.fullName);
+    } catch (error) {
+      console.error('Lỗi khi gửi email chào mừng:', error);
+    }
+
+    // Gửi notification chào mừng
+    try {
+      await this.notificationsService.createNotification({
+        userId: user._id instanceof Types.ObjectId ? user._id : new Types.ObjectId(user._id),
+        type: 'account',
+        title: 'Xác thực tài khoản thành công',
+        message: 'Chào mừng bạn đến với hệ thống!',
+        entityType: 'system',
+        entityId: null,
+      });
+    } catch (notifError) {
+      console.error('Lỗi khi tạo notification:', notifError);
+    }
+
+    return { message: 'Xác thực email thành công! Bạn có thể đăng nhập ngay bây giờ.' };
+  }
+
+  /**
+   * Gửi lại email xác thực
+   */
+  async resendVerificationEmail(email: string) {
+    const user = await this.userService.findOneByEmail(email);
+
+    if (!user) {
+      throw new NotFoundException('Email không tồn tại trong hệ thống');
+    }
+
+    if (user.isVerified) {
+      throw new BadRequestException('Email đã được xác thực');
+    }
+
+    // Tạo token mới
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 giờ
+
+    // Cập nhật token mới
+    await this.userService.update(user._id.toString(), {
+      verificationToken,
+      verificationTokenExpiry,
+    });
+
+    // Gửi email
+    try {
+      await this.mailService.sendVerificationEmail(
+        user.email,
+        user.fullName,
+        verificationToken,
+      );
+    } catch (emailError) {
+      console.error('Lỗi khi gửi email:', emailError);
+      throw new InternalServerErrorException(
+        'Không thể gửi email xác thực. Vui lòng thử lại sau.',
+      );
+    }
+
+    return {
+      message: 'Email xác thực đã được gửi lại. Vui lòng kiểm tra hộp thư của bạn.',
+    };
   }
 }

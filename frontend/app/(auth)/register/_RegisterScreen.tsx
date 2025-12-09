@@ -28,7 +28,7 @@ const RegisterScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { signInWithGoogle } = useAuth(); // ⬅️ Lấy signInWithGoogle từ AuthContext
-  
+
   // ============================================
   // STATE
   // ============================================
@@ -45,6 +45,7 @@ const RegisterScreen: React.FC = () => {
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [confirmPasswordError, setConfirmPasswordError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   // ============================================
   // HANDLE REGISTER
@@ -122,22 +123,18 @@ const RegisterScreen: React.FC = () => {
       // Gọi API register
       const response = await registerAPI(fullName, email, password);
 
-      if (response.success || response.access_token) {
+      if (response.success || response.message) {
         // Đăng ký thành công
-        console.log('✅ Registration successful:', response.user);
-        
-        // Tự động chuyển sang Login sau 1.5 giây
-        setTimeout(() => {
-          router.push('/(auth)/login');
-        }, 1500);
-        
-        Alert.alert(
-          'Đăng ký thành công!',
-          'Tài khoản của bạn đã được tạo. Chuyển sang đăng nhập...'
-        );
+        console.log('✅ Registration successful:', response);
+
+        // Navigate đến màn hình verify email với email param
+        router.push({
+          pathname: '/(auth)/verify-email',
+          params: { email: email }
+        });
       } else {
-        // Đăng ký thất bại - hiện lỗi ở email field
-        setEmailError(response.message || 'Email này đã được sử dụng');
+        // Đăng ký thất bại - có thể là email đã tồn tại
+        setEmailError('Email này đã được sử dụng');
       }
     } catch (error: any) {
       console.error('❌ Register error:', error);
@@ -166,7 +163,7 @@ const RegisterScreen: React.FC = () => {
    */
   const handleGoogleRegister = async () => {
     setIsGoogleLoading(true);
-    
+
     try {
       console.log('🔐 Starting Google registration...');
 
@@ -175,11 +172,11 @@ const RegisterScreen: React.FC = () => {
 
       if (result.success && result.token) {
         console.log('✅ Google OAuth successful, signing in...');
-        
+
         // Gọi signInWithGoogle với token
         // Backend sẽ tự tạo account nếu chưa tồn tại
         await signInWithGoogle(result.token);
-        
+
         console.log('✅ Google registration complete');
       } else {
         // OAuth failed hoặc user cancelled
@@ -238,7 +235,7 @@ const RegisterScreen: React.FC = () => {
                 start={{ x: 0.5, y: 0.5 }}
                 end={{ x: 0, y: 0 }}
               />
-              
+
               {/* Logo */}
               <Image
                 source={require('@/assets/images/logo.png')}
@@ -466,6 +463,13 @@ const RegisterScreen: React.FC = () => {
             </View>
           </View>
 
+          {/* Success Message */}
+          {successMessage ? (
+            <View style={styles.successContainer}>
+              <Text style={styles.successText}>{successMessage}</Text>
+            </View>
+          ) : null}
+
           {/* Login Link */}
           <View style={styles.loginContainer}>
             <Text style={styles.loginText}>Đã có tài khoản? </Text>
@@ -692,6 +696,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: -SPACING.sm - 2,
     marginBottom: SPACING.sm + 2,
+  },
+  successContainer: {
+    backgroundColor: '#E8F5E9',
+    borderRadius: 12,
+    padding: SPACING.md,
+    marginTop: SPACING.lg,
+    marginHorizontal: SPACING.md,
+  },
+  successText: {
+    fontSize: 14,
+    color: '#2E7D32',
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 20,
     marginLeft: SPACING.md,
     letterSpacing: 0.2,
   },
