@@ -54,6 +54,37 @@ interface DayPlan {
   day: number;
   activities: Activity[];
   day_start_time?: string;
+  startLocationCoordinates?: { lat: number; lng: number };
+}
+
+// Custom itinerary DTO (partial) to support manual routes
+interface CustomPlaceWithRoute {
+  placeId: string;
+  name: string;
+  address?: string;
+  location: { lat: number; lng: number };
+  encoded_polyline?: string | null;
+  travel_duration_minutes?: number | null;
+}
+
+interface CustomDayWithRoutes {
+  dayNumber?: number;
+  day?: number;
+  places: CustomPlaceWithRoute[];
+  startLocationCoordinates?: { lat: number; lng: number };
+}
+
+interface CustomItineraryResponse {
+  route_id?: string;
+  user_id?: string;
+  title?: string;
+  destination?: string;
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN';
+  start_date?: string;
+  end_date?: string;
+  start_location?: { lat: number; lng: number };
+  route_data_json?: any;
+  days?: CustomDayWithRoutes[];
 }
 
 interface ItineraryViewScreenProps {
@@ -61,6 +92,8 @@ interface ItineraryViewScreenProps {
   onClose: () => void;
   routeId: string;
   footerContent?: ReactNode;
+  customRouteData?: CustomItineraryResponse | null; // manual/custom itinerary data
+  isManual?: boolean;
 }
 
 export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
@@ -68,11 +101,15 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   onClose,
   routeId,
   footerContent,
+  customRouteData = null,
+  isManual = false,
 }) => {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
 
-  const [routeDetails, setRouteDetails] = useState<TravelRoute | null>(null);
+  const [routeDetails, setRouteDetails] = useState<TravelRoute | CustomItineraryResponse | null>(
+    customRouteData,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<number>(1);
@@ -86,9 +123,18 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
   const [isEnriching, setIsEnriching] = useState(false);
 
-  // Fetch route details
+  // Sync custom route data (manual)
   useEffect(() => {
-    if (!visible || !routeId) return;
+    if (customRouteData) {
+      setRouteDetails(customRouteData);
+      setIsLoading(false);
+      setError(null);
+    }
+  }, [customRouteData]);
+
+  // Fetch AI route details when not provided externally
+  useEffect(() => {
+    if (!visible || !routeId || customRouteData) return;
 
     const fetchRouteDetails = async () => {
       try {
@@ -112,16 +158,37 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     };
 
     fetchRouteDetails();
-  }, [visible, routeId]);
+  }, [visible, routeId, customRouteData]);
 
-  // Parse route data - with null safety
-  const routeData = routeDetails?.route_data_json as any;
-  const optimizedRoute = routeData?.optimized_route || [];
-  const totalDays = optimizedRoute.length || routeDetails?.duration_days || 1;
+  // Parse route data - with null safety (support manual/custom itinerary structure)
+  const routeData = (routeDetails as any)?.route_data_json || (routeDetails as any) || {};
+  const isManualRoute = isManual || !!customRouteData || Array.isArray(routeData?.days);
+
+  // Normalize optimized_route: prefer existing optimized_route; fallback to days array from custom itinerary
+  const optimizedRoute: DayPlan[] =
+    routeData?.optimized_route ||
+    (Array.isArray(routeData?.days)
+      ? routeData.days.map((d: CustomDayWithRoutes, idx: number) => ({
+          day: d.day ?? d.dayNumber ?? idx + 1,
+          activities: (d.places || []).map((p) => ({
+            name: p.name,
+            location: p.location,
+            google_place_id: (p as any).google_place_id || p.placeId,
+            encoded_polyline: p.encoded_polyline || undefined,
+            travel_duration_minutes:
+              p.travel_duration_minutes != null ? Number(p.travel_duration_minutes) : undefined,
+            estimated_arrival: (p as any).estimated_arrival,
+            estimated_departure: (p as any).estimated_departure,
+          })),
+          day_start_time: (d as any).day_start_time,
+        }))
+      : []);
+
+  const totalDays = optimizedRoute.length || (routeDetails as any)?.duration_days || 1;
 
   // Start location (for start marker)
   const startLocation =
-    routeDetails?.start_location ||
+    (routeDetails as any)?.start_location ||
     routeData?.start_location ||
     routeData?.metadata?.start_location ||
     routeData?.startLocation ||
@@ -131,14 +198,14 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
   // Get title
   const title =
-    routeDetails?.title ||
+    (routeDetails as any)?.title ||
     routeData?.summary?.title ||
     routeData?.metadata?.title ||
-    `Lộ trình ${routeDetails?.destination || ''}`;
+    `Lộ trình ${(routeDetails as any)?.destination || ''}`;
 
   // Get destination
   const destination =
-    routeDetails?.destination ||
+    (routeDetails as any)?.destination ||
     routeData?.destination ||
     routeData?.city ||
     'Điểm đến';
@@ -554,23 +621,14 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           </Text>
                           
                           {/* Time Row */}
-                          <View style={styles.cardRow}>
-                            <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
-                            <Text style={styles.cardTime}>
-                              {formatTime(arrival)}
-                              {duration && ` • ${duration}`}
-                            </Text>
-                          </View>
-
-                          {/* Rating & ECS */}
-                          {rating !== undefined && (
-                            <View style={styles.cardRow}>
-                              <FontAwesome name="star" size={12} color="#FFB800" />
-                              <Text style={styles.cardRating}>
-                                Phù hợp: {rating.toFixed(1)}/10
-                              </Text>
-                            </View>
-                          )}
+                        <View style={styles.cardRow}>
+                          <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
+                          <Text style={styles.cardTime}>
+                            {isManualRoute
+                              ? 'Thời gian tự chọn'
+                              : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
+                          </Text>
+                        </View>
 
                           {/* Loading indicator */}
                           {isEnriching && (

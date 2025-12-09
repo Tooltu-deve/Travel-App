@@ -91,7 +91,7 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
         setLoading(false);
       } else if (placeId) {
         // Nếu chỉ có placeId, fetch từ API
-        loadPlaceDetails(placeId);
+      loadPlaceDetails(placeId);
       }
       // Animate mở bottom sheet
       Animated.spring(translateY, {
