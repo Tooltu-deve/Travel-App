@@ -130,7 +130,7 @@ const HomeScreen: React.FC = () => {
             pointerEvents={isSearchExpanded ? 'none' : 'auto'}
           >
             <Text style={homeStyles.welcomeText}>Welcome !</Text>
-            <Text style={homeStyles.subtitleText}>Trần Minh Thanh</Text>
+            <Text style={homeStyles.subtitleText}>Tooltu</Text>
           </Animated.View>
           <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}> 
             <SearchBar onExpandChange={setIsSearchExpanded} />
@@ -206,7 +206,7 @@ const HomeScreen: React.FC = () => {
         />
 
         <View style={homeStyles.reviewsSection}>
-          <Text style={homeStyles.reviewsTitle}>Đánh giá</Text>
+          <Text style={homeStyles.reviewsTitle}>Có thể bạn sẽ thích</Text>
           <ReviewCard />
         </View>
 
