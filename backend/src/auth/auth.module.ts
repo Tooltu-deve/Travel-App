@@ -9,11 +9,13 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy'; // <-- THÊM MỚI
 import { NotificationsModule } from '../notifications/notifications.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
     UserModule,
     PassportModule,
+    MailModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -33,5 +35,5 @@ import { NotificationsModule } from '../notifications/notifications.module';
   ],
   controllers: [AuthController],
 })
-export class AuthModule {}
+export class AuthModule { }
 
