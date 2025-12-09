@@ -70,7 +70,8 @@ export default function ManualPreviewScreen() {
   const [itinerary, setItinerary] = useState<DayItinerary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [travelMode, setTravelMode] = useState<'driving' | 'bicycling' | 'walking' | 'transit'>('driving');
+  // Store travelMode for each day: { dayNumber: travelMode }
+  const [travelModes, setTravelModes] = useState<Record<number, 'driving' | 'bicycling' | 'walking' | 'transit'>>({});
   const [destinationCoords, setDestinationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [routePolylines, setRoutePolylines] = useState<Array<{ latitude: number; longitude: number }[]>>([]);
   const [startLocationCoords, setStartLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -116,19 +117,24 @@ export default function ManualPreviewScreen() {
     setSessionToken(generateSessionToken());
   }, []); // Empty dependency array - run only once
 
-  // Initialize itinerary with empty days
+  // Initialize itinerary with empty days and default travelMode for each day
   useEffect(() => {
     const days: DayItinerary[] = [];
+    const modes: Record<number, 'driving' | 'bicycling' | 'walking' | 'transit'> = {};
     for (let i = 0; i < durationDays; i++) {
+      const dayNumber = i + 1;
       const dayDate = new Date(startDate);
       dayDate.setDate(startDate.getDate() + i);
       days.push({
-        day: i + 1,
+        day: dayNumber,
         date: dayDate,
         places: [],
       });
+      // Set default travelMode for each day (default: driving)
+      modes[dayNumber] = 'driving';
     }
     setItinerary(days);
+    setTravelModes(modes);
   }, [durationDays, startDate]);
 
   // Format date
@@ -589,7 +595,7 @@ export default function ManualPreviewScreen() {
 
           return {
             dayNumber: day.day,
-            travelMode: travelMode, // Each day has its own travelMode (currently all days use the same selected mode)
+            travelMode: travelModes[day.day] || 'driving', // Get travelMode for this specific day
             startLocation: dayStartLocation,
             places: day.places.map((place) => ({
               placeId: place.placeId,
@@ -831,27 +837,34 @@ export default function ManualPreviewScreen() {
           </ScrollView>
         </View>
 
-        {/* Travel Mode Tabs */}
+        {/* Travel Mode Tabs - Shows travelMode for selected day */}
         <View style={styles.travelModeContainer}>
-          <Text style={styles.travelModeLabel}>Phương tiện di chuyển</Text>
+          <Text style={styles.travelModeLabel}>
+            Phương tiện di chuyển - Ngày {selectedDay}
+          </Text>
           <View style={styles.travelModeTabs}>
             <TouchableOpacity
               style={[
                 styles.travelModeTab,
-                travelMode === 'driving' && styles.travelModeTabActive,
+                travelModes[selectedDay] === 'driving' && styles.travelModeTabActive,
               ]}
-              onPress={() => setTravelMode('driving')}
+              onPress={() => {
+                setTravelModes(prev => ({
+                  ...prev,
+                  [selectedDay]: 'driving',
+                }));
+              }}
               activeOpacity={0.7}
             >
               <FontAwesome
                 name="car"
                 size={18}
-                color={travelMode === 'driving' ? COLORS.textWhite : COLORS.textSecondary}
+                color={travelModes[selectedDay] === 'driving' ? COLORS.textWhite : COLORS.textSecondary}
               />
               <Text
                 style={[
                   styles.travelModeTabText,
-                  travelMode === 'driving' && styles.travelModeTabTextActive,
+                  travelModes[selectedDay] === 'driving' && styles.travelModeTabTextActive,
                 ]}
               >
                 Ô tô
@@ -861,20 +874,25 @@ export default function ManualPreviewScreen() {
             <TouchableOpacity
               style={[
                 styles.travelModeTab,
-                travelMode === 'bicycling' && styles.travelModeTabActive,
+                travelModes[selectedDay] === 'bicycling' && styles.travelModeTabActive,
               ]}
-              onPress={() => setTravelMode('bicycling')}
+              onPress={() => {
+                setTravelModes(prev => ({
+                  ...prev,
+                  [selectedDay]: 'bicycling',
+                }));
+              }}
               activeOpacity={0.7}
             >
               <FontAwesome
                 name="bicycle"
                 size={18}
-                color={travelMode === 'bicycling' ? COLORS.textWhite : COLORS.textSecondary}
+                color={travelModes[selectedDay] === 'bicycling' ? COLORS.textWhite : COLORS.textSecondary}
               />
               <Text
                 style={[
                   styles.travelModeTabText,
-                  travelMode === 'bicycling' && styles.travelModeTabTextActive,
+                  travelModes[selectedDay] === 'bicycling' && styles.travelModeTabTextActive,
                 ]}
               >
                 Xe đạp
@@ -884,20 +902,25 @@ export default function ManualPreviewScreen() {
             <TouchableOpacity
               style={[
                 styles.travelModeTab,
-                travelMode === 'walking' && styles.travelModeTabActive,
+                travelModes[selectedDay] === 'walking' && styles.travelModeTabActive,
               ]}
-              onPress={() => setTravelMode('walking')}
+              onPress={() => {
+                setTravelModes(prev => ({
+                  ...prev,
+                  [selectedDay]: 'walking',
+                }));
+              }}
               activeOpacity={0.7}
             >
               <FontAwesome
                 name="user"
                 size={18}
-                color={travelMode === 'walking' ? COLORS.textWhite : COLORS.textSecondary}
+                color={travelModes[selectedDay] === 'walking' ? COLORS.textWhite : COLORS.textSecondary}
               />
               <Text
                 style={[
                   styles.travelModeTabText,
-                  travelMode === 'walking' && styles.travelModeTabTextActive,
+                  travelModes[selectedDay] === 'walking' && styles.travelModeTabTextActive,
                 ]}
               >
                 Đi bộ
@@ -907,20 +930,25 @@ export default function ManualPreviewScreen() {
             <TouchableOpacity
               style={[
                 styles.travelModeTab,
-                travelMode === 'transit' && styles.travelModeTabActive,
+                travelModes[selectedDay] === 'transit' && styles.travelModeTabActive,
               ]}
-              onPress={() => setTravelMode('transit')}
+              onPress={() => {
+                setTravelModes(prev => ({
+                  ...prev,
+                  [selectedDay]: 'transit',
+                }));
+              }}
               activeOpacity={0.7}
             >
               <FontAwesome
                 name="bus"
                 size={18}
-                color={travelMode === 'transit' ? COLORS.textWhite : COLORS.textSecondary}
+                color={travelModes[selectedDay] === 'transit' ? COLORS.textWhite : COLORS.textSecondary}
               />
               <Text
                 style={[
                   styles.travelModeTabText,
-                  travelMode === 'transit' && styles.travelModeTabTextActive,
+                  travelModes[selectedDay] === 'transit' && styles.travelModeTabTextActive,
                 ]}
               >
                 Công cộng
