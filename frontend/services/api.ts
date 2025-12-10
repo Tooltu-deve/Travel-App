@@ -177,24 +177,30 @@ const makeRequest = async <T>(
     const text = await response.text();
     console.log('📄 Response Text:', text.substring(0, 200));
 
-    if (!response.ok) {
-      console.error('❌ HTTP Error:', response.status, response.statusText);
-    }
-
     // Handle 204 No Content - no response body to parse
     if (response.status === 204) {
       console.log('✅ API Response: 204 No Content');
       return undefined as T;
     }
 
+    // Parse JSON response
+    let data: any;
     try {
-      const data = JSON.parse(text);
+      data = JSON.parse(text);
       console.log('✅ API Response:', data);
-      return data as T;
     } catch (e) {
       console.error('❌ JSON Parse Error. Response was:', text);
       throw new Error('Server returned non-JSON response. Backend might not be running or endpoint is wrong.');
     }
+
+    // Check if response is not ok - throw error with message from server
+    if (!response.ok) {
+      console.error('❌ HTTP Error:', response.status, response.statusText);
+      const errorMessage = data?.message || data?.error?.message || data?.error || `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(errorMessage);
+    }
+
+    return data as T;
   } catch (error) {
     console.error('❌ API Error:', error);
     throw error;
