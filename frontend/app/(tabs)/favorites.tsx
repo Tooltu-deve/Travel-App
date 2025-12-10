@@ -26,12 +26,12 @@ const renderStars = (rating: number | null) => {
     );
   }
   const stars = [];
-  const full = Math.floor(rating);
-  const hasHalf = rating % 1 >= 0.5;
+    const full = Math.floor(rating);
+    const hasHalf = rating % 1 >= 0.5;
   const total = 5;
   // full stars
-  for (let i = 0; i < full; i++) {
-    stars.push(
+    for (let i = 0; i < full; i++) {
+      stars.push(
       <FontAwesome
         key={`s-${i}`}
         name="star"
@@ -39,11 +39,11 @@ const renderStars = (rating: number | null) => {
         color={COLORS.ratingAlt}
         style={{ marginRight: i === total - 1 ? 0 : 4 }}
       />,
-    );
-  }
+      );
+    }
   // half star
-  if (hasHalf) {
-    stars.push(
+    if (hasHalf) {
+      stars.push(
       <FontAwesome
         key="half"
         name="star-half-full"
@@ -51,12 +51,12 @@ const renderStars = (rating: number | null) => {
         color={COLORS.ratingAlt}
         style={{ marginRight: (full === total - 1) ? 0 : 4 }}
       />,
-    );
-  }
+      );
+    }
   // empty stars to reach total
-  const current = stars.length;
+    const current = stars.length;
   for (let i = current; i < total; i++) {
-    stars.push(
+      stars.push(
       <FontAwesome
         key={`e-${i}`}
         name="star-o"
@@ -64,7 +64,7 @@ const renderStars = (rating: number | null) => {
         color={COLORS.textSecondary}
         style={{ marginRight: i === total - 1 ? 0 : 4 }}
       />,
-    );
+      );
   }
   return (
     <View style={styles.ratingRow}>
@@ -74,7 +74,7 @@ const renderStars = (rating: number | null) => {
   );
 };
 
-  const normalizePlace = (p: any) => {
+const normalizePlace = (p: any) => {
   let moods: string[] = [];
   if (Array.isArray(p.moods) && p.moods.length) moods = p.moods;
   else if (p.mood) moods = [p.mood];
@@ -212,23 +212,23 @@ const renderStars = (rating: number | null) => {
           places = list.map(normalizePlace).filter(p => p.name !== 'Không rõ');
         } else {
           console.log('[Favorites] Fetching by mood:', selectedMood);
-          const remote = await getFavoritesByMoodAPI(token, selectedMood);
+        const remote = await getFavoritesByMoodAPI(token, selectedMood);
           console.log('[Favorites] API response:', remote);
-          if (Array.isArray(remote)) {
+        if (Array.isArray(remote)) {
             places = await Promise.all(remote.map(async (p: any) => {
-              let norm = normalizePlace(p);
-              const hasGoogleId = !!norm.googlePlaceId;
-              const possibleId = p.place_id || p.placeId || p._id || p.id || norm.id;
-              if (!hasGoogleId && possibleId) {
-                try {
-                  const detail = await getPlaceByIdAPI(possibleId);
-                  if (detail) {
-                    norm = normalizePlace({ ...detail, ...p });
-                  }
-                } catch (e) {}
-              }
-              return norm;
-            }));
+            let norm = normalizePlace(p);
+            const hasGoogleId = !!norm.googlePlaceId;
+            const possibleId = p.place_id || p.placeId || p._id || p.id || norm.id;
+            if (!hasGoogleId && possibleId) {
+              try {
+                const detail = await getPlaceByIdAPI(possibleId);
+                if (detail) {
+                  norm = normalizePlace({ ...detail, ...p });
+                }
+              } catch (e) {}
+            }
+            return norm;
+          }));
           }
         }
 
@@ -519,7 +519,7 @@ const renderStars = (rating: number | null) => {
                 {/* Content Section - Right Side */}
                 <View style={styles.placeInfo}>
                   <View style={styles.placeHeader}>
-                    <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
+                  <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
                   </View>
                   <View style={styles.placeRow}>
                     <FontAwesome name="map-marker" size={14} color={COLORS.primary} />
@@ -528,19 +528,19 @@ const renderStars = (rating: number | null) => {
 
                   <View style={styles.placeFooter}>
                     <View style={styles.leftCol}>
-                      {renderStars(place.rating)}
-                    </View>
+                    {renderStars(place.rating)}
+                  </View>
                     <View style={styles.moodTags}>
-                      {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
+                    {place.moods && place.moods.slice(0, 3).map((m: string, i: number) => (
                         <View key={i} style={styles.moodTag}>
                           <Text style={styles.moodTagText} numberOfLines={1}>{m}</Text>
                         </View>
-                      ))}
+                    ))}
                       {place.moods && place.moods.length > 3 && <Text style={styles.moreMoodsText}>+{place.moods.length - 3}</Text>}
                     </View>
                   </View>
                 </View>
-              </TouchableOpacity>
+                </TouchableOpacity>
 
               {isEnriching && place.googlePlaceId === selectedPlaceData?.googlePlaceId && (
                 <ActivityIndicator size="small" color={COLORS.primary} style={{ position: 'absolute', bottom: SPACING.md, right: SPACING.md }} />

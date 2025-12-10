@@ -384,8 +384,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     const coords = [
       ...(startLocation ? [toMapCoordinate(startLocation)] : []),
       ...activities
-        .map((a) => a.location || a.place?.location)
-        .filter(Boolean)
+      .map((a) => a.location || a.place?.location)
+      .filter(Boolean)
         .map(toMapCoordinate),
     ].filter(Boolean) as { latitude: number; longitude: number }[];
 
@@ -880,6 +880,66 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         {/* Activities */}
         <View style={styles.activitiesContainer}>
           <View style={styles.activitiesContent}>
+              {/* Start point card (hiển thị trước POI đầu tiên) */}
+              {startLocation && activities.length > 0 && (
+                <View>
+                  <View style={styles.activityCard}>
+                    <LinearGradient
+                      colors={[COLORS.success + '15', 'transparent']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.cardGradientOverlay}
+                    />
+                    <View style={styles.cardNumberBadge}>
+                      <LinearGradient
+                        colors={[COLORS.success, COLORS.gradientSecondary]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.numberBadgeGradient}
+                      >
+                        <Text style={styles.numberBadgeText}>BĐ</Text>
+                      </LinearGradient>
+                    </View>
+                    <View style={styles.cardContent}>
+                      <View style={styles.cardInfo}>
+                        <Text style={styles.cardTitle} numberOfLines={2}>
+                          Điểm bắt đầu
+                        </Text>
+                        <View style={styles.cardRow}>
+                          <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
+                          <Text style={styles.cardTime}>Điểm xuất phát của lộ trình</Text>
+                        </View>
+                      </View>
+                    </View>
+                    {/* Spacer hint để chiều cao tương đương các thẻ POI */}
+                    <View style={styles.tapHint}>
+                      <FontAwesome name="map-pin" size={10} color={COLORS.textSecondary} />
+                      <Text style={styles.tapHintText}>Điểm bắt đầu</Text>
+                    </View>
+                  </View>
+
+                  {/* Travel time from start to first POI (fallback to travel_duration_minutes if start_* missing) */}
+                  {(() => {
+                    const startToFirst =
+                      activities[0]?.start_travel_duration_minutes ??
+                      activities[0]?.travel_duration_minutes ??
+                      null;
+                    if (startToFirst == null) return null;
+                    const rounded = Math.round(startToFirst);
+                    return (
+                      <View style={styles.travelTimeIndicator}>
+                        <View style={styles.travelDashedLine} />
+                        <View style={styles.travelTimebadge}>
+                          <FontAwesome name="car" size={12} color={COLORS.primary} />
+                          <Text style={styles.travelTimeBadgeText}>{rounded}m</Text>
+                        </View>
+                        <View style={styles.travelDashedLine} />
+                      </View>
+                    );
+                  })()}
+                </View>
+              )}
+
             {activities.length === 0 ? (
               <View style={styles.emptyState}>
                 <FontAwesome name="map-o" size={48} color={COLORS.textSecondary} />
@@ -892,17 +952,21 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const departure = activity.estimated_departure;
                 const duration = calculateDuration(arrival, departure);
                 // travel_duration_minutes nằm ở activity trước (đoạn từ activity trước tới activity hiện tại)
-                const travelTime =
+                const travelTimeRaw =
                   index > 0
                     ? activities[index - 1]?.travel_duration_minutes
                     : activity.start_travel_duration_minutes;
+                // Làm tròn thời gian di chuyển thành số nguyên
+                const travelTime = travelTimeRaw != null ? Math.round(travelTimeRaw) : null;
+                const showTravelIndicator =
+                  travelTime != null && (!startLocation ? true : index > 0);
                 const hasPhoto = activity.google_place_id; // Sẽ fetch ảnh khi click
                 const rating = activity.ecs_score;
 
                 return (
                   <View key={`activity-${index}`}>
-                    {/* Travel time indicator */}
-                    {index > 0 && travelTime && (
+                    {/* Travel time indicator - hiển thị từ điểm bắt đầu đến POI đầu tiên hoặc giữa các POI */}
+                    {showTravelIndicator && (
                       <View style={styles.travelTimeIndicator}>
                         <View style={styles.travelDashedLine} />
                         <View style={styles.travelTimebadge}>
