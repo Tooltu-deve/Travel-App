@@ -108,6 +108,17 @@ export class Itinerary {
     required: true,
   })
   route_data_json: any;
+  
+    @Prop({
+      type: [
+        {
+          dayIndex: { type: Number, required: true },
+          travelMode: { type: String, required: true },
+        },
+      ],
+      required: false,
+    })
+    travelModeByDay?: Array<{ dayIndex: number; travelMode: string }>;
 
   @Prop({
     type: String,

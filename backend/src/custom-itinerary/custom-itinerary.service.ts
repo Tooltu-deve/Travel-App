@@ -330,7 +330,7 @@ export class CustomItineraryService {
   private async getWeatherData(lat: number, lng: number): Promise<OpenWeatherResponse> {
     try {
       const url = 'https://api.openweathermap.org/data/3.0/onecall';
-      const params = { lat, lon: lng, appid: this.openWeatherApiKey, units: 'metric', exclude: 'minutely,hourly' };
+      const params = { lat, lon: lng, appid: this.openWeatherApiKey, units: 'metric', exclude: 'minutely,hourly', lang: 'vi' };
       const response = await firstValueFrom(this.httpService.get(url, { params }));
       return response.data;
     } catch (error) {
@@ -342,7 +342,7 @@ export class CustomItineraryService {
   private evaluateSeverity(weatherData: OpenWeatherResponse): WeatherCheckResponseDto {
     if (weatherData.alerts && weatherData.alerts.length > 0) {
       const alert = weatherData.alerts[0];
-      return { severity: 'danger', alert: alert.event || 'Cảnh báo thời tiết nghiêm trọng từ chính phủ' };
+      return { severity: 'Nguy hiểm', alert: alert.event || 'Cảnh báo thời tiết nghiêm trọng từ chính phủ' };
     }
     if (weatherData.daily && weatherData.daily.length > 0) {
       for (const day of weatherData.daily) {
@@ -353,16 +353,16 @@ export class CustomItineraryService {
         if (
           temp.max > 40 || temp.min < 0 || windSpeed > 20 || rain > 100 || weather.main === 'Thunderstorm' || weather.main === 'Snow'
         ) {
-          return { severity: 'danger', alert: `Thời tiết cực đoan: ${weather.description}` };
+          return { severity: 'Nguy hiểm', alert: `Thời tiết cực đoan: ${weather.description}` };
         }
         if (
           temp.max > 35 || temp.min < 5 || windSpeed > 10 || rain > 50
         ) {
-          return { severity: 'warning', alert: 'empty' };
+          return { severity: 'Cảnh báo', alert: 'empty' };
         }
       }
     }
-    return { severity: 'normal', alert: 'empty' };
+    return { severity: 'Bình thường', alert: 'empty' };
   }
 
   /**

@@ -302,6 +302,8 @@ export class PlaceService {
 
     const url = `https://places.googleapis.com/v1/places/${googlePlaceId}`;
     const fieldMask = [
+      'name',
+      'address',
       'rating',
       'editorialSummary',
       'photos',
@@ -309,6 +311,7 @@ export class PlaceService {
       'websiteUri',
       'internationalPhoneNumber',
       'nationalPhoneNumber',
+      'type',
     ].join(',');
 
     try {
