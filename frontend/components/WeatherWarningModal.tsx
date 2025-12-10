@@ -43,17 +43,16 @@ const WeatherWarningModal: React.FC<WeatherWarningModalProps> = ({
   onGoBack,
   onClose,
 }) => {
-  // Không hiển thị modal nếu severity là normal
-  if (severity === 'normal') {
-    return null;
-  }
-
   const isWarning = severity === 'warning';
   const isDanger = severity === 'danger';
+  const isNormal = severity === 'normal';
 
   const getIcon = () => {
     if (isDanger) {
       return 'exclamation-triangle';
+    }
+    if (isNormal) {
+      return 'check-circle';
     }
     return 'exclamation-circle';
   };
@@ -62,12 +61,18 @@ const WeatherWarningModal: React.FC<WeatherWarningModalProps> = ({
     if (isDanger) {
       return '#FF4444';
     }
+    if (isNormal) {
+      return '#4CAF50';
+    }
     return '#FFA500';
   };
 
   const getTitle = () => {
     if (isDanger) {
       return 'Cảnh báo thời tiết nguy hiểm!';
+    }
+    if (isNormal) {
+      return 'Thời tiết thuận lợi!';
     }
     return 'Lưu ý về thời tiết';
   };
@@ -79,12 +84,18 @@ const WeatherWarningModal: React.FC<WeatherWarningModalProps> = ({
     if (isDanger) {
       return `Thời tiết tại ${destination || 'điểm đến'} đang trong tình trạng nguy hiểm. Vui lòng chọn điểm đến hoặc ngày đi khác để đảm bảo an toàn.`;
     }
+    if (isNormal) {
+      return `Thời tiết tại ${destination || 'điểm đến'} trong thời gian bạn dự định đi rất thuận lợi. Hãy tiếp tục tạo lộ trình của bạn!`;
+    }
     return `Thời tiết tại ${destination || 'điểm đến'} có thể không thuận lợi trong thời gian bạn dự định đi. Bạn có muốn tiếp tục tạo lộ trình không?`;
   };
 
   const getGradientColors = (): [string, string] => {
     if (isDanger) {
       return ['#FF6B6B', '#FF4444'];
+    }
+    if (isNormal) {
+      return ['#66BB6A', '#4CAF50'];
     }
     return ['#FFB347', '#FFA500'];
   };
@@ -116,21 +127,31 @@ const WeatherWarningModal: React.FC<WeatherWarningModalProps> = ({
             <Text style={styles.message}>{getMessage()}</Text>
 
             {/* Weather info badge */}
-            <View style={[styles.severityBadge, isDanger ? styles.dangerBadge : styles.warningBadge]}>
+            <View style={[styles.severityBadge, isDanger ? styles.dangerBadge : isNormal ? styles.normalBadge : styles.warningBadge]}>
               <FontAwesome 
-                name={isDanger ? 'warning' : 'cloud'} 
+                name={isDanger ? 'warning' : isNormal ? 'sun-o' : 'cloud'} 
                 size={16} 
-                color={isDanger ? '#FF4444' : '#FFA500'} 
+                color={isDanger ? '#FF4444' : isNormal ? '#4CAF50' : '#FFA500'} 
               />
-              <Text style={[styles.severityText, isDanger ? styles.dangerText : styles.warningText]}>
-                {isDanger ? 'Mức độ: Nguy hiểm' : 'Mức độ: Cảnh báo'}
+              <Text style={[styles.severityText, isDanger ? styles.dangerText : isNormal ? styles.normalText : styles.warningText]}>
+                {isDanger ? 'Mức độ: Nguy hiểm' : isNormal ? 'Mức độ: Tốt' : 'Mức độ: Cảnh báo'}
               </Text>
             </View>
           </View>
 
           {/* Buttons */}
           <View style={styles.buttonContainer}>
-            {isWarning ? (
+            {isNormal ? (
+              // Normal: Chỉ hiển thị 1 nút - Xác nhận để tiếp tục
+              <TouchableOpacity
+                style={[styles.button, styles.successButton, styles.fullWidthButton]}
+                onPress={onContinue}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.successButtonText}>Xác nhận</Text>
+                <FontAwesome name="arrow-right" size={16} color="#FFFFFF" />
+              </TouchableOpacity>
+            ) : isWarning ? (
               // Warning: Hiển thị 2 nút - Quay lại và Tiếp tục
               <>
                 <TouchableOpacity
@@ -235,6 +256,9 @@ const styles = StyleSheet.create({
   dangerBadge: {
     backgroundColor: 'rgba(255, 68, 68, 0.1)',
   },
+  normalBadge: {
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+  },
   severityText: {
     fontSize: 13,
     fontWeight: '600',
@@ -244,6 +268,9 @@ const styles = StyleSheet.create({
   },
   dangerText: {
     color: '#FF4444',
+  },
+  normalText: {
+    color: '#4CAF50',
   },
   buttonContainer: {
     flexDirection: 'row',
@@ -275,6 +302,9 @@ const styles = StyleSheet.create({
   dangerButton: {
     backgroundColor: '#FF4444',
   },
+  successButton: {
+    backgroundColor: '#4CAF50',
+  },
   primaryButtonText: {
     fontSize: 15,
     fontWeight: '600',
@@ -286,6 +316,11 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   dangerButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  successButtonText: {
     fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
