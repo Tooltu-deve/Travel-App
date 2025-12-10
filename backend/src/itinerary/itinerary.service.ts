@@ -1141,6 +1141,7 @@ export class ItineraryService {
   private async fetchDirectionsInfo(
     origin: { lat: number; lng: number },
     destination: { lat: number; lng: number },
+    mode: string = 'driving',
   ): Promise<{ encoded_polyline: string | null; travel_duration_minutes: number | null }> {
     if (!this.googleDirectionsApiKey) {
       return { encoded_polyline: null, travel_duration_minutes: null };
@@ -1148,7 +1149,8 @@ export class ItineraryService {
 
     const originStr = `${origin.lat},${origin.lng}`;
     const destStr = `${destination.lat},${destination.lng}`;
-    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=driving&key=${this.googleDirectionsApiKey}`;
+    const travelMode = mode || 'driving';
+    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=${travelMode}&key=${this.googleDirectionsApiKey}`;
 
     try {
       const response = await firstValueFrom(
@@ -1181,12 +1183,15 @@ export class ItineraryService {
   private async enrichRouteWithDirections(
     optimizedRoute: any,
     currentLocation: { lat: number; lng: number },
+    travelMode?: string,
   ): Promise<any> {
     const enrichedRoute: any[] = [];
 
     for (const dayData of optimizedRoute.optimized_route || []) {
       const enrichedActivities: any[] = [];
       let previousLocation = currentLocation;
+      const dayTravelMode =
+        dayData.travel_mode || travelMode || optimizedRoute.travel_mode || 'driving';
 
       for (const poi of dayData.activities || []) {
         const poiLocation = poi.location;
@@ -1198,6 +1203,7 @@ export class ItineraryService {
         const directionsInfo = await this.fetchDirectionsInfo(
           previousLocation,
           { lat: poiLocation.lat, lng: poiLocation.lng },
+          dayTravelMode,
         );
 
         const enrichedPoi = {
@@ -1345,6 +1351,7 @@ export class ItineraryService {
     const enrichedRoute = await this.enrichRouteWithDirections(
       optimizedRoute,
       currentLocation,
+      generateDto.travel_mode,
     );
 
     const routeId = this.generateRouteId();
