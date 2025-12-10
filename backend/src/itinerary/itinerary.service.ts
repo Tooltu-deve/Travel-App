@@ -1477,7 +1477,7 @@ export class ItineraryService {
     routeDto: RouteDto,
   ): Promise<any> {
     try {
-      const { route_id, route_data_json } = routeDto;
+      const { route_id, route_data_json, start_location } = routeDto;
       const optimizedRoute = route_data_json.optimized_route;
 
       console.log(`🔧 Processing custom route for user: ${userId}`);
@@ -1488,7 +1488,10 @@ export class ItineraryService {
       await this.enrichAllNewPOIs(optimizedRoute);
 
       // B3: Call Directions API cho TẤT CẢ POI, truyền travel_mode từng day
-      const updatedRoute = await this.calculateDirectionsForAllDays(optimizedRoute);
+      const updatedRoute = await this.calculateDirectionsForAllDays(
+        optimizedRoute,
+        (routeDto as any).start_location || (route_data_json as any)?.start_location || null,
+      );
 
       // B4: Lưu vào DB và trả về
       const savedRoute = await this.saveOrUpdateRoute({
@@ -1502,6 +1505,7 @@ export class ItineraryService {
           destination: routeDto.destination,
           duration_days: routeDto.duration_days,
           start_datetime: routeDto.start_datetime,
+          start_location: start_location || (route_data_json as any)?.start_location || null,
           status: routeDto.status || 'DRAFT',
           alerts: routeDto.alerts,
       });
@@ -1543,6 +1547,7 @@ export class ItineraryService {
    */
   private async calculateDirectionsForAllDays(
     days: DayDto[],
+    startLocation?: { lat: number; lng: number } | null,
   ): Promise<any[]> {
     const result: any[] = [];
 
@@ -1554,6 +1559,7 @@ export class ItineraryService {
       const updatedActivities = await this.calculateDirectionsForDay(
         day.activities,
         day.travel_mode,
+        startLocation,
       );
       result.push({
         day: day.day,
@@ -1631,6 +1637,7 @@ export class ItineraryService {
   private async calculateDirectionsForDay(
     activities: ActivityDto[],
     travelMode: string,
+    startLocation?: { lat: number; lng: number } | null,
   ): Promise<any[]> {
     const result: any[] = [];
 
@@ -1647,6 +1654,21 @@ export class ItineraryService {
         estimated_arrival: current.estimated_arrival,
         estimated_departure: current.estimated_departure,
       };
+
+      // Nếu có startLocation và đây là activity đầu tiên, tính polyline từ start đến activity đầu tiên
+      if (i === 0 && startLocation?.lat !== undefined && startLocation?.lng !== undefined) {
+        const directionsFromStart = await this.getDirections(
+          `${startLocation.lat},${startLocation.lng}`,
+          `${current.location.lat},${current.location.lng}`,
+          travelMode,
+        );
+        const startRoute = directionsFromStart.routes[0];
+        const startLeg = startRoute.legs[0];
+        activityData.start_encoded_polyline = startRoute.overview_polyline.points;
+        activityData.start_travel_duration_minutes = Math.round(
+          startLeg.duration.value / 60,
+        );
+      }
 
       // Tính Directions đến POI tiếp theo
       if (i < activities.length - 1) {
@@ -1722,6 +1744,7 @@ export class ItineraryService {
     destination?: string;
     duration_days?: number;
     start_datetime?: string;
+    start_location?: { lat: number; lng: number } | null;
     status?: string;
     alerts?: any[];
   }): Promise<ItineraryDocument> {
@@ -1733,6 +1756,7 @@ export class ItineraryService {
       destination,
       duration_days,
       start_datetime,
+      start_location,
       status,
       alerts,
     } = data;
@@ -1750,6 +1774,7 @@ export class ItineraryService {
         if (duration_days) existing.duration_days = duration_days;
         if (start_datetime)
           existing.start_datetime = new Date(start_datetime);
+        if (start_location) existing.start_location = start_location as any;
         if (status) existing.status = status as any;
         if (alerts) (existing as any).alerts = alerts;
 
@@ -1768,6 +1793,7 @@ export class ItineraryService {
       destination: destination || null,
       duration_days: duration_days || null,
       start_datetime: start_datetime ? new Date(start_datetime) : null,
+      start_location: start_location || null,
       status: status || 'DRAFT',
       alerts: alerts || [],
     });

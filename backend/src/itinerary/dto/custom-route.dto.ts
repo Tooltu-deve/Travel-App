@@ -144,6 +144,11 @@ export class RouteDto {
   start_datetime?: string;
 
   @IsOptional()
+  @ValidateNested()
+  @Type(() => LocationDto)
+  start_location?: LocationDto;
+
+  @IsOptional()
   @IsString()
   status?: string;
 
