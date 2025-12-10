@@ -16,6 +16,8 @@ import os
 from typing import Dict, List, TypedDict, Annotated, Optional
 from datetime import datetime, timedelta
 import json
+import re
+import requests
 
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
@@ -32,6 +34,81 @@ from tools import (
 )
 
 load_dotenv()
+
+# =====================================
+# GEOCODING & LOCATION UTILITIES
+# =====================================
+
+def geocode_location(location_name: str, destination: Optional[str] = None) -> Optional[Dict]:
+    """
+    Geocode a location name to coordinates using Google Geocoding API
+    
+    Args:
+        location_name: Name like "Quận 1", "Sân bay Nội Bài", "Khách sạn ABC"
+        destination: Destination city for context (e.g., "Hà Nội", "Đà Nẵng")
+    
+    Returns:
+        Dict with 'lat', 'lng', 'formatted_address' or None if failed
+    """
+    if not location_name or not location_name.strip():
+        return None
+    
+    google_api_key = os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_GEOCODING_API_KEY")
+    if not google_api_key:
+        print(f"   ⚠️ No Google API key for geocoding")
+        return None
+    
+    try:
+        # Add destination context if available
+        query = location_name
+        if destination and destination not in location_name:
+            query = f"{location_name}, {destination}, Vietnam"
+        else:
+            query = f"{location_name}, Vietnam"
+        
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "address": query,
+            "key": google_api_key
+        }
+        
+        response = requests.get(url, params=params, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("results") and len(data["results"]) > 0:
+                result = data["results"][0]
+                location = result.get("geometry", {}).get("location", {})
+                formatted_address = result.get("formatted_address", "")
+                
+                if location.get("lat") and location.get("lng"):
+                    return {
+                        "lat": location.get("lat"),
+                        "lng": location.get("lng"),
+                        "formatted_address": formatted_address
+                    }
+        
+        print(f"   ⚠️ Geocoding failed for '{location_name}': {data.get('status', 'Unknown error')}")
+        return None
+    except Exception as e:
+        print(f"   ⚠️ Geocoding error for '{location_name}': {e}")
+        return None
+
+# Default coordinates for Vietnamese cities
+DEFAULT_CITY_COORDINATES = {
+    "hà nội": {"lat": 21.0285, "lng": 105.8542},
+    "tp.hcm": {"lat": 10.7769, "lng": 106.6963},
+    "thành phố hồ chí minh": {"lat": 10.7769, "lng": 106.6963},
+    "sài gòn": {"lat": 10.7769, "lng": 106.6963},
+    "đà nẵng": {"lat": 16.0544, "lng": 108.2022},
+    "đà lạt": {"lat": 11.9404, "lng": 108.4429},
+    "nha trang": {"lat": 12.2388, "lng": 109.1967},
+    "phú quốc": {"lat": 10.3000, "lng": 104.0500},
+    "hội an": {"lat": 15.8801, "lng": 108.3167},
+    "huế": {"lat": 16.4637, "lng": 107.5909},
+    "vũng tàu": {"lat": 10.3456, "lng": 107.0657},
+    "sapa": {"lat": 22.3402, "lng": 103.8343},
+    "hạ long": {"lat": 20.9517, "lng": 107.0423},
+}
 
 # =====================================
 # MOOD MAPPING FOR ECS SCORING
@@ -100,8 +177,11 @@ class UserPreferences(BaseModel):
     budget_range: Optional[str] = None  # "budget", "mid-range", "luxury"
     interests: List[str] = []           # ["history", "food", "nature", "shopping"]
     mobility: Optional[str] = "normal"  # "limited", "normal", "high"
-    duration: Optional[str] = None      # "half_day", "full_day", "2_days", "3_days"
-    start_location: Optional[str] = None # "Hà Nội", "Quận 1", hotel address
+    duration: Optional[str] = None      # "half_day", "full_day", "2_days", "3_days", "4_days", "5_days", "6_days", "7_days"
+    destination: Optional[str] = None   # Điểm đến: "Đà Nẵng", "Phú Quốc", "Đà Lạt"
+    departure_location: Optional[str] = None  # Điểm xuất phát text: "Sân bay Nội Bài", "Khách sạn ABC", "Quận 1"
+    departure_coordinates: Optional[Dict] = None  # Geocoded coordinates: {"lat": 10.7769, "lng": 106.6963}
+    start_location: Optional[str] = None # DEPRECATED: Use destination instead. Kept for backward compatibility
     special_requests: List[str] = []     # ["vegetarian", "wheelchair_accessible"]
     user_mood: Optional[str] = None     # Mood for ECS scoring (mapped from travel_style + group_type)
 
@@ -348,8 +428,12 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     # Determine what information we're still missing
     missing_info = []
-    if not preferences.start_location:
+    # Use destination field, fallback to start_location for backward compatibility
+    current_destination = preferences.destination or preferences.start_location
+    if not current_destination:
         missing_info.append("destination")
+    if not preferences.departure_location:
+        missing_info.append("departure_location")
     if not preferences.travel_style:
         missing_info.append("travel_style")
     if not preferences.group_type:
@@ -368,7 +452,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     user_text = last_message.lower()
     
     # Debug: Track destination preservation
-    print(f"   📍 STATE INPUT - start_location: {preferences.start_location}")
+    print(f"   📍 STATE INPUT - destination: {preferences.destination}, start_location: {preferences.start_location}, departure: {preferences.departure_location}")
     
     # CRITICAL: Detect confirmation responses (user answering "yes" to our question)
     # Only consider as confirmation if:
@@ -386,8 +470,9 @@ def profile_collector_node(state: TravelState) -> TravelState:
     )
     
     # If user is just confirming and we already have destination, auto-fill missing info
-    if is_confirmation and updated_preferences.start_location:
-        print(f"   ✅ User confirmed (destination already set: {updated_preferences.start_location}) → Auto-filling missing info")
+    current_dest = updated_preferences.destination or updated_preferences.start_location
+    if is_confirmation and current_dest:
+        print(f"   ✅ User confirmed (destination already set: {current_dest}) → Auto-filling missing info")
         
         # Auto-fill defaults for quick planning
         if not updated_preferences.travel_style:
@@ -422,17 +507,63 @@ def profile_collector_node(state: TravelState) -> TravelState:
     }
     
     destination_found_in_message = False
-    for destination, keywords in destination_keywords.items():
+    for dest_name, keywords in destination_keywords.items():
         if any(keyword in user_text for keyword in keywords):
-            updated_preferences.start_location = destination
+            updated_preferences.destination = dest_name
+            updated_preferences.start_location = dest_name  # Backward compatibility
             destination_found_in_message = True
-            print(f"   ✅ Detected NEW destination in message: {destination}")
+            print(f"   ✅ Detected NEW destination in message: {dest_name}")
             break
     
     # If no destination in current message, preserve existing one from state
-    if not destination_found_in_message and preferences.start_location:
-        updated_preferences.start_location = preferences.start_location
-        print(f"   🔄 PRESERVED destination from state: {preferences.start_location}")
+    if not destination_found_in_message:
+        existing_dest = preferences.destination or preferences.start_location
+        if existing_dest:
+            updated_preferences.destination = existing_dest
+            updated_preferences.start_location = existing_dest
+            print(f"   🔄 PRESERVED destination from state: {existing_dest}")
+    
+    # Departure location detection (điểm xuất phát)
+    # Look for patterns like "từ Hà Nội", "xuất phát từ", "ở Quận 1", "khách sạn ABC"
+    departure_patterns = [
+        r'từ\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "từ Hà Nội", "từ Quận 1"
+        r'xuất phát\s+(?:từ\s+)?([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "xuất phát từ..."
+        r'(?:đang\s+)?ở\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "đang ở Quận 1"
+        r'khách sạn\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "khách sạn ABC"
+        r'sân bay\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "sân bay Nội Bài"
+    ]
+    
+    for pattern in departure_patterns:
+        departure_match = re.search(pattern, user_text)
+        if departure_match:
+            departure = departure_match.group(1).strip()
+            # Make sure it's not the same as destination
+            if departure and departure != updated_preferences.destination:
+                updated_preferences.departure_location = departure
+                print(f"   ✅ Detected departure location: {departure}")
+                
+                # Geocode the departure location
+                geocoded = geocode_location(departure, updated_preferences.destination)
+                if geocoded:
+                    updated_preferences.departure_coordinates = geocoded
+                    print(f"   📍 Geocoded to: {geocoded['lat']}, {geocoded['lng']}")
+                else:
+                    # Try to use default city coordinates if geocoding failed
+                    departure_lower = departure.lower()
+                    for city, coords in DEFAULT_CITY_COORDINATES.items():
+                        if city in departure_lower:
+                            updated_preferences.departure_coordinates = coords
+                            print(f"   📍 Using default coordinates for {city}: {coords}")
+                            break
+                break
+    
+    # Preserve existing departure_location if not found in message
+    if not updated_preferences.departure_location and preferences.departure_location:
+        updated_preferences.departure_location = preferences.departure_location
+        # Also preserve geocoded coordinates
+        if preferences.departure_coordinates:
+            updated_preferences.departure_coordinates = preferences.departure_coordinates
+        print(f"   🔄 PRESERVED departure_location from state: {preferences.departure_location}")
     
     # Travel style detection
     if any(word in user_text for word in ["chill", "nghỉ dưỡng", "thư giãn", "yên tĩnh"]):
@@ -450,7 +581,6 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     # Group type detection
     # Detect based on number of people first
-    import re
     people_match = re.search(r'(\d+)\s*(người|people)', user_text)
     if people_match:
         num_people = int(people_match.group(1))
@@ -476,7 +606,6 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.group_type = "friends"
         
     # Budget detection - parse số tiền hoặc keyword
-    import re
     budget_amount = None
     
     # Try to extract budget amount (in million VND)
@@ -523,19 +652,43 @@ def profile_collector_node(state: TravelState) -> TravelState:
         if not updated_preferences.budget_range:
             updated_preferences.budget_range = "mid-range"
         
-    # Duration detection
-    if any(word in user_text for word in ["nửa ngày", "sáng", "chiều"]):
+    # Duration detection - support 1-7+ days with regex
+    # Try regex pattern first for flexible number detection (e.g., "4 ngày", "5 ngày 4 đêm")
+    duration_match = re.search(r'(\d+)\s*ngày', user_text)
+    if duration_match:
+        num_days = int(duration_match.group(1))
+        if num_days == 1:
+            updated_preferences.duration = "full_day"
+        elif num_days >= 2 and num_days <= 7:
+            updated_preferences.duration = f"{num_days}_days"
+        elif num_days > 7:
+            updated_preferences.duration = "7_days"  # Cap at 7 days
+            print(f"   ⚠️ Duration capped at 7 days (user requested {num_days})")
+        print(f"   ✅ Detected duration from regex: {num_days} ngày → {updated_preferences.duration}")
+    # Fallback to keyword detection
+    elif any(word in user_text for word in ["nửa ngày", "buổi sáng", "buổi chiều"]):
         updated_preferences.duration = "half_day"
-    elif any(word in user_text for word in ["một ngày", "cả ngày"]):
+    elif any(word in user_text for word in ["một ngày", "cả ngày", "1 ngày"]):
         updated_preferences.duration = "full_day"
-    elif any(word in user_text for word in ["2 ngày", "hai ngày"]):
+    elif any(word in user_text for word in ["hai ngày"]):
         updated_preferences.duration = "2_days"
-    elif any(word in user_text for word in ["3 ngày", "ba ngày"]):
+    elif any(word in user_text for word in ["ba ngày"]):
         updated_preferences.duration = "3_days"
+    elif any(word in user_text for word in ["bốn ngày"]):
+        updated_preferences.duration = "4_days"
+    elif any(word in user_text for word in ["năm ngày"]):
+        updated_preferences.duration = "5_days"
+    elif any(word in user_text for word in ["sáu ngày"]):
+        updated_preferences.duration = "6_days"
+    elif any(word in user_text for word in ["bảy ngày", "tuần", "1 tuần"]):
+        updated_preferences.duration = "7_days"
     
     # Determine next stage
+    # Use destination field, fallback to start_location for backward compatibility
+    has_destination = updated_preferences.destination or updated_preferences.start_location
     is_info_complete = all([
-        updated_preferences.start_location,  # MUST have destination!
+        has_destination,  # MUST have destination!
+        updated_preferences.departure_location,  # MUST have departure location for route calculation!
         updated_preferences.travel_style,
         updated_preferences.group_type, 
         updated_preferences.budget_range,
@@ -543,7 +696,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     ])
     
     # If user confirmed with complete info, go straight to planning
-    if is_confirmation and updated_preferences.start_location and is_info_complete:
+    if is_confirmation and has_destination and is_info_complete:
         print(f"   🚀 User confirmed with complete info → Going to planning")
         
         return {
@@ -554,8 +707,10 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     # NOW call LLM with UPDATED preferences to generate natural response
     missing_fields = []
-    if not updated_preferences.start_location:
-        missing_fields.append("địa điểm")
+    if not has_destination:
+        missing_fields.append("điểm đến (bạn muốn đi đâu?)")
+    if not updated_preferences.departure_location:
+        missing_fields.append("điểm xuất phát (bạn đang ở đâu?)")
     if not updated_preferences.travel_style:
         missing_fields.append("phong cách du lịch")
     if not updated_preferences.group_type:
@@ -563,7 +718,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     if not updated_preferences.budget_range:
         missing_fields.append("ngân sách")
     if not updated_preferences.duration:
-        missing_fields.append("thời gian")
+        missing_fields.append("thời gian (mấy ngày?)")
     
     missing_info = ", ".join(missing_fields) if missing_fields else "Đã đủ"
     
@@ -571,7 +726,8 @@ def profile_collector_node(state: TravelState) -> TravelState:
     Bạn là một AI travel assistant thông minh. Nhiệm vụ của bạn là thu thập thông tin về sở thích du lịch của khách hàng một cách tự nhiên.
     
     Thông tin hiện tại về khách hàng (ĐÃ CẬP NHẬT):
-    - Địa điểm: {updated_preferences.start_location or "Chưa biết"}
+    - Điểm đến: {updated_preferences.destination or updated_preferences.start_location or "Chưa biết"}
+    - Điểm xuất phát: {updated_preferences.departure_location or "Chưa biết"}
     - Phong cách du lịch: {updated_preferences.travel_style or "Chưa biết"}
     - Nhóm đi: {updated_preferences.group_type or "Chưa biết"}  
     - Ngân sách: {updated_preferences.budget_range or "Chưa biết"}
@@ -584,6 +740,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ thông tin → Nói sẽ tạo lộ trình
     - Nếu khách mới bắt đầu conversation hoặc còn thiếu thông tin → HỎI thông tin còn thiếu
     - Thông tin còn thiếu: {missing_info}
+    - NẾU THIẾU ĐIỂM XUẤT PHÁT → Hỏi: "Bạn đang ở đâu hoặc sẽ xuất phát từ đâu? (ví dụ: sân bay, khách sạn, quận/huyện...)"
     
     Hãy:
     1. Xác nhận thông tin khách vừa cung cấp (nếu có)
@@ -600,7 +757,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     next_stage = "planning" if is_info_complete else "profiling"
     
-    print(f"   📍 STATE OUTPUT - start_location: {updated_preferences.start_location}")
+    print(f"   📍 STATE OUTPUT - destination: {updated_preferences.destination}, departure: {updated_preferences.departure_location}")
     print(f"   ℹ️  Info complete: {is_info_complete}, next stage: {next_stage}")
     
     return {
@@ -627,11 +784,26 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
     
     print(f"   → Mapped mood: {user_mood}")
     
-    # Get destination (location filter)
-    destination = preferences.start_location or "Hà Nội"  # Default to Hanoi if not specified
-    print(f"   → Searching for places in: {destination}")
+    # Get destination (location filter) - use destination field, fallback to start_location
+    destination = preferences.destination or preferences.start_location or "Hà Nội"
+    departure = preferences.departure_location or destination  # Default to destination if not set
+    print(f"   → Destination: {destination}, Departure: {departure}")
     
     # Search for places based on preferences WITH location filter
+    # Parse duration to days FIRST - support up to 7 days (needed for POI calculation)
+    duration_map = {
+        "half_day": 1,
+        "full_day": 1,
+        "2_days": 2,
+        "3_days": 3,
+        "4_days": 4,
+        "5_days": 5,
+        "6_days": 6,
+        "7_days": 7
+    }
+    duration_days = duration_map.get(preferences.duration, 1)
+    print(f"   → Duration: {preferences.duration} → {duration_days} days")
+    
     search_queries = []
     
     if preferences.travel_style == "cultural":
@@ -645,6 +817,11 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
     else:
         search_queries = ["địa điểm tham quan", "quán ăn", "công viên"]
     
+    # Calculate how many places to fetch based on duration (minimum 3 per day)
+    min_places_needed = duration_days * 3
+    places_per_query = max(15, min_places_needed // len(search_queries) + 5)
+    print(f"   → Fetching at least {min_places_needed} places ({places_per_query} per query) for {duration_days} days")
+    
     # Collect places from multiple searches with location filter
     all_places = []
     for query in search_queries:
@@ -652,11 +829,11 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
         places = search_places.invoke({
             "query": query, 
             "location_filter": destination,
-            "limit": 10
+            "limit": places_per_query
         })
-        all_places.extend(places[:5])  # Take top 5 from each search
+        all_places.extend(places[:min(10, len(places))])  # Take more places to ensure minimum 3 per day
     
-    print(f"   → Found {len(all_places)} places before deduplication")
+    print(f"   → Found {len(all_places)} places before deduplication (need at least {min_places_needed})")
     
     # Remove duplicates
     seen_ids = set()
@@ -676,15 +853,6 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
             "messages": state["messages"] + [AIMessage(content="❌ Xin lỗi, không tìm thấy địa điểm phù hợp. Vui lòng thử lại với sở thích khác.")]
         }
     
-    # Parse duration to days
-    duration_map = {
-        "half_day": 1,
-        "full_day": 1,
-        "2_days": 2,
-        "3_days": 3
-    }
-    duration_days = duration_map.get(preferences.duration, 1)
-    
     # Get destination center (use first place's location as reference point)
     # This is used by AI Optimizer to filter POIs within radius
     destination_center = {"lat": 21.0285, "lng": 105.8542}  # Default to Hanoi
@@ -697,9 +865,18 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
             }
             print(f"   → Using destination center from first place: {destination_center}")
     
-    # Get user's current location (for calculating route from current position to first stop)
+    # Get user's current location (departure point for route calculation)
+    # Priority: departure_coordinates > user_location > destination_center > default
     current_location = {"lat": 21.0285, "lng": 105.8542}  # Default to Hanoi
-    if state.get("user_location"):
+    
+    # Use geocoded departure coordinates if available
+    if preferences.departure_coordinates:
+        current_location = {
+            "lat": preferences.departure_coordinates.get("lat", 21.0285),
+            "lng": preferences.departure_coordinates.get("lng", 105.8542)
+        }
+        print(f"   → Using departure coordinates as start point: {current_location}")
+    elif state.get("user_location"):
         # Parse user_location if provided (format: "lat,lng" or location name)
         try:
             parts = state["user_location"].split(",")
@@ -746,11 +923,16 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
             })
     else:
         # Convert optimizer result to itinerary format
+        # Get Google API key for directions
+        google_api_key = os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_DIRECTIONS_API_KEY")
+        
         itinerary = []
         for day_data in optimized_route:
             day_num = day_data.get("day", 1)
-            for activity in day_data.get("activities", []):
-                itinerary.append({
+            day_activities = day_data.get("activities", [])
+            
+            for idx, activity in enumerate(day_activities):
+                activity_item = {
                     "day": day_num,
                     "time": activity.get("estimated_arrival", "09:00").split("T")[1][:5] if "T" in activity.get("estimated_arrival", "") else "09:00",
                     "activity": "Tham quan",
@@ -758,8 +940,42 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
                     "duration_minutes": activity.get("visit_duration_minutes", 90),
                     "estimated_arrival": activity.get("estimated_arrival"),
                     "estimated_departure": activity.get("estimated_departure"),
-                    "ecs_score": activity.get("ecs_score")
-                })
+                    "ecs_score": activity.get("ecs_score"),
+                    "google_place_id": activity.get("google_place_id"),
+                }
+                
+                # Add encoded polyline for travel between this activity and the next one
+                if idx < len(day_activities) - 1 and google_api_key:
+                    next_activity = day_activities[idx + 1]
+                    try:
+                        current_loc = activity.get("location", {})
+                        next_loc = next_activity.get("location", {})
+                        
+                        if current_loc and next_loc:
+                            lat1 = current_loc.get("lat") if isinstance(current_loc, dict) else (current_loc.get("coordinates", [None, None])[1] if "coordinates" in current_loc else None)
+                            lng1 = current_loc.get("lng") if isinstance(current_loc, dict) else (current_loc.get("coordinates", [None, None])[0] if "coordinates" in current_loc else None)
+                            lat2 = next_loc.get("lat") if isinstance(next_loc, dict) else (next_loc.get("coordinates", [None, None])[1] if "coordinates" in next_loc else None)
+                            lng2 = next_loc.get("lng") if isinstance(next_loc, dict) else (next_loc.get("coordinates", [None, None])[0] if "coordinates" in next_loc else None)
+                            
+                            if all([lat1, lng1, lat2, lng2]):
+                                # Call Google Directions API
+                                directions_url = f"https://maps.googleapis.com/maps/api/directions/json?origin={lat1},{lng1}&destination={lat2},{lng2}&mode=driving&key={google_api_key}"
+                                try:
+                                    resp = requests.get(directions_url, timeout=5)
+                                    if resp.status_code == 200:
+                                        data = resp.json()
+                                        if data.get("routes"):
+                                            polyline = data["routes"][0].get("overview_polyline", {}).get("points")
+                                            duration = data["routes"][0].get("legs", [{}])[0].get("duration", {}).get("value", 0)
+                                            if polyline:
+                                                activity_item["encoded_polyline"] = polyline
+                                                activity_item["travel_duration_minutes"] = duration // 60 if duration > 0 else 0
+                                except Exception as e:
+                                    print(f"   ⚠️ Could not get directions: {e}")
+                    except Exception as e:
+                        print(f"   ⚠️ Error processing polyline for activity: {e}")
+                
+                itinerary.append(activity_item)
     
     # Generate explanation
     total_places = len(itinerary)
@@ -767,7 +983,8 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
     
     explanation = f"""
     🎯 **Lộ trình được tối ưu hóa bởi AI dựa trên:**
-    - 📍 Địa điểm: {destination}
+    - 📍 Điểm đến: {destination}
+    - 🚀 Xuất phát từ: {departure}
     - 🎨 Phong cách: {preferences.travel_style} → Mood: {user_mood}
     - 👥 Nhóm: {preferences.group_type}
     - 💰 Ngân sách: {preferences.budget_range}
@@ -796,10 +1013,12 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
     
     explanation += "\n\n💡 Lộ trình này đã được kiểm tra và tối ưu hóa. Tiếp theo tôi sẽ kiểm tra thời tiết và tính chi phí!"
     
+    # Store departure_location in state for route calculation later
     return {
         **state,
         "current_itinerary": itinerary,
         "user_preferences": preferences,  # Update with mood
+        "user_location": departure,  # Store departure for route calculation
         "optimization_applied": True,  # Mark as optimized
         "session_stage": "optimizing",
         "itinerary_status": "DRAFT",  # New itinerary starts as DRAFT
@@ -1132,6 +1351,17 @@ def itinerary_modifier_node(state: TravelState) -> TravelState:
         
         # REMOVE action
         elif any(word in user_text for word in ["bỏ", "xóa", "xoá", "remove", "loại"]):
+            # Check if itinerary is CONFIRMED - if so, cannot modify
+            itinerary_status = state.get("itinerary_status", "DRAFT")
+            if itinerary_status == "CONFIRMED":
+                response_msg = "❌ Lộ trình đã được xác nhận (CONFIRMED). Bạn không thể xóa địa điểm khỏi lộ trình đã xác nhận.\n\n💡 Nếu muốn chỉnh sửa, bạn cần tạo lộ trình mới."
+                print(f"   ⛔ Cannot remove: itinerary is {itinerary_status}")
+                return {
+                    **state,
+                    "messages": state["messages"] + [AIMessage(content=response_msg)],
+                    "session_stage": "profiling"  # Keep current stage, don't proceed to planning
+                }
+            
             # Extract place name - simple approach: remove action keywords and get the main text
             place_query = user_text
             remove_words = ["bỏ", "xóa", "remove", "loại", "ra", "khỏi", "lộ trình", "itinerary", "đi", "muốn", "tôi"]
@@ -1146,20 +1376,62 @@ def itinerary_modifier_node(state: TravelState) -> TravelState:
             best_score = 0
             query_words = set([w.lower() for w in place_query.split() if len(w) >= 2])
             
+            # Check for exact matches first (to handle ambiguous cases)
+            exact_matches = []
+            partial_matches = []  # Places that contain the query words
+            
             for item in current_itinerary:
                 place_name = item.get("place", {}).get("name", "")
-                place_words = set([w.lower() for w in place_name.split() if len(w) >= 2])
+                place_name_lower = place_name.lower()
                 
-                # Calculate word overlap score
-                common_words = query_words.intersection(place_words)
-                if common_words:
-                    score = len(common_words) / max(len(query_words), 1)
-                    if score > best_score:
-                        best_score = score
-                        best_match = item
+                # Exact match (100%)
+                if place_name_lower == place_query.lower():
+                    exact_matches.append(item)
+                # Partial match (contains query words)
+                elif all(word in place_name_lower for word in query_words) and query_words:
+                    partial_matches.append(item)
             
-            # Accept match if score > 0.3 (at least 30% word overlap)
-            if best_match and best_score > 0.3:
+            # If multiple exact OR partial matches, ask user to clarify
+            matches_to_check = exact_matches if exact_matches else partial_matches
+            if len(matches_to_check) > 1:
+                response_msg = f"⚠️ Có {len(matches_to_check)} '{place_query}' trong lộ trình. Bạn muốn xóa cái nào?\n\n📍 Vị trí trong lộ trình:\n"
+                for idx, item in enumerate(matches_to_check, 1):
+                    day = item.get("day", 1)
+                    arrival = item.get("time", item.get("estimated_arrival", "TBD"))
+                    place_name = item.get("place", {}).get("name", "")
+                    response_msg += f"{idx}. {place_name} - Ngày {day} lúc {arrival}\n"
+                response_msg += f"\n💡 Vui lòng nói cụ thể: 'Xóa {place_query} ngày X' hoặc 'Xóa tên đầy đủ'"
+                return {
+                    **state,
+                    "messages": state["messages"] + [AIMessage(content=response_msg)],
+                    "session_stage": "profiling"
+                }
+            
+            # Use exact or partial match if found (single match)
+            if exact_matches:
+                best_match = exact_matches[0]
+                best_score = 1.0
+            elif partial_matches:
+                best_match = partial_matches[0]
+                best_score = 0.9
+            else:
+                best_match = None
+                best_score = 0
+                # Fuzzy matching: Find best match using word overlap
+                for item in current_itinerary:
+                    place_name = item.get("place", {}).get("name", "")
+                    place_words = set([w.lower() for w in place_name.split() if len(w) >= 2])
+                    
+                    # Calculate word overlap score
+                    common_words = query_words.intersection(place_words)
+                    if common_words:
+                        score = len(common_words) / max(len(query_words), 1)
+                        if score > best_score:
+                            best_score = score
+                            best_match = item
+            
+            # Accept match if score > 0.3 (at least 30% word overlap) or exact/partial match
+            if best_match and best_score >= 0.3:
                 place_name = best_match.get("place", {}).get("name", "")
                 updated_itinerary = [
                     it for it in updated_itinerary 
@@ -1174,8 +1446,18 @@ def itinerary_modifier_node(state: TravelState) -> TravelState:
         
         # ADD action
         elif any(word in user_text for word in ["thêm", "add", "bổ sung"]):
+            # Check if itinerary is CONFIRMED - if so, cannot modify
+            itinerary_status = state.get("itinerary_status", "DRAFT")
+            if itinerary_status == "CONFIRMED":
+                response_msg = "❌ Lộ trình đã được xác nhận (CONFIRMED). Bạn không thể thêm địa điểm vào lộ trình đã xác nhận.\n\n💡 Nếu muốn chỉnh sửa, bạn cần tạo lộ trình mới."
+                print(f"   ⛔ Cannot add: itinerary is {itinerary_status}")
+                return {
+                    **state,
+                    "messages": state["messages"] + [AIMessage(content=response_msg)],
+                    "session_stage": "profiling"  # Keep current stage, don't proceed to planning
+                }
+            
             # Extract place name - remove time, day, and action keywords in correct order
-            import re
             place_query = user_text
             
             # STEP 1: Remove time patterns FIRST (most specific)
@@ -1309,7 +1591,6 @@ def itinerary_modifier_node(state: TravelState) -> TravelState:
                             user_text_lower = user_text.lower()
                             
                             # Check for explicit day mention
-                            import re
                             day_patterns = [
                                 r'ngày (\d+)',
                                 r'ngày thứ (\d+)', 
@@ -1931,8 +2212,11 @@ def create_travel_agent_graph():
         preferences = state.get("user_preferences", UserPreferences())
         
         # Check if we have all required info to create itinerary
+        # Use destination field, fallback to start_location for backward compatibility
+        has_destination = preferences.destination or preferences.start_location
         is_info_complete = all([
-            preferences.start_location,
+            has_destination,
+            preferences.departure_location,  # NEW: Must have departure location
             preferences.travel_style,
             preferences.group_type,
             preferences.budget_range,
@@ -1940,6 +2224,7 @@ def create_travel_agent_graph():
         ])
         
         print(f"   🔀 Routing after profiling: stage={stage}, complete={is_info_complete}")
+        print(f"      destination={has_destination}, departure={preferences.departure_location}, duration={preferences.duration}")
         
         if stage == "planning" or is_info_complete:
             print("   → Going to itinerary_planner")

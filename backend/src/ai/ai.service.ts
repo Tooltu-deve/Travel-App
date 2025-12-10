@@ -2,10 +2,11 @@ import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { firstValueFrom } from 'rxjs';
 import { ChatRequestDto, ChatResponseDto } from './dto/ai-chat.dto';
 import { AiItinerary, AiItineraryDocument } from '../itinerary/schemas/ai-itinerary.schema';
+import { Itinerary, ItineraryDocument } from '../itinerary/schemas/itinerary.schema';
 
 @Injectable()
 export class AiService {
@@ -16,6 +17,7 @@ export class AiService {
         private readonly httpService: HttpService,
         private readonly configService: ConfigService,
         @InjectModel(AiItinerary.name) private aiItineraryModel: Model<AiItineraryDocument>,
+        @InjectModel(Itinerary.name) private itineraryModel: Model<ItineraryDocument>,
     ) {
         // AI Agent URL from environment or default
         this.AI_AGENT_URL =
@@ -305,12 +307,16 @@ export class AiService {
             const travelDate = new Date();
             travelDate.setDate(travelDate.getDate() + 7);
 
+            // Calculate start_location from preferences.departure_coordinates (user's departure point)
+            const startLocation = this.extractStartLocation(itinerary, preferences);
+
             const itineraryDoc = new this.aiItineraryModel({
                 userId: userId,
                 sessionId: aiResponse.sessionId,
                 title,
                 preferences: aiResponse.preferences,
                 itinerary: aiResponse.itinerary,
+                start_location: startLocation,  // Save departure coordinates
                 metadata: aiResponse.metadata,
                 status: 'DRAFT',  // Set as DRAFT when AI creates itinerary
                 tags,
@@ -319,7 +325,7 @@ export class AiService {
             });
 
             const saved = await itineraryDoc.save();
-            this.logger.log(`Saved itinerary with ID: ${saved._id}`);
+            this.logger.log(`Saved itinerary with ID: ${saved._id}, start_location: ${JSON.stringify(startLocation)}`);
             return saved;
 
         } catch (error) {
@@ -402,7 +408,7 @@ export class AiService {
     /**
      * Lấy chi tiết một lộ trình
      */
-    async getItineraryById(userId: string, itineraryId: string): Promise<AiItineraryDocument> {
+    async getItineraryById(userId: string, itineraryId: string): Promise<any> {
         try {
             const itinerary = await this.aiItineraryModel.findOne({
                 _id: itineraryId,
@@ -413,7 +419,19 @@ export class AiService {
                 throw new HttpException('Itinerary not found', HttpStatus.NOT_FOUND);
             }
 
-            return itinerary;
+            // Add computed fields for frontend
+            const response = itinerary.toObject ? itinerary.toObject() : itinerary;
+            
+            // Add start_location (departure point) calculated from preferences
+            const startLocation = this.extractStartLocation(
+                itinerary.itinerary || [],
+                itinerary.preferences
+            );
+            if (startLocation) {
+                response.start_location = startLocation;
+            }
+
+            return response;
 
         } catch (error) {
             this.logger.error(`Failed to get itinerary: ${error.message}`);
@@ -454,27 +472,66 @@ export class AiService {
      * Xác nhận lộ trình (DRAFT → CONFIRMED)
      * Chuyển status từ DRAFT sang CONFIRMED khi user hài lòng
      */
-    async confirmItinerary(userId: string, itineraryId: string): Promise<AiItineraryDocument> {
+    async confirmItinerary(userId: string, itineraryId: string): Promise<any> {
         try {
-            const itinerary = await this.aiItineraryModel.findOne({
+            // 1. Lấy itinerary từ ai-itineraries collection
+            const aiItinerary = await this.aiItineraryModel.findOne({
                 _id: itineraryId,
                 userId,
             }).exec();
 
-            if (!itinerary) {
+            if (!aiItinerary) {
                 throw new HttpException('Itinerary not found', HttpStatus.NOT_FOUND);
             }
 
-            if (itinerary.status === 'CONFIRMED') {
+            if (aiItinerary.status === 'CONFIRMED') {
                 throw new HttpException('Itinerary already confirmed', HttpStatus.BAD_REQUEST);
             }
 
-            itinerary.status = 'CONFIRMED';
-            await itinerary.save();
+            // 2. Chuyển đổi dữ liệu từ AI format sang Itinerary format
+            const userObjectId = Types.ObjectId.isValid(userId) 
+                ? new Types.ObjectId(userId) 
+                : userId;
 
-            this.logger.log(`Itinerary ${itineraryId} confirmed by user ${userId}`);
+            // Convert itinerary items to route_data_json format
+            const routeDataJson = {
+                optimized_route: this.groupItineraryByDay(aiItinerary.itinerary),
+                metadata: {
+                    title: aiItinerary.title,
+                    destination: this.extractDestination(aiItinerary.itinerary),
+                    duration_days: this.calculateDurationDays(aiItinerary.itinerary),
+                    total_places: aiItinerary.itinerary.length,
+                    preferences: aiItinerary.preferences,
+                },
+            };
 
-            return itinerary;
+            // 3. Tạo document mới trong itineraries collection
+            const newItinerary = new this.itineraryModel({
+                route_id: `route_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                user_id: userObjectId,
+                title: aiItinerary.title,
+                destination: this.extractDestination(aiItinerary.itinerary),
+                duration_days: this.calculateDurationDays(aiItinerary.itinerary),
+                start_datetime: aiItinerary.travel_date || new Date(),
+                start_location: this.extractStartLocation(aiItinerary.itinerary, aiItinerary.preferences),
+                status: 'CONFIRMED',
+                route_data_json: routeDataJson,
+            });
+
+            const savedItinerary = await newItinerary.save();
+            this.logger.log(`Migrated AI itinerary ${itineraryId} to main itineraries collection: ${savedItinerary.route_id}`);
+
+            // 4. Cập nhật status trong ai-itineraries (để đánh dấu đã migrate)
+            aiItinerary.status = 'CONFIRMED';
+            (aiItinerary.metadata as any).migrated_to_route_id = savedItinerary.route_id;
+            (aiItinerary.metadata as any).migrated_at = new Date().toISOString();
+            await aiItinerary.save();
+
+            return {
+                ...aiItinerary.toObject(),
+                route_id: savedItinerary.route_id,
+                migrated: true,
+            };
 
         } catch (error) {
             if (error instanceof HttpException) {
@@ -486,6 +543,95 @@ export class AiService {
                 HttpStatus.INTERNAL_SERVER_ERROR,
             );
         }
+    }
+
+    /**
+     * Group itinerary items by day
+     */
+    private groupItineraryByDay(itinerary: any[]): any[] {
+        const dayMap = new Map<number, any[]>();
+        
+        itinerary.forEach(item => {
+            const day = item.day || 1;
+            if (!dayMap.has(day)) {
+                dayMap.set(day, []);
+            }
+            
+            // Extract location from place for frontend compatibility
+            let location: { lat: number; lng: number } | null = null;
+            if (item.place?.location) {
+                // Handle GeoJSON format: { type: 'Point', coordinates: [lng, lat] }
+                if (item.place.location.coordinates && Array.isArray(item.place.location.coordinates)) {
+                    const [lng, lat] = item.place.location.coordinates;
+                    location = { lat, lng };
+                }
+                // Handle direct lat/lng format
+                else if (item.place.location.lat && item.place.location.lng) {
+                    location = {
+                        lat: item.place.location.lat,
+                        lng: item.place.location.lng,
+                    };
+                }
+            }
+            
+            dayMap.get(day)!.push({
+                name: item.place?.name || item.activity,
+                activity: item.activity,
+                time: item.time,
+                location,
+                place: item.place,
+                duration_minutes: item.duration_minutes,
+                ecs_score: item.ecs_score,
+                estimated_arrival: item.estimated_arrival,
+                estimated_departure: item.estimated_departure,
+                google_place_id: item.google_place_id || item.place?.googlePlaceId,
+                encoded_polyline: item.encoded_polyline,
+                travel_duration_minutes: item.travel_duration_minutes,
+            });
+        });
+
+        const days: any[] = [];
+        dayMap.forEach((activities, dayNumber) => {
+            days.push({
+                day: dayNumber,
+                activities,
+            });
+        });
+
+        return days.sort((a, b) => a.day - b.day);
+    }
+
+    /**
+     * Calculate duration in days from itinerary
+     */
+    private calculateDurationDays(itinerary: any[]): number {
+        if (!itinerary || itinerary.length === 0) return 1;
+        const maxDay = Math.max(...itinerary.map(item => item.day || 1));
+        return maxDay;
+    }
+
+    /**
+     * Extract start location from first itinerary item
+     */
+    private extractStartLocation(itinerary: any[], preferences?: any): { lat: number; lng: number } | null {
+        // Priority 1: Use departure_coordinates from preferences (user's departure point)
+        if (preferences?.departure_coordinates?.lat && preferences?.departure_coordinates?.lng) {
+            return {
+                lat: preferences.departure_coordinates.lat,
+                lng: preferences.departure_coordinates.lng,
+            };
+        }
+        
+        // Priority 2: Use first place in itinerary (fallback)
+        if (!itinerary || itinerary.length === 0) return null;
+        const firstPlace = itinerary[0]?.place;
+        if (firstPlace?.location) {
+            return {
+                lat: firstPlace.location.lat,
+                lng: firstPlace.location.lng,
+            };
+        }
+        return null;
     }
 
     /**

@@ -78,6 +78,12 @@ export class AiItinerary {
     @Prop({ type: String, enum: ['DRAFT', 'CONFIRMED', 'ARCHIVED'], default: 'DRAFT' })
     status: string;
 
+    @Prop({ type: Object })
+    start_location: {
+        lat: number;
+        lng: number;
+    };
+
     @Prop({ type: [String], default: [] })
     tags: string[]; // e.g., ['cultural', 'couple', 'hanoi', '2-days']
 
