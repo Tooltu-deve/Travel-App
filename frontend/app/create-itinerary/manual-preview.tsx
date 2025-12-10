@@ -22,6 +22,7 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { COLORS } from '@/constants/colors';
 import { SPACING, BORDER_RADIUS } from '@/constants/spacing';
 import { calculateRoutesAPI, autocompletePlacesAPI, updateCustomItineraryStatusAPI } from '../../services/api';
+import WeatherWarningModal, { WeatherSeverity } from '../../components/WeatherWarningModal';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const BOTTOM_SHEET_MIN_HEIGHT = 250;
@@ -106,6 +107,12 @@ export default function ManualPreviewScreen() {
   const [routeIdToConfirm, setRouteIdToConfirm] = useState<string | null>(null);
   const [itineraryTitle, setItineraryTitle] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
+
+  // Weather warning state
+  const [weatherModalVisible, setWeatherModalVisible] = useState(false);
+  const [weatherSeverity, setWeatherSeverity] = useState<WeatherSeverity>('normal');
+  const [weatherAlert, setWeatherAlert] = useState<string>('');
+  const [pendingRouteData, setPendingRouteData] = useState<any>(null);
 
   // Generate unique session token (not in useCallback to avoid dependency issues)
   const generateSessionToken = () => {
@@ -609,6 +616,18 @@ export default function ManualPreviewScreen() {
       // Call backend API to calculate routes and save
       const result = await calculateRoutesAPI(payload, token);
 
+      // Kiểm tra cảnh báo thời tiết từ backend custom-itinerary
+      const alerts = result?.alerts;
+      if (Array.isArray(alerts) && alerts.length > 0) {
+        const firstAlert = alerts[0];
+        setWeatherSeverity(firstAlert.severity === 'danger' ? 'danger' : firstAlert.severity === 'warning' ? 'warning' : 'normal');
+        setWeatherAlert(firstAlert.message || firstAlert.title || 'Có cảnh báo thời tiết');
+        setPendingRouteData(result);
+        setWeatherModalVisible(true);
+        setIsSaving(false);
+        return;
+      }
+
       // Check if route_id exists in response
       if (result && result.route_id) {
         // Save route_id and show input title modal
@@ -673,6 +692,24 @@ export default function ManualPreviewScreen() {
     } finally {
       setIsConfirming(false);
     }
+  };
+
+  // Xử lý khi người dùng chọn "Tiếp tục" trong modal warning
+  const handleWeatherContinue = async () => {
+    setWeatherModalVisible(false);
+    // Sử dụng route data đã được lưu trước đó
+    if (pendingRouteData && pendingRouteData.route_id) {
+      setRouteIdToConfirm(pendingRouteData.route_id);
+      setItineraryTitle(pendingRouteData.title || `Lộ trình ${destination}`);
+      setShowTitleInputModal(true);
+      setPendingRouteData(null);
+    }
+  };
+
+  // Xử lý khi người dùng nhấn Quay lại
+  const handleWeatherGoBack = () => {
+    setWeatherModalVisible(false);
+    setPendingRouteData(null);
   };
 
   // Cleanup search timer on unmount
@@ -1306,6 +1343,15 @@ export default function ManualPreviewScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Weather Warning Modal */}
+      <WeatherWarningModal
+        visible={weatherModalVisible}
+        severity={weatherSeverity}
+        alertMessage={weatherAlert}
+        onContinue={handleWeatherContinue}
+        onGoBack={handleWeatherGoBack}
+      />
     </View>
   );
 }
@@ -2168,3 +2214,6 @@ const styles = StyleSheet.create({
     color: COLORS.textWhite,
   },
 });
+
+// Add WeatherWarningModal at the end of the component before closing tag
+// Insert before the closing </View> tag in the return statement
