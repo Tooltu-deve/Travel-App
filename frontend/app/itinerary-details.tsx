@@ -307,7 +307,7 @@ export default function ItineraryDetailsScreen() {
         return;
       }
 
-      const response = await enrichPlaceAPI(token, placeId, true);
+      const response = await enrichPlaceAPI(token, placeId, false);
       const enrichedData = response?.data || response;
 
       const mappedPlaceData = {

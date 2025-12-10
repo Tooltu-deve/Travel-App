@@ -18,6 +18,7 @@ import { ItineraryService } from './itinerary.service';
 import { GenerateRouteDto } from './dto/generate-route.dto';
 import { UpdateItineraryStatusDto } from './dto/update-itinerary-status.dto';
 import { ItineraryResponseDto } from './dto/itinerary-response.dto';
+import { CustomRouteDto } from './dto/custom-route.dto';
 
 @Controller('itineraries')
 export class ItineraryController {
@@ -155,6 +156,28 @@ export class ItineraryController {
 
     return {
       message: 'Lộ trình DRAFT đã được xóa thành công.',
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('custom-route')
+  @HttpCode(HttpStatus.OK)
+  async processCustomRoute(
+    @Request() req,
+    @Body() dto: CustomRouteDto,
+  ): Promise<{
+    message: string;
+    route: ItineraryResponseDto;
+  }> {
+    const userId = req.user.userId;
+    const savedRoute = await this.itineraryService.processCustomRoute(
+      userId,
+      dto.route,
+    );
+
+    return {
+      message: dto.message || 'Lộ trình đã được xử lý thành công.',
+      route: this.mapToResponse(savedRoute),
     };
   }
 
