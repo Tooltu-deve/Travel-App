@@ -7,6 +7,7 @@ import { CustomItineraryService } from './custom-itinerary.service';
 import { CustomItinerary, CustomItinerarySchema } from './schemas/custom-itinerary.schema';
 import { ItineraryModule } from '../itinerary/itinerary.module';
 import { Itinerary, ItinerarySchema } from '../itinerary/schemas/itinerary.schema';
+import { Place, PlaceSchema } from '../place/schemas/place.schema';
 
 /**
  * Module quản lý custom itinerary (lộ trình tùy chỉnh)
@@ -19,6 +20,7 @@ import { Itinerary, ItinerarySchema } from '../itinerary/schemas/itinerary.schem
     MongooseModule.forFeature([
       { name: CustomItinerary.name, schema: CustomItinerarySchema },
       { name: Itinerary.name, schema: ItinerarySchema },
+      { name: Place.name, schema: PlaceSchema },
     ]),
     forwardRef(() => ItineraryModule),
   ],

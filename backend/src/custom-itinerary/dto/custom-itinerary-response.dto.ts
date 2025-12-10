@@ -10,7 +10,7 @@
  * DTO cho weather check response
  */
 export class WeatherCheckResponseDto {
-  severity: 'normal' | 'warning' | 'danger';
+  severity: 'Bình thường' | 'Cảnh báo' | 'Nguy hiểm';
   alert: string;
 }
 
