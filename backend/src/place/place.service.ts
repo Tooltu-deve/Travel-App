@@ -300,16 +300,33 @@ export class PlaceService {
       return this.mapPlaceToEnrichedDto(place);
     }
 
-    const url = `https://places.googleapis.com/v1/places/${googlePlaceId}`;
+    // Place ID format: thêm prefix "places/" nếu chưa có
+    const placeIdForApi = googlePlaceId.startsWith('places/') 
+      ? googlePlaceId 
+      : `places/${googlePlaceId}`;
+    
+    const url = `https://places.googleapis.com/v1/${placeIdForApi}`;
+    
+    // Field mask theo Google Places API v1 - sử dụng đúng field names
     const fieldMask = [
-      'rating',
-      'editorialSummary',
-      'photos',
-      'reviews',
-      'websiteUri',
-      'internationalPhoneNumber',
-      'nationalPhoneNumber',
+      'displayName', // Tên đã được localize (object {text, languageCode})
+      'formattedAddress', // Địa chỉ đã format (không phải 'address')
+      'location', // Tọa độ {latitude, longitude}
+      'rating', // Rating
+      'editorialSummary', // Mô tả ngắn (object {text})
+      'photos', // Danh sách ảnh
+      'reviews', // Reviews
+      'websiteUri', // Website
+      'internationalPhoneNumber', // Số điện thoại quốc tế
+      'nationalPhoneNumber', // Số điện thoại trong nước
+      'types', // Loại địa điểm (array, không phải 'type')
+      'regularOpeningHours', // Giờ mở cửa
+      'priceLevel', // Mức giá
     ].join(',');
+    
+    console.log(`🔍 Enriching place: ${googlePlaceId}`);
+    console.log(`   API URL: ${url}`);
+    console.log(`   Field Mask: ${fieldMask}`);
 
     try {
       const response = await firstValueFrom(
@@ -318,19 +335,51 @@ export class PlaceService {
             'Content-Type': 'application/json',
             'X-Goog-Api-Key': this.googlePlacesApiKey,
             'X-Goog-FieldMask': fieldMask,
+            'Accept-Language': 'vi', // Để lấy tên bằng tiếng Việt
           },
           timeout: 10000,
         }),
       );
 
       const data = response.data;
+      console.log(`✅ Google Places API response received for ${googlePlaceId}`);
+      console.log(`   Has photos: ${!!data.photos}, Count: ${data.photos?.length || 0}`);
+      console.log(`   Has reviews: ${!!data.reviews}, Count: ${data.reviews?.length || 0}`);
+
+      // Update name - ưu tiên displayName (đã localize) nếu có
+      if (data.displayName) {
+        // displayName là object { text: string, languageCode: string }
+        const localizedName = typeof data.displayName === 'string' 
+          ? data.displayName 
+          : data.displayName.text;
+        if (localizedName) {
+          place.name = localizedName;
+          console.log(`   ✅ Using localized name: ${localizedName}`);
+        }
+      }
+
+      // Update address - dùng formattedAddress
+      if (data.formattedAddress) {
+        place.address = data.formattedAddress;
+      }
+
+      // Update location nếu có
+      if (data.location?.latitude && data.location?.longitude) {
+        place.location = {
+          type: 'Point',
+          coordinates: [data.location.longitude, data.location.latitude], // [lng, lat] cho GeoJSON
+        };
+      }
 
       if (typeof data.rating === 'number') {
         place.rating = data.rating;
       }
 
       if (data.editorialSummary) {
-        place.editorialSummary = data.editorialSummary.text ?? null;
+        place.editorialSummary = 
+          typeof data.editorialSummary === 'string' 
+            ? data.editorialSummary 
+            : data.editorialSummary.text ?? null;
       }
 
       if (data.websiteUri) {
@@ -341,6 +390,37 @@ export class PlaceService {
         data.internationalPhoneNumber || data.nationalPhoneNumber;
       if (phoneNumber) {
         place.contactNumber = phoneNumber;
+      }
+      
+      // Update types
+      if (data.types && Array.isArray(data.types)) {
+        place.types = data.types;
+        // Cập nhật type chính (lấy type đầu tiên)
+        if (data.types.length > 0) {
+          place.type = data.types[0];
+        }
+      }
+      
+      // Update price level
+      if (data.priceLevel !== undefined) {
+        // Convert price level to budget range
+        // PRICE_LEVEL_FREE = 0, PRICE_LEVEL_INEXPENSIVE = 1, PRICE_LEVEL_MODERATE = 2, PRICE_LEVEL_EXPENSIVE = 3, PRICE_LEVEL_VERY_EXPENSIVE = 4
+        const priceLevelMap: { [key: number]: string } = {
+          0: 'free',
+          1: 'affordable',
+          2: 'moderate',
+          3: 'expensive',
+          4: 'very_expensive',
+        };
+        place.budgetRange = priceLevelMap[data.priceLevel] || 'free';
+      }
+      
+      // Update opening hours
+      if (data.regularOpeningHours) {
+        place.openingHours = {
+          openNow: data.regularOpeningHours.openNow,
+          weekdayDescriptions: data.regularOpeningHours.weekdayDescriptions || [],
+        };
       }
       if (data.photos) {
         place.photos = data.photos.map((photo) => ({

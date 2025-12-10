@@ -11,13 +11,15 @@ import {
   Modal,
   Alert,
   Image,
+  TextInput,
+  FlatList,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING } from '../../constants';
-import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI } from '../../services/api';
+import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI, autocompletePlacesAPI } from '../../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { POIDetailBottomSheet } from '../place/POIDetailBottomSheet';
 
@@ -40,6 +42,8 @@ interface Activity {
   ecs_score?: number;
   travel_duration_minutes?: number;
   encoded_polyline?: string;
+  start_encoded_polyline?: string; // polyline từ điểm bắt đầu tới POI đầu tiên (nếu có)
+  start_travel_duration_minutes?: number; // thời gian di chuyển từ điểm bắt đầu tới POI đầu tiên
   google_place_id?: string;
   time?: string;
   activity?: string;
@@ -55,6 +59,7 @@ interface DayPlan {
   activities: Activity[];
   day_start_time?: string;
   startLocationCoordinates?: { lat: number; lng: number };
+  travel_mode?: string;
 }
 
 // Custom itinerary DTO (partial) to support manual routes
@@ -65,6 +70,7 @@ interface CustomPlaceWithRoute {
   location: { lat: number; lng: number };
   encoded_polyline?: string | null;
   travel_duration_minutes?: number | null;
+  google_place_id?: string;
 }
 
 interface CustomDayWithRoutes {
@@ -94,6 +100,7 @@ interface ItineraryViewScreenProps {
   footerContent?: ReactNode;
   customRouteData?: CustomItineraryResponse | null; // manual/custom itinerary data
   isManual?: boolean;
+  overlayContent?: ReactNode;
 }
 
 export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
@@ -103,6 +110,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   footerContent,
   customRouteData = null,
   isManual = false,
+  overlayContent,
 }) => {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
@@ -122,6 +130,14 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
   const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
   const [isEnriching, setIsEnriching] = useState(false);
+
+  // POI replacement modal state
+  const [isReplacePOIModalVisible, setIsReplacePOIModalVisible] = useState(false);
+  const [replacingPOI, setReplacingPOI] = useState<Activity | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [autocompleteResults, setAutocompleteResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isUpdatingRoute, setIsUpdatingRoute] = useState(false);
 
   // Sync custom route data (manual)
   useEffect(() => {
@@ -332,10 +348,27 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     };
   };
 
-  // Route segments for polylines
-  const routeSegments = activities
-    .map((activity) => decodePolyline(activity.encoded_polyline))
-    .filter((segment) => segment.length > 1);
+  // Route segments for polylines (bao gồm đoạn từ điểm bắt đầu đến POI đầu tiên nếu có)
+  const routeSegments = (() => {
+    const segments: { latitude: number; longitude: number }[][] = [];
+
+    if (
+      startLocation &&
+      activities.length > 0 &&
+      activities[0]?.start_encoded_polyline
+    ) {
+      segments.push(decodePolyline(activities[0].start_encoded_polyline));
+    }
+
+    activities.forEach((activity) => {
+      const decoded = decodePolyline(activity.encoded_polyline);
+      if (decoded.length > 1) {
+        segments.push(decoded);
+      }
+    });
+
+    return segments.filter((segment) => segment.length > 1);
+  })();
 
   // Update map region when day changes
   useEffect(() => {
@@ -348,11 +381,13 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
   // Fit to markers
   const handleFitToMarkers = () => {
-    const coords = activities
+    const coords = [
+      ...(startLocation ? [toMapCoordinate(startLocation)] : []),
+      ...activities
       .map((a) => a.location || a.place?.location)
       .filter(Boolean)
-      .map(toMapCoordinate)
-      .filter(Boolean) as { latitude: number; longitude: number }[];
+        .map(toMapCoordinate),
+    ].filter(Boolean) as { latitude: number; longitude: number }[];
 
     if (coords.length > 0 && mapRef.current) {
       mapRef.current.fitToCoordinates(coords, {
@@ -375,53 +410,341 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       const token = await AsyncStorage.getItem('userToken');
       if (!token) {
         Alert.alert('Lỗi', 'Bạn cần đăng nhập để xem chi tiết địa điểm.');
+        setIsEnriching(false);
         return;
       }
 
       // Enrich place data
-      const response = await enrichPlaceAPI(token, placeId, true);
+      const response = await enrichPlaceAPI(token, placeId, false);
+      
+      // Kiểm tra response có lỗi không
+      if (response?.statusCode || response?.error || (response?.message && response.message.includes('invalid'))) {
+        const errorMessage = response.message || response.error?.message || 'Lỗi khi lấy thông tin địa điểm từ Google Places API';
+        console.error('Enrich API error:', errorMessage);
+        throw new Error(errorMessage);
+      }
+      
+      // Backend trả về { message: '...', data: {...} }
       const enrichedData = response?.data || response;
+      
+      if (!enrichedData) {
+        throw new Error('Không nhận được dữ liệu từ server');
+      }
+
+      // Map photos - đảm bảo structure đúng
+      const photosArray = Array.isArray(enrichedData.photos) 
+        ? enrichedData.photos.map((photo: any) => ({
+            name: photo.name,
+            widthPx: photo.widthPx,
+            heightPx: photo.heightPx,
+            authorAttributions: photo.authorAttributions || [],
+          }))
+        : [];
 
       // Map to bottom sheet format
       const mappedPlaceData = {
-        _id: enrichedData.googlePlaceId,
-        googlePlaceId: enrichedData.googlePlaceId,
-        name: enrichedData.name,
-        address: enrichedData.address,
-        formatted_address: enrichedData.address,
-        description: enrichedData.description || enrichedData.editorialSummary,
-        editorialSummary: enrichedData.editorialSummary,
-        rating: enrichedData.rating,
-        user_ratings_total: enrichedData.reviews?.length || 0,
-        contactNumber: enrichedData.contactNumber,
-        phone: enrichedData.contactNumber,
-        websiteUri: enrichedData.websiteUri,
-        website: enrichedData.websiteUri,
-        photos: enrichedData.photos || [],
-        reviews: enrichedData.reviews?.map((review: any) => ({
+        _id: enrichedData.googlePlaceId || placeId,
+        googlePlaceId: enrichedData.googlePlaceId || placeId,
+        name: enrichedData.name || activity.name || 'Không có tên',
+        address: enrichedData.address || enrichedData.formatted_address || '',
+        formatted_address: enrichedData.address || enrichedData.formatted_address || '',
+        description: enrichedData.description || enrichedData.editorialSummary || '',
+        editorialSummary: enrichedData.editorialSummary || '',
+        rating: enrichedData.rating || 0,
+        user_ratings_total: enrichedData.reviews?.length || enrichedData.user_ratings_total || 0,
+        contactNumber: enrichedData.contactNumber || enrichedData.phone || '',
+        phone: enrichedData.contactNumber || enrichedData.phone || '',
+        websiteUri: enrichedData.websiteUri || enrichedData.website || '',
+        website: enrichedData.websiteUri || enrichedData.website || '',
+        photos: photosArray,
+        reviews: (enrichedData.reviews || []).map((review: any) => ({
           authorName: review.authorAttributions?.[0]?.displayName || 
                      review.authorAttributions?.displayName || 
+                     review.authorName ||
                      'Người dùng ẩn danh',
-          rating: review.rating,
-          text: review.text,
-          relativePublishTimeDescription: review.relativePublishTimeDescription,
-          publishTime: review.relativePublishTimeDescription,
-          authorAttributions: review.authorAttributions,
-        })) || [],
-        type: enrichedData.type,
-        types: enrichedData.types,
-        location: enrichedData.location,
-        openingHours: enrichedData.openingHours,
-        priceLevel: enrichedData.priceLevel,
+          rating: review.rating || 0,
+          text: review.text || '',
+          relativePublishTimeDescription: review.relativePublishTimeDescription || review.publishTime || '',
+          publishTime: review.relativePublishTimeDescription || review.publishTime || '',
+          authorAttributions: review.authorAttributions || [],
+        })),
+        type: enrichedData.type || '',
+        types: enrichedData.types || [],
+        location: enrichedData.location || activity.location,
+        openingHours: enrichedData.openingHours || enrichedData.opening_hours || null,
+        priceLevel: enrichedData.priceLevel || enrichedData.price_level || null,
       };
 
       setSelectedPlaceData(mappedPlaceData);
       setIsBottomSheetVisible(true);
+      
+      // Cập nhật lại tên POI trong routeDetails với tên tiếng Việt từ enriched data
+      if (enrichedData.name && routeDetails) {
+        const updatedRouteDetails = JSON.parse(JSON.stringify(routeDetails)); // Deep clone
+        const routeDataToUpdate = updatedRouteDetails.route_data_json || updatedRouteDetails;
+        
+        // Normalize placeId để so sánh (có thể có hoặc không có prefix "places/")
+        const normalizedPlaceId = placeId.replace(/^places\//, '');
+        const enrichedPlaceId = (enrichedData.googlePlaceId || '').replace(/^places\//, '');
+        
+        // Tìm và cập nhật trong optimized_route
+        if (routeDataToUpdate.optimized_route && Array.isArray(routeDataToUpdate.optimized_route)) {
+          routeDataToUpdate.optimized_route.forEach((day: DayPlan) => {
+            if (day.activities && Array.isArray(day.activities)) {
+              day.activities.forEach((act: Activity) => {
+                const actPlaceId = (act.google_place_id || '').replace(/^places\//, '');
+                if (actPlaceId === normalizedPlaceId || actPlaceId === enrichedPlaceId) {
+                  act.name = enrichedData.name;
+                  if (act.place) {
+                    act.place.name = enrichedData.name;
+                  }
+                }
+              });
+            }
+          });
+        }
+        
+        // Tìm và cập nhật trong days (custom itinerary)
+        if (routeDataToUpdate.days && Array.isArray(routeDataToUpdate.days)) {
+          routeDataToUpdate.days.forEach((day: CustomDayWithRoutes) => {
+            if (day.places && Array.isArray(day.places)) {
+              day.places.forEach((place: CustomPlaceWithRoute) => {
+                const placeIdToMatch = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+                if (placeIdToMatch === normalizedPlaceId || placeIdToMatch === enrichedPlaceId) {
+                  place.name = enrichedData.name;
+                }
+              });
+            }
+          });
+        }
+        
+        if (updatedRouteDetails.route_data_json) {
+          updatedRouteDetails.route_data_json = routeDataToUpdate;
+        } else {
+          Object.assign(updatedRouteDetails, routeDataToUpdate);
+        }
+        
+        setRouteDetails(updatedRouteDetails);
+        console.log(`✅ Đã cập nhật tên POI thành tiếng Việt: ${enrichedData.name}`);
+      }
     } catch (err: any) {
       console.error('Error enriching place:', err);
       Alert.alert('Lỗi', err.message || 'Không thể tải thông tin địa điểm');
     } finally {
       setIsEnriching(false);
+    }
+  };
+
+  // Debounced search for autocomplete
+  useEffect(() => {
+    if (!isReplacePOIModalVisible || !searchQuery.trim()) {
+      setAutocompleteResults([]);
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const token = await AsyncStorage.getItem('userToken');
+        if (!token) return;
+
+        const response = await autocompletePlacesAPI(searchQuery.trim(), undefined, token);
+        const predictionsRaw = Array.isArray(response)
+          ? response
+          : response.predictions || response.suggestions || [];
+        const normalized = (predictionsRaw || []).slice(0, 5).map((p: any) => {
+          // Backend returns { description, place_id, structured_formatting }
+          if (p.place_id && p.description) {
+            return {
+              placeId: p.place_id,
+              text: p.description,
+              structuredFormat: {
+                mainText: p.structured_formatting?.main_text,
+                secondaryText: p.structured_formatting?.secondary_text,
+              },
+            };
+          }
+          // Fallback: keep original shape (Google suggestions)
+          return {
+            placeId: p.placeId || p.place_id,
+            text: p.text?.text || p.text || p.description,
+            structuredFormat: {
+              mainText: p.structuredFormat?.mainText || p.structured_formatting?.main_text,
+              secondaryText: p.structuredFormat?.secondaryText || p.structured_formatting?.secondary_text,
+            },
+          };
+        });
+        setAutocompleteResults(normalized);
+      } catch (error: any) {
+        console.error('Autocomplete error:', error);
+        setAutocompleteResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, isReplacePOIModalVisible]);
+
+  // Handle replace POI button press
+  const handleReplacePOI = (activity: Activity, event: any) => {
+    event.stopPropagation();
+    setReplacingPOI(activity);
+    setSearchQuery('');
+    setAutocompleteResults([]);
+    setIsReplacePOIModalVisible(true);
+  };
+
+  // Handle select new POI from autocomplete
+  const handleSelectNewPOI = async (suggestion: any) => {
+    if (!replacingPOI || !routeDetails) {
+      return;
+    }
+
+    setIsUpdatingRoute(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để thay đổi địa điểm.');
+        return;
+      }
+
+      const placeId = suggestion.placeId || suggestion.place_id;
+      if (!placeId) {
+        Alert.alert('Lỗi', 'Không tìm thấy Place ID.');
+        return;
+      }
+
+      // Enrich ngay lập tức để lấy đầy đủ thông tin (tên, tọa độ, address)
+      let enrichedData: any = null;
+      try {
+        const enrichResp = await enrichPlaceAPI(token, placeId, false);
+        enrichedData = enrichResp?.data || enrichResp || null;
+      } catch (e: any) {
+        console.error('Enrich khi thay POI thất bại:', e);
+        Alert.alert('Lỗi', e?.message || 'Không thể lấy thông tin địa điểm mới');
+        return;
+      }
+
+      // Chuẩn hóa tên và tọa độ
+      const newName =
+        enrichedData?.name ||
+        enrichedData?.displayName?.text ||
+        suggestion.text?.text ||
+        suggestion.text ||
+        suggestion.description ||
+        'Địa điểm mới';
+      const coords =
+        enrichedData?.location?.coordinates ||
+        (enrichedData?.location?.lat !== undefined && enrichedData?.location?.lng !== undefined
+          ? [enrichedData.location.lng, enrichedData.location.lat]
+          : undefined);
+
+      // Chuẩn hoá Place ID, thêm prefix nếu thiếu
+      const normalizedPlaceId = (placeId || '').replace(/^places\//, '');
+      const placeIdForSend = placeId.startsWith('places/') ? placeId : `places/${normalizedPlaceId}`;
+      const oldNormalized = (replacingPOI.google_place_id || '').replace(/^places\//, '');
+
+      // Build updated route payload
+      const routeData = (routeDetails as any).route_data_json || routeDetails;
+      const updatedRoute = JSON.parse(JSON.stringify(routeData)); // Deep clone
+
+      // Find and replace POI in optimized_route
+      if (updatedRoute.optimized_route && Array.isArray(updatedRoute.optimized_route)) {
+        updatedRoute.optimized_route.forEach((day: DayPlan, dayIndex: number) => {
+          if (day.activities && Array.isArray(day.activities)) {
+            day.activities.forEach((act: Activity) => {
+              const actNorm = (act.google_place_id || '').replace(/^places\//, '');
+              if (actNorm === oldNormalized) {
+                act.google_place_id = placeIdForSend;
+                act.name = newName;
+                if (coords && Array.isArray(coords) && coords.length === 2) {
+                  act.location = { lat: coords[1], lng: coords[0] };
+                }
+              }
+            });
+            // Ensure travel_mode, day_start_time, day are present
+            if (!day.travel_mode) day.travel_mode = 'driving';
+            if (!day.day_start_time) day.day_start_time = '09:00:00';
+            if (day.day === undefined) day.day = dayIndex + 1;
+          }
+        });
+      }
+
+      // Find and replace POI in days (custom itinerary)
+      if (updatedRoute.days && Array.isArray(updatedRoute.days)) {
+        updatedRoute.days.forEach((day: CustomDayWithRoutes) => {
+          if (day.places && Array.isArray(day.places)) {
+            day.places.forEach((place: CustomPlaceWithRoute) => {
+              const currentPlaceId = (place.google_place_id || place.placeId || '').replace(/^places\//, '');
+              if (currentPlaceId === oldNormalized) {
+                place.google_place_id = placeIdForSend;
+                place.placeId = placeIdForSend;
+                place.name = newName;
+                if (coords && Array.isArray(coords) && coords.length === 2) {
+                  place.location = { lat: coords[1], lng: coords[0] };
+                }
+              }
+            });
+          }
+        });
+      }
+
+      // Call API to update route
+      const routeId = (routeDetails as any).route_id;
+      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+      const response = await fetch(`${API_BASE_URL}/api/v1/itineraries/custom-route`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          route: {
+            route_id: routeId,
+            start_location:
+              (routeDetails as any).start_location ||
+              routeData.start_location ||
+              routeData.metadata?.start_location ||
+              undefined,
+            route_data_json: updatedRoute,
+          },
+          message: 'Cập nhật địa điểm trong lộ trình',
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Không thể cập nhật lộ trình');
+      }
+
+      const result = await response.json();
+      if (result.route) {
+        // Giữ lại start_location nếu response không có
+        const mergedRoute = {
+          ...result.route,
+          start_location:
+            result.route.start_location ||
+            (routeDetails as any)?.start_location ||
+            routeData.start_location ||
+            routeData.metadata?.start_location ||
+            null,
+        };
+
+        setRouteDetails(mergedRoute);
+        setIsReplacePOIModalVisible(false);
+        setReplacingPOI(null);
+        setSearchQuery('');
+        // Reset về ngày 1 và fit lại map
+        setSelectedDay(1);
+        setTimeout(() => handleFitToMarkers(), 0);
+        Alert.alert('Thành công', 'Địa điểm đã được cập nhật.');
+      }
+    } catch (error: any) {
+      console.error('Error updating route:', error);
+      Alert.alert('Lỗi', error.message || 'Không thể cập nhật địa điểm.');
+    } finally {
+      setIsUpdatingRoute(false);
     }
   };
 
@@ -557,6 +880,66 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         {/* Activities */}
         <View style={styles.activitiesContainer}>
           <View style={styles.activitiesContent}>
+              {/* Start point card (hiển thị trước POI đầu tiên) */}
+              {startLocation && activities.length > 0 && (
+                <View>
+                  <View style={styles.activityCard}>
+                    <LinearGradient
+                      colors={[COLORS.success + '15', 'transparent']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.cardGradientOverlay}
+                    />
+                    <View style={styles.cardNumberBadge}>
+                      <LinearGradient
+                        colors={[COLORS.success, COLORS.gradientSecondary]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.numberBadgeGradient}
+                      >
+                        <Text style={styles.numberBadgeText}>BĐ</Text>
+                      </LinearGradient>
+                    </View>
+                    <View style={styles.cardContent}>
+                      <View style={styles.cardInfo}>
+                        <Text style={styles.cardTitle} numberOfLines={2}>
+                          Điểm bắt đầu
+                        </Text>
+                        <View style={styles.cardRow}>
+                          <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
+                          <Text style={styles.cardTime}>Điểm xuất phát của lộ trình</Text>
+                        </View>
+                      </View>
+                    </View>
+                    {/* Spacer hint để chiều cao tương đương các thẻ POI */}
+                    <View style={styles.tapHint}>
+                      <FontAwesome name="map-pin" size={10} color={COLORS.textSecondary} />
+                      <Text style={styles.tapHintText}>Điểm bắt đầu</Text>
+                    </View>
+                  </View>
+
+                  {/* Travel time from start to first POI (fallback to travel_duration_minutes if start_* missing) */}
+                  {(() => {
+                    const startToFirst =
+                      activities[0]?.start_travel_duration_minutes ??
+                      activities[0]?.travel_duration_minutes ??
+                      null;
+                    if (startToFirst == null) return null;
+                    const rounded = Math.round(startToFirst);
+                    return (
+                      <View style={styles.travelTimeIndicator}>
+                        <View style={styles.travelDashedLine} />
+                        <View style={styles.travelTimebadge}>
+                          <FontAwesome name="car" size={12} color={COLORS.primary} />
+                          <Text style={styles.travelTimeBadgeText}>{rounded}m</Text>
+                        </View>
+                        <View style={styles.travelDashedLine} />
+                      </View>
+                    );
+                  })()}
+                </View>
+              )}
+
             {activities.length === 0 ? (
               <View style={styles.emptyState}>
                 <FontAwesome name="map-o" size={48} color={COLORS.textSecondary} />
@@ -568,14 +951,22 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const arrival = activity.estimated_arrival || activity.time;
                 const departure = activity.estimated_departure;
                 const duration = calculateDuration(arrival, departure);
-                const travelTime = activity.travel_duration_minutes;
+                // travel_duration_minutes nằm ở activity trước (đoạn từ activity trước tới activity hiện tại)
+                const travelTimeRaw =
+                  index > 0
+                    ? activities[index - 1]?.travel_duration_minutes
+                    : activity.start_travel_duration_minutes;
+                // Làm tròn thời gian di chuyển thành số nguyên
+                const travelTime = travelTimeRaw != null ? Math.round(travelTimeRaw) : null;
+                const showTravelIndicator =
+                  travelTime != null && (!startLocation ? true : index > 0);
                 const hasPhoto = activity.google_place_id; // Sẽ fetch ảnh khi click
                 const rating = activity.ecs_score;
 
                 return (
                   <View key={`activity-${index}`}>
-                    {/* Travel time indicator */}
-                    {index > 0 && travelTime && (
+                    {/* Travel time indicator - hiển thị từ điểm bắt đầu đến POI đầu tiên hoặc giữa các POI */}
+                    {showTravelIndicator && (
                       <View style={styles.travelTimeIndicator}>
                         <View style={styles.travelDashedLine} />
                         <View style={styles.travelTimebadge}>
@@ -621,14 +1012,14 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           </Text>
                           
                           {/* Time Row */}
-                        <View style={styles.cardRow}>
-                          <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
-                          <Text style={styles.cardTime}>
+                          <View style={styles.cardRow}>
+                            <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
+                            <Text style={styles.cardTime}>
                             {isManualRoute
                               ? 'Thời gian tự chọn'
                               : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
-                          </Text>
-                        </View>
+                            </Text>
+                          </View>
 
                           {/* Loading indicator */}
                           {isEnriching && (
@@ -640,10 +1031,14 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           )}
                         </View>
 
-                        {/* Right: Arrow Icon */}
-                        <View style={styles.cardArrow}>
-                          <FontAwesome name="chevron-right" size={16} color={COLORS.primary} />
-                        </View>
+                        {/* Right: Replace POI Button */}
+                        <TouchableOpacity
+                          style={styles.cardReplaceButton}
+                          onPress={(e) => handleReplacePOI(activity, e)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.cardReplaceButtonText}>Thay đổi</Text>
+                        </TouchableOpacity>
                       </View>
 
                       {/* Tap hint */}
@@ -674,9 +1069,96 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
           />
         )}
 
+        {overlayContent}
         {/* External footer actions (optional) */}
         {footerContent && <View style={styles.externalFooter}>{footerContent}</View>}
       </LinearGradient>
+
+      {/* Replace POI Modal */}
+      <Modal
+        visible={isReplacePOIModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsReplacePOIModalVisible(false)}
+      >
+        <View style={styles.replaceModalContainer}>
+          <View style={styles.replaceModalContent}>
+            <View style={styles.replaceModalHeader}>
+              <Text style={styles.replaceModalTitle}>Thay đổi địa điểm</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsReplacePOIModalVisible(false);
+                  setReplacingPOI(null);
+                  setSearchQuery('');
+                }}
+                style={styles.replaceModalCloseButton}
+              >
+                <FontAwesome name="close" size={20} color={COLORS.textDark} />
+              </TouchableOpacity>
+            </View>
+
+            {replacingPOI && (
+              <View style={styles.currentPOIInfo}>
+                <Text style={styles.currentPOILabel}>Địa điểm hiện tại:</Text>
+                <Text style={styles.currentPOIName}>{replacingPOI.name || 'Không có tên'}</Text>
+              </View>
+            )}
+
+            <View style={styles.searchInputContainer}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Tìm kiếm địa điểm thay thế..."
+                placeholderTextColor={COLORS.textSecondary}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus={true}
+              />
+              {isSearching && (
+                <ActivityIndicator size="small" color={COLORS.primary} style={{ marginLeft: SPACING.sm }} />
+              )}
+            </View>
+
+            <FlatList
+              data={autocompleteResults}
+              keyExtractor={(item, index) => item.placeId || item.place_id || `suggestion-${index}`}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.autocompleteItem}
+                  onPress={() => handleSelectNewPOI(item)}
+                  disabled={isUpdatingRoute}
+                >
+                  <View style={styles.autocompleteItemIcon}>
+                    <FontAwesome name="map-marker" size={16} color={COLORS.primary} />
+                  </View>
+                  <View style={styles.autocompleteItemContent}>
+                    <Text style={styles.autocompleteItemName} numberOfLines={1}>
+                      {item.text?.text || item.text || item.description || 'Không có tên'}
+                    </Text>
+                    {item.structuredFormat?.secondaryText && (
+                      <Text style={styles.autocompleteItemAddress} numberOfLines={1}>
+                        {item.structuredFormat.secondaryText}
+                      </Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                searchQuery.trim() && !isSearching ? (
+                  <Text style={styles.noResultsText}>Không tìm thấy kết quả</Text>
+                ) : null
+              }
+              style={styles.autocompleteContainer}
+            />
+
+            {isUpdatingRoute && (
+              <View style={styles.updatingContainer}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+                <Text style={styles.updatingText}>Đang cập nhật lộ trình...</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </Modal>
   );
 };
@@ -1039,6 +1521,130 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.textSecondary,
     fontStyle: 'italic',
+  },
+  cardReplaceButton: {
+    width: 70,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.sm,
+  },
+  cardReplaceButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textWhite,
+  },
+  replaceModalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  replaceModalContent: {
+    backgroundColor: COLORS.bgCard,
+    borderTopLeftRadius: SPACING.lg,
+    borderTopRightRadius: SPACING.lg,
+    paddingTop: SPACING.lg,
+    paddingHorizontal: SPACING.lg,
+    paddingBottom: SPACING.xl,
+    maxHeight: SCREEN_HEIGHT * 0.8,
+  },
+  replaceModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.md,
+  },
+  replaceModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  replaceModalCloseButton: {
+    padding: SPACING.xs,
+  },
+  currentPOIInfo: {
+    backgroundColor: COLORS.primary + '10',
+    padding: SPACING.md,
+    borderRadius: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  currentPOILabel: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xs / 2,
+  },
+  currentPOIName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.bgCard,
+    borderRadius: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  searchInput: {
+    flex: 1,
+    height: 48,
+    fontSize: 16,
+    color: COLORS.textDark,
+  },
+  autocompleteContainer: {
+    maxHeight: SCREEN_HEIGHT * 0.5,
+  },
+  autocompleteItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  autocompleteItemIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary + '15',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: SPACING.md,
+  },
+  autocompleteItemContent: {
+    flex: 1,
+  },
+  autocompleteItemName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: SPACING.xs / 2,
+  },
+  autocompleteItemAddress: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+  },
+  noResultsText: {
+    textAlign: 'center',
+    padding: SPACING.lg,
+    color: COLORS.textSecondary,
+    fontSize: 14,
+  },
+  updatingContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: SPACING.md,
+    gap: SPACING.sm,
+  },
+  updatingText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
   },
   externalFooter: {
     position: 'absolute',
