@@ -12,6 +12,7 @@ import { GoogleDirectionsResponse } from './interfaces/google-directions-respons
 import { OpenWeatherResponse } from './interfaces/openweather-response.interface';
 import { PlaceWithRouteDto, DayWithRoutesDto, CalculateRoutesResponseDto, WeatherCheckResponseDto } from './dto/custom-itinerary-response.dto';
 import { PlaceDto, CalculateRoutesDto } from './dto/calculate-routes.dto';
+import { Place, PlaceDocument } from '../place/schemas/place.schema';
 
 @Injectable()
 export class CustomItineraryService {
@@ -26,6 +27,8 @@ export class CustomItineraryService {
     private readonly customItineraryModel: Model<CustomItineraryDocument>,
     @InjectModel(Itinerary.name)
     private readonly itineraryModel: Model<any>,
+    @InjectModel(Place.name)
+    private readonly placeModel: Model<PlaceDocument>,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly itineraryService: ItineraryService,
@@ -420,6 +423,107 @@ export class CustomItineraryService {
   }
 
   /**
+   * Populate POI names từ Place collection đã được enrich cho custom itinerary
+   */
+  private async populatePoiNamesFromPlace(customRoute: CustomItineraryDocument | any): Promise<any> {
+    if (!customRoute.route_data_json) {
+      return customRoute;
+    }
+
+    const routeData = customRoute.route_data_json;
+    const placeIdsToFetch = new Set<string>();
+
+    // Thu thập tất cả google_place_id từ days
+    if (routeData.days && Array.isArray(routeData.days)) {
+      routeData.days.forEach((day: any) => {
+        if (day.places && Array.isArray(day.places)) {
+          day.places.forEach((place: any) => {
+            const placeId = place.google_place_id || place.placeId;
+            if (placeId) {
+              const normalizedId = placeId.replace(/^places\//, '');
+              placeIdsToFetch.add(normalizedId);
+              placeIdsToFetch.add(`places/${normalizedId}`);
+            }
+          });
+        }
+      });
+    }
+
+    // Thu thập từ optimized_route (nếu có)
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      routeData.optimized_route.forEach((day: any) => {
+        if (day.activities && Array.isArray(day.activities)) {
+          day.activities.forEach((activity: any) => {
+            const placeId = activity.google_place_id;
+            if (placeId) {
+              const normalizedId = placeId.replace(/^places\//, '');
+              placeIdsToFetch.add(normalizedId);
+              placeIdsToFetch.add(`places/${normalizedId}`);
+            }
+          });
+        }
+      });
+    }
+
+    if (placeIdsToFetch.size === 0) {
+      return customRoute;
+    }
+
+    // Fetch tất cả places một lần
+    const places = await this.placeModel
+      .find({ googlePlaceId: { $in: Array.from(placeIdsToFetch) } })
+      .exec();
+
+    // Tạo map để lookup nhanh
+    const placeMap = new Map<string, PlaceDocument>();
+    places.forEach((place) => {
+      const id1 = place.googlePlaceId.replace(/^places\//, '');
+      const id2 = `places/${id1}`;
+      placeMap.set(id1, place);
+      placeMap.set(id2, place);
+    });
+
+    // Cập nhật tên trong days
+    if (routeData.days && Array.isArray(routeData.days)) {
+      routeData.days.forEach((day: any) => {
+        if (day.places && Array.isArray(day.places)) {
+          day.places.forEach((place: any) => {
+            const placeId = place.google_place_id || place.placeId;
+            if (placeId) {
+              const enrichedPlace = placeMap.get(placeId) || placeMap.get(placeId.replace(/^places\//, ''));
+              if (enrichedPlace && enrichedPlace.name) {
+                place.name = enrichedPlace.name;
+              }
+            }
+          });
+        }
+      });
+    }
+
+    // Cập nhật tên trong optimized_route (nếu có)
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      routeData.optimized_route.forEach((day: any) => {
+        if (day.activities && Array.isArray(day.activities)) {
+          day.activities.forEach((activity: any) => {
+            const placeId = activity.google_place_id;
+            if (placeId) {
+              const place = placeMap.get(placeId) || placeMap.get(placeId.replace(/^places\//, ''));
+              if (place && place.name) {
+                activity.name = place.name;
+                if (activity.place) {
+                  activity.place.name = place.name;
+                }
+              }
+            }
+          });
+        }
+      });
+    }
+
+    return customRoute;
+  }
+
+  /**
    * Lấy danh sách custom itineraries của user, optional lọc status
    */
   async listRoutes(
@@ -430,11 +534,18 @@ export class CustomItineraryService {
     if (status) {
       query.status = status;
     }
-    return this.customItineraryModel
+    const routes = await this.customItineraryModel
       .find(query)
       .sort({ created_at: -1 })
       .lean()
       .exec();
+
+    // Populate POI names từ Place collection cho tất cả routes
+    const populatedRoutes = await Promise.all(
+      routes.map((route) => this.populatePoiNamesFromPlace(route)),
+    );
+
+    return populatedRoutes;
   }
 
   async checkWeather(departureDate: string, returnDate: string, destination: string): Promise<WeatherCheckResponseDto> {

@@ -375,48 +375,123 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       const token = await AsyncStorage.getItem('userToken');
       if (!token) {
         Alert.alert('Lỗi', 'Bạn cần đăng nhập để xem chi tiết địa điểm.');
+        setIsEnriching(false);
         return;
       }
 
       // Enrich place data
-      const response = await enrichPlaceAPI(token, placeId, true);
+      const response = await enrichPlaceAPI(token, placeId, false);
+      
+      // Kiểm tra response có lỗi không
+      if (response?.statusCode || response?.error || (response?.message && response.message.includes('invalid'))) {
+        const errorMessage = response.message || response.error?.message || 'Lỗi khi lấy thông tin địa điểm từ Google Places API';
+        console.error('Enrich API error:', errorMessage);
+        throw new Error(errorMessage);
+      }
+      
+      // Backend trả về { message: '...', data: {...} }
       const enrichedData = response?.data || response;
+      
+      if (!enrichedData) {
+        throw new Error('Không nhận được dữ liệu từ server');
+      }
+
+      // Map photos - đảm bảo structure đúng
+      const photosArray = Array.isArray(enrichedData.photos) 
+        ? enrichedData.photos.map((photo: any) => ({
+            name: photo.name,
+            widthPx: photo.widthPx,
+            heightPx: photo.heightPx,
+            authorAttributions: photo.authorAttributions || [],
+          }))
+        : [];
 
       // Map to bottom sheet format
       const mappedPlaceData = {
-        _id: enrichedData.googlePlaceId,
-        googlePlaceId: enrichedData.googlePlaceId,
-        name: enrichedData.name,
-        address: enrichedData.address,
-        formatted_address: enrichedData.address,
-        description: enrichedData.description || enrichedData.editorialSummary,
-        editorialSummary: enrichedData.editorialSummary,
-        rating: enrichedData.rating,
-        user_ratings_total: enrichedData.reviews?.length || 0,
-        contactNumber: enrichedData.contactNumber,
-        phone: enrichedData.contactNumber,
-        websiteUri: enrichedData.websiteUri,
-        website: enrichedData.websiteUri,
-        photos: enrichedData.photos || [],
-        reviews: enrichedData.reviews?.map((review: any) => ({
+        _id: enrichedData.googlePlaceId || placeId,
+        googlePlaceId: enrichedData.googlePlaceId || placeId,
+        name: enrichedData.name || activity.name || 'Không có tên',
+        address: enrichedData.address || enrichedData.formatted_address || '',
+        formatted_address: enrichedData.address || enrichedData.formatted_address || '',
+        description: enrichedData.description || enrichedData.editorialSummary || '',
+        editorialSummary: enrichedData.editorialSummary || '',
+        rating: enrichedData.rating || 0,
+        user_ratings_total: enrichedData.reviews?.length || enrichedData.user_ratings_total || 0,
+        contactNumber: enrichedData.contactNumber || enrichedData.phone || '',
+        phone: enrichedData.contactNumber || enrichedData.phone || '',
+        websiteUri: enrichedData.websiteUri || enrichedData.website || '',
+        website: enrichedData.websiteUri || enrichedData.website || '',
+        photos: photosArray,
+        reviews: (enrichedData.reviews || []).map((review: any) => ({
           authorName: review.authorAttributions?.[0]?.displayName || 
                      review.authorAttributions?.displayName || 
+                     review.authorName ||
                      'Người dùng ẩn danh',
-          rating: review.rating,
-          text: review.text,
-          relativePublishTimeDescription: review.relativePublishTimeDescription,
-          publishTime: review.relativePublishTimeDescription,
-          authorAttributions: review.authorAttributions,
-        })) || [],
-        type: enrichedData.type,
-        types: enrichedData.types,
-        location: enrichedData.location,
-        openingHours: enrichedData.openingHours,
-        priceLevel: enrichedData.priceLevel,
+          rating: review.rating || 0,
+          text: review.text || '',
+          relativePublishTimeDescription: review.relativePublishTimeDescription || review.publishTime || '',
+          publishTime: review.relativePublishTimeDescription || review.publishTime || '',
+          authorAttributions: review.authorAttributions || [],
+        })),
+        type: enrichedData.type || '',
+        types: enrichedData.types || [],
+        location: enrichedData.location || activity.location,
+        openingHours: enrichedData.openingHours || enrichedData.opening_hours || null,
+        priceLevel: enrichedData.priceLevel || enrichedData.price_level || null,
       };
 
       setSelectedPlaceData(mappedPlaceData);
       setIsBottomSheetVisible(true);
+      
+      // Cập nhật lại tên POI trong routeDetails với tên tiếng Việt từ enriched data
+      if (enrichedData.name && routeDetails) {
+        const updatedRouteDetails = JSON.parse(JSON.stringify(routeDetails)); // Deep clone
+        const routeDataToUpdate = updatedRouteDetails.route_data_json || updatedRouteDetails;
+        
+        // Normalize placeId để so sánh (có thể có hoặc không có prefix "places/")
+        const normalizedPlaceId = placeId.replace(/^places\//, '');
+        const enrichedPlaceId = (enrichedData.googlePlaceId || '').replace(/^places\//, '');
+        
+        // Tìm và cập nhật trong optimized_route
+        if (routeDataToUpdate.optimized_route && Array.isArray(routeDataToUpdate.optimized_route)) {
+          routeDataToUpdate.optimized_route.forEach((day: DayPlan) => {
+            if (day.activities && Array.isArray(day.activities)) {
+              day.activities.forEach((act: Activity) => {
+                const actPlaceId = (act.google_place_id || '').replace(/^places\//, '');
+                if (actPlaceId === normalizedPlaceId || actPlaceId === enrichedPlaceId) {
+                  act.name = enrichedData.name;
+                  if (act.place) {
+                    act.place.name = enrichedData.name;
+                  }
+                }
+              });
+            }
+          });
+        }
+        
+        // Tìm và cập nhật trong days (custom itinerary)
+        if (routeDataToUpdate.days && Array.isArray(routeDataToUpdate.days)) {
+          routeDataToUpdate.days.forEach((day: CustomDayWithRoutes) => {
+            if (day.places && Array.isArray(day.places)) {
+              day.places.forEach((place: CustomPlaceWithRoute) => {
+                const placeIdToMatch = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+                if (placeIdToMatch === normalizedPlaceId || placeIdToMatch === enrichedPlaceId) {
+                  place.name = enrichedData.name;
+                }
+              });
+            }
+          });
+        }
+        
+        if (updatedRouteDetails.route_data_json) {
+          updatedRouteDetails.route_data_json = routeDataToUpdate;
+        } else {
+          Object.assign(updatedRouteDetails, routeDataToUpdate);
+        }
+        
+        setRouteDetails(updatedRouteDetails);
+        console.log(`✅ Đã cập nhật tên POI thành tiếng Việt: ${enrichedData.name}`);
+      }
     } catch (err: any) {
       console.error('Error enriching place:', err);
       Alert.alert('Lỗi', err.message || 'Không thể tải thông tin địa điểm');

@@ -317,7 +317,7 @@ const renderStars = (rating: number | null) => {
 
       // Gọi enrich API để cập nhật thông tin POI
       // Force refresh để đảm bảo lấy dữ liệu mới bằng tiếng Việt từ Google Places API
-      const response = await enrichPlaceAPI(token, googlePlaceId, true);
+      const response = await enrichPlaceAPI(token, googlePlaceId, false);
       
       // Map dữ liệu từ enriched response sang format mà bottom sheet hiểu
       const enrichedData = response?.data || response;

@@ -74,8 +74,117 @@ export class ItineraryService {
     return await itinerary.save();
   }
 
+  /**
+   * Populate POI names từ Place collection đã được enrich
+   * Cập nhật tên POI trong route_data_json với tên tiếng Việt từ Place collection
+   */
+  private async populatePoiNamesFromPlace(route: ItineraryDocument): Promise<ItineraryDocument> {
+    if (!route.route_data_json) {
+      return route;
+    }
+
+    const routeData = route.route_data_json;
+    const placeIdsToFetch = new Set<string>();
+
+    // Thu thập tất cả google_place_id từ optimized_route
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      routeData.optimized_route.forEach((day: any) => {
+        if (day.activities && Array.isArray(day.activities)) {
+          day.activities.forEach((activity: any) => {
+            const placeId = activity.google_place_id;
+            if (placeId) {
+              // Normalize placeId (có thể có hoặc không có prefix "places/")
+              const normalizedId = placeId.replace(/^places\//, '');
+              placeIdsToFetch.add(normalizedId);
+              placeIdsToFetch.add(`places/${normalizedId}`);
+            }
+          });
+        }
+      });
+    }
+
+    // Thu thập từ days (custom itinerary)
+    if (routeData.days && Array.isArray(routeData.days)) {
+      routeData.days.forEach((day: any) => {
+        if (day.places && Array.isArray(day.places)) {
+          day.places.forEach((place: any) => {
+            const placeId = place.google_place_id || place.placeId;
+            if (placeId) {
+              const normalizedId = placeId.replace(/^places\//, '');
+              placeIdsToFetch.add(normalizedId);
+              placeIdsToFetch.add(`places/${normalizedId}`);
+            }
+          });
+        }
+      });
+    }
+
+    if (placeIdsToFetch.size === 0) {
+      return route;
+    }
+
+    // Fetch tất cả places một lần
+    const places = await this.placeModel
+      .find({ googlePlaceId: { $in: Array.from(placeIdsToFetch) } })
+      .exec();
+
+    // Tạo map để lookup nhanh
+    const placeMap = new Map<string, PlaceDocument>();
+    places.forEach((place) => {
+      // Thêm cả với và không có prefix "places/"
+      const id1 = place.googlePlaceId.replace(/^places\//, '');
+      const id2 = `places/${id1}`;
+      placeMap.set(id1, place);
+      placeMap.set(id2, place);
+    });
+
+    // Cập nhật tên trong optimized_route
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      routeData.optimized_route.forEach((day: any) => {
+        if (day.activities && Array.isArray(day.activities)) {
+          day.activities.forEach((activity: any) => {
+            const placeId = activity.google_place_id;
+            if (placeId) {
+              const place = placeMap.get(placeId) || placeMap.get(placeId.replace(/^places\//, ''));
+              if (place && place.name) {
+                activity.name = place.name;
+                if (activity.place) {
+                  activity.place.name = place.name;
+                }
+              }
+            }
+          });
+        }
+      });
+    }
+
+    // Cập nhật tên trong days (custom itinerary)
+    if (routeData.days && Array.isArray(routeData.days)) {
+      routeData.days.forEach((day: any) => {
+        if (day.places && Array.isArray(day.places)) {
+          day.places.forEach((place: any) => {
+            const placeId = place.google_place_id || place.placeId;
+            if (placeId) {
+              const enrichedPlace = placeMap.get(placeId) || placeMap.get(placeId.replace(/^places\//, ''));
+              if (enrichedPlace && enrichedPlace.name) {
+                place.name = enrichedPlace.name;
+              }
+            }
+          });
+        }
+      });
+    }
+
+    return route;
+  }
+
   async findByRouteId(routeId: string): Promise<ItineraryDocument | null> {
-    return this.itineraryModel.findOne({ route_id: routeId }).exec();
+    const route = await this.itineraryModel.findOne({ route_id: routeId }).exec();
+    if (!route) {
+      return null;
+    }
+    // Populate POI names từ Place collection đã được enrich
+    return await this.populatePoiNamesFromPlace(route);
   }
 
   async findByUserId(
@@ -91,10 +200,17 @@ export class ItineraryService {
       query.status = status;
     }
 
-    return this.itineraryModel
+    const routes = await this.itineraryModel
       .find(query)
       .sort({ created_at: -1 })
       .exec();
+
+    // Populate POI names từ Place collection cho tất cả routes
+    const populatedRoutes = await Promise.all(
+      routes.map((route) => this.populatePoiNamesFromPlace(route)),
+    );
+
+    return populatedRoutes;
   }
 
   async updateStatus(
