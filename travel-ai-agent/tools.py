@@ -32,7 +32,7 @@ places_collection = db["places"]
 # embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Commented out to save RAM
 
 @tool
-def search_places(query: str, location_filter: Optional[str] = None, category_filter: Optional[str] = None, limit: int = 10) -> List[Dict]:
+def search_places(query: str, location_filter: Optional[str] = None, category_filter: Optional[str] = None, limit: int = 50) -> List[Dict]:
     """
     Tìm kiếm địa điểm dựa trên query và filters.
     
@@ -40,7 +40,7 @@ def search_places(query: str, location_filter: Optional[str] = None, category_fi
         query: Mô tả địa điểm muốn tìm ("quán cà phê yên tĩnh", "bảo tàng lịch sử")
         location_filter: Khu vực cụ thể ("Quận 1", "Hà Nội")  
         category_filter: Loại hình ("restaurant", "museum", "park")
-        limit: Số lượng kết quả tối đa
+        limit: Số lượng kết quả tối đa (default: 50, supports up to 7-day trips)
         
     Returns:
         List[Dict]: Danh sách địa điểm với thông tin chi tiết
@@ -58,8 +58,8 @@ def search_places(query: str, location_filter: Optional[str] = None, category_fi
         if category_filter:
             mongo_filter["type"] = category_filter
             
-        # Get all matching places first
-        places = list(places_collection.find(mongo_filter, {"_id": 0}).limit(limit * 2))
+        # Get all matching places first (fetch 3x limit to have enough candidates after filtering)
+        places = list(places_collection.find(mongo_filter, {"_id": 0}).limit(limit * 3))
         
         if not places:
             return []
@@ -301,7 +301,7 @@ def optimize_route_with_ecs(
         print(f"   → Duration: {duration_days} days")
         print(f"   → ECS threshold: {ecs_score_threshold}")
         
-        # Call AI Optimizer Service (chatbot endpoint - fast round-robin)
+        # Call AI Optimizer Service (/optimize with K-Means clustering + adaptive ECS)
         response = requests.post(
             f"{AI_OPTIMIZER_URL}/optimize",
             json=payload,

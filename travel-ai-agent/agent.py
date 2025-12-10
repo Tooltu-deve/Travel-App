@@ -114,9 +114,26 @@ DEFAULT_CITY_COORDINATES = {
 # MOOD MAPPING FOR ECS SCORING
 # =====================================
 
+# Danh sách mood cho người dùng lựa chọn
+AVAILABLE_MOODS = [
+    "Yên tĩnh & Thư giãn",
+    "Náo nhiệt & Xã hội",
+    "Lãng mạn & Riêng tư",
+    "Điểm thu hút khách du lịch",
+    "Mạo hiểm & Thú vị",
+    "Gia đình & Thoải mái",
+    "Hiện đại & Sáng tạo",
+    "Tâm linh & Tôn giáo",
+    "Địa phương & Đích thực",
+    "Cảnh quan thiên nhiên",
+    "Lễ hội & Sôi động",
+    "Ven biển & Nghỉ dưỡng",
+]
+
 def map_preferences_to_mood(travel_style: str, group_type: str) -> str:
     """
     Map travel_style và group_type sang user_mood cho AI Optimizer Service.
+    (Chỉ dùng khi user không tự chọn mood)
     
     Mood options:
     - Yên tĩnh & Thư giãn
@@ -165,6 +182,160 @@ def map_preferences_to_mood(travel_style: str, group_type: str) -> str:
         return "Náo nhiệt & Xã hội"
     else:
         return "Điểm thu hút khách du lịch"
+
+def map_mood_to_ecs_threshold(user_mood: Optional[str]) -> float:
+    """
+    Map user mood to ECS score threshold for AI Optimizer.
+    
+    ECS threshold được tính dựa trên MOOD_WEIGHTS từ AI Optimizer Service:
+    - Tính tổng trọng số (sum of absolute weights) cho mỗi mood
+    - Mood có trọng số lớn (chặt chẽ hơn) → threshold cao hơn
+    - Mood có trọng số nhỏ (linh hoạt hơn) → threshold thấp hơn
+    
+    Công thức:
+    threshold = 0.35 + (normalized_weight_sum * 0.25)
+    
+    Range: [0.35, 0.60]
+    - 0.35: Mood rộng rãi (chấp nhận nhiều POI)
+    - 0.60: Mood chặt chẽ (chỉ lấy POI chất lượng cao)
+    
+    MOOD_WEIGHTS analysis:
+    - "Yên tĩnh & Thư giãn": sum=5.0 → threshold ≈ 0.55 (chặt chẽ)
+    - "Náo nhiệt & Xã hội": sum=3.2 → threshold ≈ 0.45 (vừa phải)
+    - "Lãng mạn & Riêng tư": sum=5.0 → threshold ≈ 0.55 (chặt chẽ)
+    - "Mạo hiểm & Thú vị": sum=5.0 → threshold ≈ 0.55 (chặt chẽ)
+    - "Cảnh quan thiên nhiên": sum=4.9 → threshold ≈ 0.55 (chặt chẽ)
+    - "Lễ hội & Sôi động": sum=3.0 → threshold ≈ 0.43 (linh hoạt)
+    - "Địa phương & Đích thực": sum=4.7 → threshold ≈ 0.54 (chặt chẽ)
+    """
+    if not user_mood:
+        return 0.50  # Default threshold
+    
+    # MOOD_WEIGHTS từ AI Optimizer Service
+    mood_weights = {
+        "Yên tĩnh & Thư giãn": {
+            "peaceful": 1.0, "scenic": 0.8, "seaside": 0.7,
+            "lively": -0.9, "festive": -0.8, "touristy": -0.7
+        },
+        "Náo nhiệt & Xã hội": {
+            "lively": 1.0, "festive": 0.9, "touristy": 0.7,
+            "peaceful": -0.9, "spiritual": -0.6
+        },
+        "Lãng mạn & Riêng tư": {
+            "romantic": 1.0, "scenic": 0.8, "peaceful": 0.7,
+            "lively": -0.9, "festive": -0.8, "touristy": -0.7
+        },
+        "Điểm thu hút khách du lịch": {
+            "touristy": 1.0, "lively": 0.8, "festive": 0.7,
+            "local_gem": -0.8, "spiritual": -0.6
+        },
+        "Mạo hiểm & Thú vị": {
+            "adventurous": 1.0, "scenic": 0.8, "seaside": 0.7,
+            "peaceful": -0.9, "spiritual": -0.7
+        },
+        "Gia đình & Thoải mái": {
+            "family-friendly": 1.0, "scenic": 0.8, "peaceful": 0.7,
+            "adventurous": -0.8, "festive": -0.6
+        },
+        "Hiện đại & Sáng tạo": {
+            "modern": 1.0, "lively": 0.7, "adventurous": 0.5,
+            "historical": -1.0, "spiritual": -0.8, "local_gem": -0.7
+        },
+        "Tâm linh & Tôn giáo": {
+            "spiritual": 1.0, "historical": 0.8, "peaceful": 0.7,
+            "modern": -1.0, "adventurous": -0.7, "lively": -0.6
+        },
+        "Địa phương & Đích thực": {
+            "local_gem": 1.0, "historical": 0.8, "peaceful": 0.7,
+            "touristy": -1.0, "modern": -0.8, "lively": -0.7
+        },
+        "Cảnh quan thiên nhiên": {
+            "scenic": 1.0, "peaceful": 0.9, "seaside": 0.8,
+            "lively": -0.7, "festive": -0.6, "touristy": -0.5
+        },
+        "Lễ hội & Sôi động": {
+            "festive": 1.0, "lively": 0.9, "touristy": 0.7,
+            "peaceful": -1.0, "scenic": -0.8, "spiritual": -0.6
+        },
+        "Ven biển & Nghỉ dưỡng": {
+            "seaside": 1.0, "scenic": 0.9, "peaceful": 0.8,
+            "historical": -0.6, "spiritual": -0.5
+        },
+    }
+    
+    # Tìm mood match (exact match)
+    selected_weights = mood_weights.get(user_mood)
+    
+    if selected_weights is None:
+        # Fallback: tìm partial match
+        mood_lower = user_mood.lower()
+        for mood_name, weights in mood_weights.items():
+            if any(word in mood_lower for word in mood_name.lower().split()):
+                selected_weights = weights
+                break
+    
+    if selected_weights is None:
+        return 0.50  # Default if no match found
+    
+    # Tính tổng trọng số tuyệt đối (sum of |weights|)
+    weight_sum = sum(abs(w) for w in selected_weights.values())
+    
+    # Normalize: max weight_sum ≈ 6.2, min ≈ 2.8
+    max_weight_sum = 6.2
+    min_weight_sum = 2.8
+    normalized_weight = (weight_sum - min_weight_sum) / (max_weight_sum - min_weight_sum)
+    normalized_weight = max(0.0, min(1.0, normalized_weight))  # Clamp to [0, 1]
+    
+    # Công thức: threshold = 0.35 + (normalized_weight * 0.25)
+    # Range: [0.35, 0.60]
+    threshold = 0.35 + (normalized_weight * 0.25)
+    
+    print(f"   🎯 ECS Threshold Calculation:")
+    print(f"      Mood: {user_mood}")
+    print(f"      Weight sum: {weight_sum:.2f} (normalized: {normalized_weight:.2f})")
+    print(f"      ECS threshold: {threshold:.2f}")
+    
+    return threshold
+
+def detect_mood_from_input(user_input: str) -> Optional[str]:
+    """
+    Detect mood from user input by matching keywords against AVAILABLE_MOODS.
+    Returns the matched mood or None if no match found.
+    
+    Examples:
+    - "yên tĩnh" → "Yên tĩnh & Thư giãn"
+    - "náo nhiệt" → "Náo nhiệt & Xã hội"
+    - "lãng mạn" → "Lãng mạn & Riêng tư"
+    - "thú vị" → "Mạo hiểm & Thú vị"
+    """
+    if not user_input or not isinstance(user_input, str):
+        return None
+    
+    user_input_lower = user_input.lower().strip()
+    
+    # Keywords mapping for each mood
+    mood_keywords = {
+        "Yên tĩnh & Thư giãn": ["yên tĩnh", "thư giãn", "chill", "relaxation", "peace"],
+        "Náo nhiệt & Xã hội": ["náo nhiệt", "xã hội", "party", "sôi động", "vui nhộn"],
+        "Lãng mạn & Riêng tư": ["lãng mạn", "romantic", "riêng tư", "đôi", "yêu"],
+        "Điểm thu hút khách du lịch": ["khách du lịch", "tour", "nổi tiếng", "popular", "touristy"],
+        "Mạo hiểm & Thú vị": ["mạo hiểm", "adventure", "thú vị", "exciting", "thách thức"],
+        "Gia đình & Thoải mái": ["gia đình", "family", "thoải mái", "trẻ em", "an toàn"],
+        "Hiện đại & Sáng tạo": ["hiện đại", "modern", "sáng tạo", "creative", "công nghệ"],
+        "Tâm linh & Tôn giáo": ["tâm linh", "spiritual", "tôn giáo", "tự suy tư", "thiền"],
+        "Địa phương & Đích thực": ["địa phương", "local", "đích thực", "authentic", "bản địa"],
+        "Cảnh quan thiên nhiên": ["thiên nhiên", "cảnh quan", "scenery", "núi", "rừng"],
+        "Lễ hội & Sôi động": ["lễ hội", "festive", "festival", "celebrations", "penh"],
+        "Ven biển & Nghỉ dưỡng": ["biển", "seaside", "resort", "bãi cát", "đảo"],
+    }
+    
+    # Check for mood keywords in user input
+    for mood, keywords in mood_keywords.items():
+        for keyword in keywords:
+            if keyword in user_input_lower:
+                return mood
+    
+    return None
 
 # =====================================
 # STATE MANAGEMENT
@@ -432,16 +603,16 @@ def profile_collector_node(state: TravelState) -> TravelState:
     current_destination = preferences.destination or preferences.start_location
     if not current_destination:
         missing_info.append("destination")
-    if not preferences.departure_location:
-        missing_info.append("departure_location")
-    if not preferences.travel_style:
-        missing_info.append("travel_style")
+    # Removed: departure_location - no longer asking for this
+    # Removed: travel_style - NOT required (doesn't affect ECS score, only for internal mapping)
     if not preferences.group_type:
         missing_info.append("group_type") 
     if not preferences.budget_range:
         missing_info.append("budget_range")
     if not preferences.duration:
         missing_info.append("duration")
+    if not preferences.user_mood:
+        missing_info.append("user_mood")
     
     # Update preferences based on user input (simple keyword detection)
     # Use model_copy() for Pydantic models
@@ -469,24 +640,15 @@ def profile_collector_node(state: TravelState) -> TravelState:
          any(user_text_stripped == word for word in confirmation_keywords))
     )
     
-    # If user is just confirming and we already have destination, auto-fill missing info
+    # If user is just confirming and we already have destination, check if all info is complete
     current_dest = updated_preferences.destination or updated_preferences.start_location
     if is_confirmation and current_dest:
-        print(f"   ✅ User confirmed (destination already set: {current_dest}) → Auto-filling missing info")
+        print(f"   ✅ User confirmed (destination already set: {current_dest})")
         
-        # Auto-fill defaults for quick planning
-        if not updated_preferences.travel_style:
-            updated_preferences.travel_style = "cultural"
-            print(f"      → Defaulting travel_style: cultural")
-        if not updated_preferences.group_type:
-            updated_preferences.group_type = "solo"
-            print(f"      → Defaulting group_type: solo")
-        if not updated_preferences.budget_range:
-            updated_preferences.budget_range = "mid-range"
-            print(f"      → Defaulting budget_range: mid-range")
-        if not updated_preferences.duration:
-            updated_preferences.duration = "3_days"
-            print(f"      → Defaulting duration: 3_days")
+        # Auto-set departure_location to destination (this is OK, not asking user)
+        if not updated_preferences.departure_location:
+            updated_preferences.departure_location = current_dest
+            print(f"      → Auto-setting departure_location to: {current_dest}")
     
     # Destination detection (IMPORTANT!)
     # Only update if found in current message - preserve existing destination if not mentioned
@@ -523,42 +685,17 @@ def profile_collector_node(state: TravelState) -> TravelState:
             updated_preferences.start_location = existing_dest
             print(f"   🔄 PRESERVED destination from state: {existing_dest}")
     
-    # Departure location detection (điểm xuất phát)
-    # Look for patterns like "từ Hà Nội", "xuất phát từ", "ở Quận 1", "khách sạn ABC"
-    departure_patterns = [
-        r'từ\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "từ Hà Nội", "từ Quận 1"
-        r'xuất phát\s+(?:từ\s+)?([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "xuất phát từ..."
-        r'(?:đang\s+)?ở\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "đang ở Quận 1"
-        r'khách sạn\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "khách sạn ABC"
-        r'sân bay\s+([^\s,\.]+(?:\s+[^\s,\.]+)?)',  # "sân bay Nội Bài"
-    ]
+    # NOTE: Departure location detection removed - no longer asking users for this
+    # Departure location will be auto-set to destination in the logic below
     
-    for pattern in departure_patterns:
-        departure_match = re.search(pattern, user_text)
-        if departure_match:
-            departure = departure_match.group(1).strip()
-            # Make sure it's not the same as destination
-            if departure and departure != updated_preferences.destination:
-                updated_preferences.departure_location = departure
-                print(f"   ✅ Detected departure location: {departure}")
-                
-                # Geocode the departure location
-                geocoded = geocode_location(departure, updated_preferences.destination)
-                if geocoded:
-                    updated_preferences.departure_coordinates = geocoded
-                    print(f"   📍 Geocoded to: {geocoded['lat']}, {geocoded['lng']}")
-                else:
-                    # Try to use default city coordinates if geocoding failed
-                    departure_lower = departure.lower()
-                    for city, coords in DEFAULT_CITY_COORDINATES.items():
-                        if city in departure_lower:
-                            updated_preferences.departure_coordinates = coords
-                            print(f"   📍 Using default coordinates for {city}: {coords}")
-                            break
-                break
-    
-    # Preserve existing departure_location if not found in message
-    if not updated_preferences.departure_location and preferences.departure_location:
+    # Auto-set departure_location to destination if not set
+    if not updated_preferences.departure_location:
+        current_dest = updated_preferences.destination or updated_preferences.start_location
+        if current_dest:
+            updated_preferences.departure_location = current_dest
+            print(f"   ⚙️ Auto-setting departure_location to destination: {current_dest}")
+    elif preferences.departure_location:
+        # Preserve existing departure_location if set
         updated_preferences.departure_location = preferences.departure_location
         # Also preserve geocoded coordinates
         if preferences.departure_coordinates:
@@ -574,10 +711,17 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.travel_style = "cultural"
     elif any(word in user_text for word in ["ăn uống", "ẩm thực", "quán ăn", "món ngon"]):
         updated_preferences.travel_style = "foodie"
-    elif not updated_preferences.travel_style:
-        # Default to cultural if not specified
-        updated_preferences.travel_style = "cultural"
-        print(f"   ⚙️ Defaulting travel_style to 'cultural'")
+    # NOTE: Removed auto-default to allow agent to ask user
+    
+    # Mood detection from user input
+    detected_mood = detect_mood_from_input(last_message)
+    if detected_mood:
+        updated_preferences.user_mood = detected_mood
+        print(f"   ✅ Detected mood from input: {detected_mood}")
+    # Preserve existing mood if already set
+    elif preferences.user_mood:
+        updated_preferences.user_mood = preferences.user_mood
+        print(f"   🔄 PRESERVED mood from state: {preferences.user_mood}")
     
     # Group type detection
     # Detect based on number of people first
@@ -688,11 +832,10 @@ def profile_collector_node(state: TravelState) -> TravelState:
     has_destination = updated_preferences.destination or updated_preferences.start_location
     is_info_complete = all([
         has_destination,  # MUST have destination!
-        updated_preferences.departure_location,  # MUST have departure location for route calculation!
-        updated_preferences.travel_style,
         updated_preferences.group_type, 
         updated_preferences.budget_range,
-        updated_preferences.duration
+        updated_preferences.duration,
+        updated_preferences.user_mood  # MUST have mood! (affects ECS threshold)
     ])
     
     # If user confirmed with complete info, go straight to planning
@@ -709,45 +852,47 @@ def profile_collector_node(state: TravelState) -> TravelState:
     missing_fields = []
     if not has_destination:
         missing_fields.append("điểm đến (bạn muốn đi đâu?)")
-    if not updated_preferences.departure_location:
-        missing_fields.append("điểm xuất phát (bạn đang ở đâu?)")
-    if not updated_preferences.travel_style:
-        missing_fields.append("phong cách du lịch")
-    if not updated_preferences.group_type:
-        missing_fields.append("nhóm đi")
-    if not updated_preferences.budget_range:
-        missing_fields.append("ngân sách")
     if not updated_preferences.duration:
         missing_fields.append("thời gian (mấy ngày?)")
+    if not updated_preferences.group_type:
+        missing_fields.append("nhóm đi (bao nhiêu người?)")
+    if not updated_preferences.budget_range:
+        missing_fields.append("ngân sách")
+    if not updated_preferences.user_mood:
+        missing_fields.append("tâm trạng/mood (yên tĩnh, náo nhiệt, lãng mạn...)")
     
     missing_info = ", ".join(missing_fields) if missing_fields else "Đã đủ"
+    
+    # Create mood options string for system prompt
+    mood_options_str = "\n".join([f"  - {mood}" for mood in AVAILABLE_MOODS])
     
     system_prompt = f"""
     Bạn là một AI travel assistant thông minh. Nhiệm vụ của bạn là thu thập thông tin về sở thích du lịch của khách hàng một cách tự nhiên.
     
-    Thông tin hiện tại về khách hàng (ĐÃ CẬP NHẬT):
+    Thông tin hiện tại về khách hàng:
     - Điểm đến: {updated_preferences.destination or updated_preferences.start_location or "Chưa biết"}
-    - Điểm xuất phát: {updated_preferences.departure_location or "Chưa biết"}
-    - Phong cách du lịch: {updated_preferences.travel_style or "Chưa biết"}
     - Nhóm đi: {updated_preferences.group_type or "Chưa biết"}  
     - Ngân sách: {updated_preferences.budget_range or "Chưa biết"}
     - Thời gian: {updated_preferences.duration or "Chưa biết"}
-    - Sở thích: {updated_preferences.interests or "Chưa biết"}
+    - Tâm trạng/Mood: {updated_preferences.user_mood or "Chưa biết"} ⭐ (ĐẶC BIỆT QUAN TRỌNG - ảnh hưởng đến chất lượng lộ trình)
+    
+    Các mood có sẵn (hãy giúp khách chọn một):
+{mood_options_str}
     
     Tin nhắn mới nhất của khách: "{last_message}"
     
-    QUAN TRỌNG:
-    - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ thông tin → Nói sẽ tạo lộ trình
-    - Nếu khách mới bắt đầu conversation hoặc còn thiếu thông tin → HỎI thông tin còn thiếu
-    - Thông tin còn thiếu: {missing_info}
-    - NẾU THIẾU ĐIỂM XUẤT PHÁT → Hỏi: "Bạn đang ở đâu hoặc sẽ xuất phát từ đâu? (ví dụ: sân bay, khách sạn, quận/huyện...)"
+    Thông tin còn thiếu: {missing_info}
     
-    Hãy:
-    1. Xác nhận thông tin khách vừa cung cấp (nếu có)
-    2. Chỉ hỏi về thông tin CÒN THIẾU (không hỏi lại thông tin đã có)
-    3. Hỏi một cách tự nhiên, thân thiện, một câu hỏi mỗi lần
+    HƯỚNG DẪN:
+    - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ tất cả thông tin → Nói sẽ tạo lộ trình
+    - Nếu còn thiếu thông tin → Hỏi những trường còn thiếu một cách tự nhiên
+    - Hỏi tự nhiên, thân thiện, lồng ghép các câu hỏi
+    - ⭐ Tâm trạng/mood là QUAN TRỌNG NHẤT - nó ảnh hưởng trực tiếp đến mức độ chất lượng của các địa điểm được chọn
+    - Khi hỏi về tâm trạng/mood, giới thiệu ngắn gọn các lựa chọn trên
+    - Ví dụ: "Bạn muốn đi với tâm trạng nào - yên tĩnh & thư giãn, náo nhiệt & xã hội, hay mạo hiểm & thú vị?"
+    - Chỉ hỏi những trường CHƯA CÓ, không hỏi lại những trường đã có
     
-    Trả lời bằng tiếng Việt, thân thiện và chuyên nghiệp.
+    Trả lời bằng tiếng Việt, thân thiện.
     """
     
     response = llm.invoke([
@@ -775,14 +920,18 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
     
     preferences = state["user_preferences"]
     
-    # Map travel_style + group_type to user_mood for ECS scoring
-    user_mood = map_preferences_to_mood(
-        preferences.travel_style or "cultural",
-        preferences.group_type or "solo"
-    )
-    preferences.user_mood = user_mood
-    
-    print(f"   → Mapped mood: {user_mood}")
+    # Use user-selected mood if available, otherwise auto-map from travel_style + group_type
+    if preferences.user_mood:
+        user_mood = preferences.user_mood
+        print(f"   ✅ Using user-selected mood: {user_mood}")
+    else:
+        # Fallback to auto-mapping (shouldn't happen if user_mood is required)
+        user_mood = map_preferences_to_mood(
+            preferences.travel_style or "cultural",
+            preferences.group_type or "solo"
+        )
+        preferences.user_mood = user_mood
+        print(f"   → Auto-mapped mood (fallback): {user_mood} (from {preferences.travel_style} + {preferences.group_type})")
     
     # Get destination (location filter) - use destination field, fallback to start_location
     destination = preferences.destination or preferences.start_location or "Hà Nội"
@@ -895,8 +1044,17 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
         # Convert datetime object to ISO string if needed
         start_datetime = start_datetime.isoformat()
     
-    # Call AI Optimizer Service
+    # Call AI Optimizer Service with adaptive ECS threshold
+    # Start with a reasonable threshold and adjust based on max 4 places/day
     print(f"   → Calling AI Optimizer with {len(unique_places)} places, {duration_days} days")
+    
+    # Calculate target: 4 places per day is ideal
+    target_places = min(duration_days * 4, len(unique_places))
+    print(f"   → Target places: {target_places} (max 4/day for {duration_days} days)")
+    
+    # Map user_mood to ECS threshold (no longer hardcoded 0.5)
+    initial_ecs_threshold = map_mood_to_ecs_threshold(user_mood)
+    print(f"   → User mood: {user_mood} → ECS threshold: {initial_ecs_threshold}")
     
     optimizer_result = optimize_route_with_ecs.invoke({
         "places": unique_places,
@@ -904,11 +1062,41 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
         "duration_days": duration_days,
         "current_location": destination_center,  # Use destination center for POI filtering
         "start_datetime": start_datetime,
-        "ecs_score_threshold": 0.0  # Accept all places for now
+        "ecs_score_threshold": initial_ecs_threshold
     })
     
     # Extract optimized route
     optimized_route = optimizer_result.get("optimized_route", [])
+    
+    # Adaptive ECS threshold: if too many places, increase threshold to reduce quantity
+    if optimized_route:
+        total_places_in_route = sum(len(day.get("activities", [])) for day in optimized_route)
+        print(f"   → Initial result: {total_places_in_route} places across {len(optimized_route)} days")
+        
+        # If more than 4 places per day on average, increase threshold and retry
+        avg_places_per_day = total_places_in_route / duration_days if duration_days > 0 else 0
+        if avg_places_per_day > 4:
+            print(f"   ⚠️  Too many places: {avg_places_per_day:.1f}/day (target: 4/day)")
+            
+            # Increase threshold gradually to reduce quantity
+            # ECS 0.5 → 0.6 → 0.7 → 0.8 based on how many extra places
+            excess_ratio = (avg_places_per_day - 4) / 4  # How much above 4
+            adjusted_threshold = min(0.9, initial_ecs_threshold + (excess_ratio * 0.3))
+            
+            print(f"   → Retrying with higher ECS threshold: {adjusted_threshold:.2f}")
+            
+            optimizer_result = optimize_route_with_ecs.invoke({
+                "places": unique_places,
+                "user_mood": user_mood,
+                "duration_days": duration_days,
+                "current_location": destination_center,
+                "start_datetime": start_datetime,
+                "ecs_score_threshold": adjusted_threshold
+            })
+            
+            optimized_route = optimizer_result.get("optimized_route", [])
+            total_places_in_route = sum(len(day.get("activities", [])) for day in optimized_route)
+            print(f"   ✅ Adjusted result: {total_places_in_route} places ({total_places_in_route / duration_days:.1f}/day)")
     
     if not optimized_route:
         # Fallback to simple itinerary if optimizer fails
