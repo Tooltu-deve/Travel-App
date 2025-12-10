@@ -689,7 +689,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
                           {[
                             'Gần đây có quán cà phê nào không?',
-                            'Tôi muốn du lịch Hà Nội, 4 người, 3 ngày, ngân sách 10 triệu đồng',
+                            'Tôi muốn đi du lịch ở thành phố Hồ Chí Minh, 2 người, 3 ngày, ngân sách 7 triệu, phong cách ẩm thực',
                             'Gợi ý lộ trình du lịch Đà Nẵng - Hội An, 2 người, 2 ngày, 5 triệu đồng'
                           ].map((suggestion, index) => (
                             <TouchableOpacity
