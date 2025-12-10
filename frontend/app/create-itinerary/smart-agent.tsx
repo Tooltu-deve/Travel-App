@@ -20,7 +20,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Calendar, DateData } from 'react-native-calendars';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { generateRouteAPI, getProfileAPI } from '../../services/api';
+import { generateRouteAPI, getProfileAPI, checkWeatherAPI } from '../../services/api';
+import WeatherWarningModal, { WeatherSeverity } from '../../components/WeatherWarningModal';
 
 const SmartAgentFormScreen: React.FC = () => {
   const router = useRouter();
@@ -39,6 +40,12 @@ const SmartAgentFormScreen: React.FC = () => {
   const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'bicycling' | 'transit'>('driving');
   const [poiPerDay, setPoiPerDay] = useState<string>('3');
   const [currentStep, setCurrentStep] = useState<number>(1);
+
+  // Weather warning state
+  const [weatherModalVisible, setWeatherModalVisible] = useState(false);
+  const [weatherSeverity, setWeatherSeverity] = useState<WeatherSeverity>('normal');
+  const [weatherAlert, setWeatherAlert] = useState<string>('');
+  const [isCheckingWeather, setIsCheckingWeather] = useState(false);
 
   // Available options - Sử dụng đúng các giá trị budget từ database
   const budgetOptions = [
@@ -146,7 +153,7 @@ const SmartAgentFormScreen: React.FC = () => {
     }
 
     try {
-      setIsLoading(true);
+      setIsCheckingWeather(true);
 
       // Get token from AsyncStorage
       const token = await AsyncStorage.getItem('userToken');
@@ -155,6 +162,55 @@ const SmartAgentFormScreen: React.FC = () => {
         router.replace('/(auth)/login');
         return;
       }
+
+      // Kiểm tra thời tiết trước khi tạo lộ trình
+      console.log('🌤️ Checking weather for:', destination);
+      const weatherResult = await checkWeatherAPI(
+        startDate.toISOString(),
+        endDate.toISOString(),
+        destination.trim(),
+        token
+      );
+      console.log('🌤️ Weather check result:', weatherResult);
+
+      setIsCheckingWeather(false);
+
+      // Xử lý theo mức độ cảnh báo thời tiết
+      if (weatherResult.severity === 'danger') {
+        // Danger: Hiển thị cảnh báo và tự động quay về form
+        setWeatherSeverity('danger');
+        setWeatherAlert(weatherResult.alert || '');
+        setWeatherModalVisible(true);
+        return;
+      }
+
+      if (weatherResult.severity === 'warning') {
+        // Warning: Hiển thị modal cho người dùng chọn
+        setWeatherSeverity('warning');
+        setWeatherAlert(weatherResult.alert || '');
+        setWeatherModalVisible(true);
+        return;
+      }
+
+      // Normal: Tiếp tục tạo lộ trình
+      await proceedWithRouteGeneration(token, days);
+    } catch (error: any) {
+      console.error('❌ Weather check error:', error);
+      setIsCheckingWeather(false);
+      // Nếu lỗi khi kiểm tra thời tiết, vẫn cho phép tiếp tục tạo lộ trình
+      const token = await AsyncStorage.getItem('userToken');
+      if (token) {
+        const diffMs = endDate!.getTime() - startDate!.getTime();
+        const days = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+        await proceedWithRouteGeneration(token, days);
+      }
+    }
+  };
+
+  // Hàm thực hiện tạo lộ trình (được gọi sau khi kiểm tra thời tiết)
+  const proceedWithRouteGeneration = async (token: string, days: number) => {
+    try {
+      setIsLoading(true);
 
       // Prepare request body
       const requestBody: any = {
@@ -204,6 +260,27 @@ const SmartAgentFormScreen: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Xử lý khi người dùng chọn "Tiếp tục" trong modal warning
+  const handleWeatherContinue = async () => {
+    setWeatherModalVisible(false);
+    const token = await AsyncStorage.getItem('userToken');
+    if (token && startDate && endDate) {
+      const diffMs = endDate.getTime() - startDate.getTime();
+      const days = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+      await proceedWithRouteGeneration(token, days);
+    }
+  };
+
+  // Xử lý khi người dùng chọn "Quay lại" trong modal
+  const handleWeatherGoBack = () => {
+    setWeatherModalVisible(false);
+    if (weatherSeverity === 'danger') {
+      // Danger: Quay về bước 1 (chọn ngày đi)
+      setCurrentStep(1);
+    }
+    // Warning: Chỉ đóng modal, giữ nguyên form
   };
 
   const handleNextStep = () => {
@@ -679,13 +756,15 @@ const SmartAgentFormScreen: React.FC = () => {
         {/* Footer */}
         <View style={[styles.footer, { paddingBottom: insets.bottom + SPACING.md }]}>
           <TouchableOpacity 
-            style={[styles.footerButton, styles.nextButton, isLoading && styles.submitButtonDisabled]}
+            style={[styles.footerButton, styles.nextButton, (isLoading || isCheckingWeather) && styles.submitButtonDisabled]}
             onPress={handleNextStep}
             activeOpacity={0.7}
-            disabled={isLoading}
+            disabled={isLoading || isCheckingWeather}
           >
             <Text style={styles.nextButtonText}>
-              {currentStep === 4 ? (isLoading ? 'Đang tạo...' : 'Tạo lộ trình') : 'Tiếp theo'}
+              {currentStep === 4 
+                ? (isCheckingWeather ? 'Đang kiểm tra thời tiết...' : isLoading ? 'Đang tạo...' : 'Tạo lộ trình') 
+                : 'Tiếp theo'}
             </Text>
             <FontAwesome
               name={currentStep === 4 ? 'check' : 'arrow-right'}
@@ -694,6 +773,17 @@ const SmartAgentFormScreen: React.FC = () => {
             />
           </TouchableOpacity>
         </View>
+
+        {/* Weather Warning Modal */}
+        <WeatherWarningModal
+          visible={weatherModalVisible}
+          severity={weatherSeverity}
+          alertMessage={weatherAlert}
+          destination={destination}
+          onContinue={handleWeatherContinue}
+          onGoBack={handleWeatherGoBack}
+          onClose={() => setWeatherModalVisible(false)}
+        />
       </View>
     </LinearGradient>
   );
