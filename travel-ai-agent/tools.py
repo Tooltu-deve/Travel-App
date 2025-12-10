@@ -289,7 +289,7 @@ def optimize_route_with_ecs(
         
         payload = {
             'poi_list': poi_list,
-            'user_mood': user_mood,
+            'user_mood': [user_mood],  # Convert string to list as expected by AI Optimizer
             'duration_days': duration_days,
             'current_location': current_location,
             'start_datetime': start_datetime_str,
