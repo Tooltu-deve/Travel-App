@@ -191,9 +191,11 @@ export default function ItineraryDetailsScreen() {
     return points;
   };
 
-  // Get current day activities
-  const currentDayData = optimizedRoute.find((d: DayPlan) => d.day === selectedDay);
-  const activities: Activity[] = currentDayData?.activities || [];
+  // Get current day activities - use React.useMemo to prevent infinite re-renders
+  const activities = React.useMemo(() => {
+    const currentDayData = optimizedRoute.find((d: DayPlan) => d.day === selectedDay);
+    return currentDayData?.activities || [];
+  }, [optimizedRoute, selectedDay]);
 
   // Convert to map coordinate
   const toMapCoordinate = (point?: { lat: number; lng: number } | { coordinates: [number, number] }) => {
@@ -278,14 +280,14 @@ export default function ItineraryDetailsScreen() {
     return segments.filter((segment) => segment.points.length > 1);
   })();
 
-  // Update map region when day changes
+  // Update map region when day changes - removed activities from dependency array
   useEffect(() => {
     const region = calculateMapRegion(activities);
     if (region) {
       setMapRegion(region);
       mapRef.current?.animateToRegion(region, 500);
     }
-  }, [selectedDay, activities]);
+  }, [selectedDay]);
 
   // Fit to markers
   const handleFitToMarkers = () => {
@@ -320,7 +322,11 @@ export default function ItineraryDetailsScreen() {
   const handleActivityPress = async (activity: Activity) => {
     const placeId = activity.google_place_id;
     if (!placeId) {
-      Alert.alert('Thông báo', 'Địa điểm này chưa có Google Place ID.');
+      Alert.alert(
+        'Thông báo', 
+        'Địa điểm này chưa có thông tin chi tiết từ Google Places. Bạn có thể xem tên và vị trí trên bản đồ.',
+        [{ text: 'OK' }]
+      );
       return;
     }
 

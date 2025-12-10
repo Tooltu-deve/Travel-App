@@ -44,7 +44,15 @@ export default function RoutePreviewScreen() {
         return;
       }
 
-      await updateRouteStatusAPI(token, routeId, {
+      const finalTitleRaw = (titleValue ?? routeTitle).trim();
+      const finalTitle =
+        finalTitleRaw.length > 0
+          ? finalTitleRaw
+          : suggestedTitle;
+
+      setRouteTitle(finalTitle);
+
+      await updateRouteStatusAPI(token, params.routeId, {
         status: 'CONFIRMED',
         title: titleToSave,
       });
@@ -55,7 +63,7 @@ export default function RoutePreviewScreen() {
       ]);
     } catch (error: any) {
       console.error('❌ Update route status error:', error);
-      Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình.');
+      Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình. Vui lòng thử lại.');
     } finally {
       setIsSaving(false);
       setIsNameModalVisible(false);
