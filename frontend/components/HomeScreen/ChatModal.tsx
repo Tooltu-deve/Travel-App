@@ -178,6 +178,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
   const [itineraryId, setItineraryId] = useState<string | null>(null);
   const [itinerary, setItinerary] = useState<any>(null);
   const [itineraryStatus, setItineraryStatus] = useState<'DRAFT' | 'CONFIRMED' | null>(null);
+  const [startLocation, setStartLocation] = useState<string | { lat: number; lng: number } | undefined>(undefined);
   const [showItineraryDetail, setShowItineraryDetail] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -370,8 +371,21 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
           if (dataOk.itinerary && Array.isArray(dataOk.itinerary)) {
             console.debug('[Chat Response] Setting itinerary with', dataOk.itinerary.length, 'items');
+            
+            // DEBUG: Log first item structure to see if encoded_polyline exists
+            if (dataOk.itinerary.length > 0) {
+              console.log('[DEBUG] First itinerary item structure:', JSON.stringify(dataOk.itinerary[0], null, 2));
+            }
+            
             setItinerary(dataOk.itinerary);
           }
+
+          // Capture start_location from response
+          if (dataOk.start_location) {
+            console.debug('[Chat Response] Setting start location:', dataOk.start_location);
+            setStartLocation(dataOk.start_location);
+          }
+
           if (dataOk.stage) {
             console.debug('[Chat Response] Stage:', dataOk.stage, '. ItineraryId:', dataOk.itineraryId || dataOk.metadata?.itinerary_id);
           }
@@ -468,6 +482,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
                 setSessionId(null);
                 setItineraryId(null);
                 setItinerary(null);
+                setStartLocation(undefined);
                 setShowItineraryDetail(false);
                 Alert.alert('Thành công', 'Cuộc trò chuyện đã được xóa');
               } else {
@@ -560,6 +575,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
         <ItineraryDetailScreen
           itinerary={itinerary}
           itineraryId={itineraryId}
+          startLocation={startLocation}
           itineraryStatus={itineraryStatus}
           setItineraryStatus={setItineraryStatus}
           onClose={() => setShowItineraryDetail(false)}
@@ -578,7 +594,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
       {/* Main Chat Modal */}
       {!showItineraryDetail && (
         <LinearGradient
-          colors={[COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.bgLightBlue]}
+          colors={['#E3F2FD', 'rgba(178, 221, 247, 1)', COLORS.bgMain]}
           style={styles.gradientBackground}
         >
           <KeyboardAvoidingView
