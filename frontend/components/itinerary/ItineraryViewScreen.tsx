@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, ReactNode } from 'react';
+import React, { useState, useEffect, useRef, ReactNode, useMemo } from 'react';
 import {
   View,
   Text,
@@ -293,9 +293,15 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     return points;
   };
 
-  // Get current day activities
-  const currentDayData = optimizedRoute.find((d: DayPlan) => d.day === selectedDay);
-  const activities: Activity[] = currentDayData?.activities || [];
+  // Get current day activities - use useMemo to prevent creating new array reference on every render
+  const currentDayData = useMemo(
+    () => optimizedRoute.find((d: DayPlan) => d.day === selectedDay),
+    [optimizedRoute, selectedDay]
+  );
+  const activities: Activity[] = useMemo(
+    () => currentDayData?.activities || [],
+    [currentDayData]
+  );
 
   // Convert to map coordinate
   const toMapCoordinate = (point?: { lat: number; lng: number } | { coordinates: [number, number] }) => {
@@ -349,33 +355,58 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   };
 
   // Route segments for polylines (bao gồm đoạn từ điểm bắt đầu đến POI đầu tiên nếu có)
-  const routeSegments = (() => {
-    const segments: { latitude: number; longitude: number }[][] = [];
+    const routeSegments = (() => {
+      const segments: { latitude: number; longitude: number }[][] = [];
 
-    if (
-      startLocation &&
-      activities.length > 0 &&
-      activities[0]?.start_encoded_polyline
-    ) {
-      segments.push(decodePolyline(activities[0].start_encoded_polyline));
-    }
-
-    activities.forEach((activity) => {
-      const decoded = decodePolyline(activity.encoded_polyline);
-      if (decoded.length > 1) {
-        segments.push(decoded);
+      // Đoạn từ điểm bắt đầu đến POI đầu tiên
+      if (startLocation && activities.length > 0) {
+        if (activities[0]?.start_encoded_polyline) {
+          segments.push(decodePolyline(activities[0].start_encoded_polyline));
+        } else {
+          // Nếu không có polyline, tự tạo đoạn thẳng từ điểm bắt đầu đến POI đầu tiên
+          const startCoord = toMapCoordinate(startLocation);
+          const firstCoord = toMapCoordinate(activities[0].location);
+          if (startCoord && firstCoord) {
+            segments.push([startCoord, firstCoord]);
+          }
+        }
       }
-    });
 
-    return segments.filter((segment) => segment.length > 1);
-  })();
+      activities.forEach((activity, idx) => {
+        const decoded = decodePolyline(activity.encoded_polyline);
+        if (decoded.length > 1) {
+          segments.push(decoded);
+        } else if (idx > 0) {
+          // Nếu không có polyline, vẽ đoạn thẳng giữa các POI liên tiếp
+          const prevCoord = toMapCoordinate(activities[idx - 1].location);
+          const currCoord = toMapCoordinate(activity.location);
+          if (prevCoord && currCoord) {
+            segments.push([prevCoord, currCoord]);
+          }
+        }
+      });
+
+      return segments.filter((segment) => segment.length > 1);
+    })();
 
   // Update map region when day changes
   useEffect(() => {
     const region = calculateMapRegion(activities, startLocation);
     if (region) {
-      setMapRegion(region);
-      mapRef.current?.animateToRegion(region, 500);
+      setMapRegion((prev) => {
+        // Chỉ update nếu region thực sự thay đổi (tránh vòng lặp)
+        if (
+          !prev ||
+          Math.abs(prev.latitude - region.latitude) > 0.0001 ||
+          Math.abs(prev.longitude - region.longitude) > 0.0001 ||
+          Math.abs(prev.latitudeDelta - region.latitudeDelta) > 0.0001 ||
+          Math.abs(prev.longitudeDelta - region.longitudeDelta) > 0.0001
+        ) {
+          mapRef.current?.animateToRegion(region, 500);
+          return region;
+        }
+        return prev;
+      });
     }
   }, [selectedDay, activities, startLocation]);
 
@@ -538,7 +569,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   // Debounced search for autocomplete
   useEffect(() => {
     if (!isReplacePOIModalVisible || !searchQuery.trim()) {
-      setAutocompleteResults([]);
+      // Chỉ set state nếu autocompleteResults không rỗng (tránh vòng lặp vô hạn)
+      setAutocompleteResults((prev) => prev.length > 0 ? [] : prev);
       return;
     }
 
