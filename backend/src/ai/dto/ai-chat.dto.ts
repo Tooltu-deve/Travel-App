@@ -173,6 +173,12 @@ export class ChatResponseDto {
         example: '507f1f77bcf86cd799439011',
     })
     itineraryId?: string;
+
+    @ApiPropertyOptional({
+        description: 'Điểm bắt đầu của lộ trình (tọa độ)',
+        example: { lat: 21.0285, lng: 105.8542 },
+    })
+    start_location?: { lat: number; lng: number };
 }
 
 export class ResetConversationDto {

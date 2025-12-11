@@ -1187,11 +1187,26 @@ export class ItineraryService {
   ): Promise<any> {
     const enrichedRoute: any[] = [];
 
-    for (const dayData of optimizedRoute.optimized_route || []) {
+    for (let dayIndex = 0; dayIndex < (optimizedRoute.optimized_route || []).length; dayIndex++) {
+      const dayData = optimizedRoute.optimized_route[dayIndex];
       const enrichedActivities: any[] = [];
       let previousLocation = currentLocation;
       const dayTravelMode =
         dayData.travel_mode || travelMode || optimizedRoute.travel_mode || 'driving';
+
+      // ✅ Thêm điểm bắt đầu vào đầu ngày thứ nhất
+      if (dayIndex === 0) {
+        const startingPoint = {
+          place_name: 'Điểm khởi hành',
+          location: currentLocation,
+          visit_order: 0,
+          type: 'start_location',
+          rating: 0,
+          review_count: 0,
+          ecs_score: 1.0, // Luôn là 1.0 vì nó là điểm bắt đầu
+        };
+        enrichedActivities.push(startingPoint);
+      }
 
       for (const poi of dayData.activities || []) {
         const poiLocation = poi.location;
@@ -1286,8 +1301,9 @@ export class ItineraryService {
       );
 
       if (response.data.status !== 'OK' || !response.data.results.length) {
+        // Throw error sẽ được catch ở generateAndSaveRoute để fallback
         throw new HttpException(
-          `Không tìm thấy tọa độ cho địa điểm: ${address}`,
+          `Không tìm thấy tọa độ cho địa điểm: ${address}. Hãy nhập tên đường/địa chỉ chi tiết hơn (ví dụ: Đường Nguyễn Văn Cừ, TP.HCM hoặc Hà Nội).`,
           HttpStatus.BAD_REQUEST,
         );
       }
@@ -1310,7 +1326,24 @@ export class ItineraryService {
     generateDto: GenerateRouteDto,
   ): Promise<ItineraryDocument> {
     // Geocode start_location từ string sang coordinates
-    const currentLocation = await this.geocodeAddress(generateDto.start_location);
+    let currentLocation: { lat: number; lng: number };
+    try {
+      currentLocation = await this.geocodeAddress(generateDto.start_location);
+    } catch (error) {
+      // Nếu start_location geocode fail, thử fallback với destination
+      console.warn(
+        `⚠️ Không thể geocode start_location "${generateDto.start_location}", thử fallback sang destination...`,
+      );
+      try {
+        currentLocation = await this.geocodeAddress(generateDto.destination);
+      } catch (fallbackError) {
+        // Nếu cả destination cũng fail, throw error
+        throw new HttpException(
+          `Không thể geocode địa điểm khởi hành "${generateDto.start_location}" và điểm đến "${generateDto.destination}". Vui lòng nhập tên địa chỉ chi tiết hơn.`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
 
     let places = await this.filterPoisByBudgetAndDestination(
       generateDto.budget,

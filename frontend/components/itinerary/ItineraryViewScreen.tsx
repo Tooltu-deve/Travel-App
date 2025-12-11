@@ -43,7 +43,9 @@ interface Activity {
   travel_duration_minutes?: number;
   encoded_polyline?: string;
   start_encoded_polyline?: string; // polyline từ điểm bắt đầu tới POI đầu tiên (nếu có)
+  start_location_polyline?: string; // polyline từ điểm xuất phát (từ backend)
   start_travel_duration_minutes?: number; // thời gian di chuyển từ điểm bắt đầu tới POI đầu tiên
+  travel_duration_from_start?: number; // thời gian di chuyển từ điểm xuất phát (từ backend)
   google_place_id?: string;
   time?: string;
   activity?: string;
@@ -355,9 +357,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     if (
       startLocation &&
       activities.length > 0 &&
-      activities[0]?.start_encoded_polyline
+      (activities[0]?.start_location_polyline || activities[0]?.start_encoded_polyline)
     ) {
-      segments.push(decodePolyline(activities[0].start_encoded_polyline));
+      // Prefer start_location_polyline (from backend), fallback to start_encoded_polyline (from manual)
+      const polyline = activities[0].start_location_polyline || activities[0].start_encoded_polyline;
+      segments.push(decodePolyline(polyline));
     }
 
     activities.forEach((activity) => {

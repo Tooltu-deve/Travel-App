@@ -44,25 +44,18 @@ export default function RoutePreviewScreen() {
         return;
       }
 
-      const finalTitleRaw = (titleValue ?? routeTitle).trim();
-      const finalTitle =
-        finalTitleRaw.length > 0
-          ? finalTitleRaw
-          : suggestedTitle;
-
-      setRouteTitle(finalTitle);
-
-      await updateRouteStatusAPI(token, params.routeId, {
+      await updateRouteStatusAPI(token, routeId, {
         status: 'CONFIRMED',
         title: titleToSave,
       });
-
+      console.log('[RoutePreview] updateRouteStatusAPI success');
+      
       Alert.alert('Thành công', 'Lộ trình đã được lưu.', [
         { text: 'OK', onPress: () => router.replace('/(tabs)/itinerary') },
       ]);
     } catch (error: any) {
       console.error('❌ Update route status error:', error);
-      Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình. Vui lòng thử lại.');
+      Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình.');
     } finally {
       setIsSaving(false);
       setIsNameModalVisible(false);
@@ -111,40 +104,79 @@ export default function RoutePreviewScreen() {
 
   const footerButtons = (
     <View style={styles.footer}>
-      <TouchableOpacity
-        style={[styles.footerButton, styles.cancelButton]}
-        onPress={handleCancel}
+          <TouchableOpacity
+            style={[styles.footerButton, styles.cancelButton]}
+            onPress={handleCancel}
         disabled={isDeleting || isSaving}
-        activeOpacity={0.7}
-      >
-        {isDeleting ? (
-          <ActivityIndicator size="small" color={COLORS.textDark} />
-        ) : (
-          <Text style={styles.cancelButtonText}>Hủy</Text>
-        )}
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.footerButton, styles.confirmButton]}
+            activeOpacity={0.7}
+          >
+            {isDeleting ? (
+              <ActivityIndicator size="small" color={COLORS.textDark} />
+            ) : (
+              <Text style={styles.cancelButtonText}>Hủy</Text>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.footerButton, styles.confirmButton]}
         onPress={handleSave}
         disabled={isSaving || isDeleting}
-        activeOpacity={0.7}
-      >
+            activeOpacity={0.7}
+          >
         {isSaving ? (
-          <ActivityIndicator size="small" color={COLORS.textWhite} />
-        ) : (
+              <ActivityIndicator size="small" color={COLORS.textWhite} />
+            ) : (
           <Text style={styles.confirmButtonText}>Lưu lộ trình</Text>
-        )}
-      </TouchableOpacity>
-    </View>
+            )}
+          </TouchableOpacity>
+        </View>
   );
 
   return (
-    <ItineraryViewScreen
-      visible
-      routeId={routeId || ''}
-      onClose={() => router.back()}
-      footerContent={footerButtons}
-    />
+    <>
+      <ItineraryViewScreen
+        visible
+        routeId={routeId || ''}
+        onClose={() => router.back()}
+        footerContent={footerButtons}
+        overlayContent={
+          isNameModalVisible && (
+            <View style={styles.inlineModalOverlay} pointerEvents="box-none">
+              <View style={styles.modalBackdrop} />
+              <View style={styles.inlineModalContent}>
+                <Text style={styles.modalTitle}>Đặt tên lộ trình</Text>
+            <TextInput
+              style={styles.modalInput}
+                  placeholder="Nhập tên lộ trình"
+                  value={routeTitle}
+                  onChangeText={setRouteTitle}
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                    style={[styles.modalButton, styles.modalCancel]}
+                    onPress={() => setIsNameModalVisible(false)}
+                    disabled={isSaving}
+              >
+                <Text style={styles.modalCancelText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                    style={[styles.modalButton, styles.modalConfirm]}
+                    onPress={handleSaveConfirm}
+                    disabled={isSaving}
+              >
+                    {isSaving ? (
+                      <ActivityIndicator size="small" color={COLORS.textWhite} />
+                    ) : (
+                <Text style={styles.modalConfirmText}>Lưu</Text>
+                    )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+          )
+        }
+      />
+    </>
   );
 }
 
@@ -248,4 +280,3 @@ const styles = StyleSheet.create({
     color: COLORS.textWhite,
   },
 });
-
