@@ -89,6 +89,7 @@ interface CustomItineraryResponse {
   start_date?: string;
   end_date?: string;
   start_location?: { lat: number; lng: number };
+  start_location_text?: string;
   route_data_json?: any;
   days?: CustomDayWithRoutes[];
 }
@@ -225,6 +226,12 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     routeData?.destination ||
     routeData?.city ||
     'Điểm đến';
+
+  // Get start location name
+  const startLocationName =
+    (routeDetails as any)?.start_location_text ||
+    routeData?.start_location_text ||
+    'Điểm bắt đầu';
 
   // Format time
   const formatTime = (isoString?: string) => {
@@ -935,7 +942,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                     <View style={styles.cardContent}>
                       <View style={styles.cardInfo}>
                         <Text style={styles.cardTitle} numberOfLines={2}>
-                          Điểm bắt đầu
+                          {startLocationName}
                         </Text>
                         <View style={styles.cardRow}>
                           <FontAwesome name="map-marker" size={12} color={COLORS.primary} />

@@ -199,6 +199,17 @@ export class CustomItineraryService {
       
       this.logger.log(`Successfully calculated routes for ${days.length} days with different travel modes`);
 
+      // Geocode startLocationText để lấy tọa độ điểm bắt đầu
+      let startLocationCoordinates: { lat: number; lng: number } | null = null;
+      if (itineraryData.startLocationText) {
+        try {
+          startLocationCoordinates = await this.getCityCoordinates(itineraryData.startLocationText);
+          this.logger.log(`Geocoded start location: ${itineraryData.startLocationText} -> ${JSON.stringify(startLocationCoordinates)}`);
+        } catch (error) {
+          this.logger.warn(`Failed to geocode start location: ${error.message}`);
+        }
+      }
+
       // Lưu vào collection custom-itineraries
       const saved = await this.customItineraryModel.create({
         route_id: routeId,
@@ -209,12 +220,16 @@ export class CustomItineraryService {
         optimize: itineraryData.optimize ?? false,
         start_date: itineraryData.start_date || null,
         end_date: itineraryData.end_date || null,
+        start_location_text: itineraryData.startLocationText || null,
+        start_location: startLocationCoordinates,
         route_data_json: {
           days: processedDays,
           optimize: itineraryData.optimize,
           destination: itineraryData.destination,
           start_date: itineraryData.start_date,
           end_date: itineraryData.end_date,
+          start_location_text: itineraryData.startLocationText,
+          start_location: startLocationCoordinates,
         },
       });
 
@@ -229,6 +244,8 @@ export class CustomItineraryService {
         status: saved.status,
         start_date: saved.start_date || null,
         end_date: saved.end_date || null,
+        start_location_text: saved.start_location_text || null,
+        start_location: saved.start_location || null,
       };
     } catch (error) {
       this.logger.error(`Lỗi khi tính toán routes: ${error.message}`);

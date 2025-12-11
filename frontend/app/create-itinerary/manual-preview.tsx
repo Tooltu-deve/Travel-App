@@ -592,6 +592,7 @@ export default function ManualPreviewScreen() {
         start_date: startDate.toISOString(),
         end_date: endDate.toISOString(),
         optimize: false,
+        startLocationText: currentLocationText,
         days: itinerary.map((day) => {
           // Calculate start location for each day:
           // Day 1: Use current location text
