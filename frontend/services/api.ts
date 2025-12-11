@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://192.168.2.92:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
 // ============================================
 // TYPES
 // ============================================
@@ -351,41 +351,6 @@ export const generateRouteAPI = async (
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(requestBody),
-  });
-};
-
-/**
- * geocodeAddressAPI: Geocode địa chỉ text sang tọa độ lat/lng
- * 
- * @param token - JWT token
- * @param address - Địa chỉ cần geocode
- * @returns { lat, lng, address } - Tọa độ và địa chỉ đã geocode
- * 
- * Endpoint: POST /api/v1/geocode
- * Headers: Authorization: Bearer <token>
- * Request: { address }
- * Response: { lat, lng, address }
- */
-interface GeocodeRequest {
-  address: string;
-}
-
-interface GeocodeResponse {
-  lat: number;
-  lng: number;
-  address: string;
-}
-
-export const geocodeAddressAPI = async (
-  token: string,
-  address: string
-): Promise<GeocodeResponse> => {
-  return makeRequest<GeocodeResponse>('/api/v1/geocode', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ address }),
   });
 };
 

@@ -36,6 +36,8 @@ interface Activity {
   ecs_score?: number;
   travel_duration_minutes?: number;
   encoded_polyline?: string;
+  start_location_polyline?: string;
+  travel_duration_from_start?: number;
   google_place_id?: string;
   time?: string;
   activity?: string;
@@ -249,6 +251,21 @@ export default function ItineraryDetailsScreen() {
     .map((activity) => decodePolyline(activity.encoded_polyline))
     .filter((segment) => segment.length > 1);
 
+  // Start location polyline (from start point to first activity)
+  const startLocationPolyline = activities.length > 0 && activities[0].start_location_polyline
+    ? decodePolyline(activities[0].start_location_polyline)
+    : null;
+
+  // Debug log
+  useEffect(() => {
+    console.log('[ItineraryDetails] Activities:', activities);
+    if (activities.length > 0) {
+      console.log('[ItineraryDetails] First activity:', activities[0]);
+      console.log('[ItineraryDetails] start_location_polyline:', activities[0].start_location_polyline);
+      console.log('[ItineraryDetails] Decoded startLocationPolyline:', startLocationPolyline);
+    }
+  }, [activities, startLocationPolyline]);
+
   // Update map region when day changes - removed activities from dependency array
   useEffect(() => {
     const region = calculateMapRegion(activities);
@@ -419,7 +436,19 @@ export default function ItineraryDetailsScreen() {
               showsUserLocation={false}
               showsMyLocationButton={false}
             >
-              {/* Polylines */}
+              {/* Polyline from start location to first activity */}
+              {startLocationPolyline && startLocationPolyline.length > 1 && (
+                <Polyline
+                  key="polyline-start-location"
+                  coordinates={startLocationPolyline}
+                  strokeColor={ROUTE_COLORS.main}
+                  strokeWidth={3}
+                  lineCap="round"
+                  lineJoin="round"
+                />
+              )}
+
+              {/* Polylines between activities */}
               {routeSegments.map((segment, idx) => (
                 <Polyline
                   key={`polyline-${idx}`}

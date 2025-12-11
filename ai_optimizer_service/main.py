@@ -493,13 +493,69 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         return distance <= max_distance_km
     
     def calculate_ecs_score_single(poi: Dict[str, Any], mood: str) -> float:
-        """Tính ECS score cho một POI dựa trên 1 mood"""
+        """
+        Tính ECS score cho một POI dựa trên 1 mood.
+        
+        Công thức:
+        1. Lấy emotional_tags từ POI (các tag là giá trị 0-1 hoặc âm)
+        2. Nhân mỗi tag value với weight của mood → raw_ecs_score
+        3. Normalize: 
+           - Nếu có emotional_tags: normalize về [0, 1]
+           - Nếu KHÔNG có emotional_tags: fallback dùng rating
+        4. Trả về score trong [0, 1]
+        
+        ECS Score Formula:
+        - raw_ecs = Σ(tag_value * mood_weight)
+        - max_weight = max(|weight|) từ mood
+        - normalized = (raw_ecs + max_weight) / (2 * max_weight)
+          → Range: [0, 1] (0=hoàn toàn không phù hợp, 1=hoàn toàn phù hợp)
+        """
         weights = MOOD_WEIGHTS.get(mood, {})
         tags = poi.get('emotional_tags', {})
-        ecs_score = 0.0
+        
+        # Nếu không có mood weights, fallback về rating
+        if not weights:
+            rating = poi.get('rating', 3.5)
+            review_count = poi.get('reviewCount', 0)
+            fallback_score = (rating / 5.0) * 0.7 + min(review_count / 100.0, 1.0) * 0.3
+            return fallback_score
+        
+        # Tính raw ECS score từ emotional_tags
+        raw_ecs_score = 0.0
         for tag_name, weight in weights.items():
-            ecs_score += tags.get(tag_name, 0.0) * weight
-        return ecs_score
+            tag_value = tags.get(tag_name, 0.0)
+            raw_ecs_score += tag_value * weight
+        
+        # Tính max weight để normalize
+        max_weight = max(abs(w) for w in weights.values())
+        
+        # Normalize raw_ecs từ [-max_weight, max_weight] → [0, 1]
+        if max_weight > 0:
+            normalized_ecs = (raw_ecs_score + max_weight) / (2 * max_weight)
+        else:
+            normalized_ecs = 0.5
+        
+        # Clamp vào [0, 1]
+        normalized_ecs = max(0.0, min(1.0, normalized_ecs))
+        
+        # ===== FALLBACK: Nếu emotional_tags RỖNG =====
+        # Nếu POI không có emotional_tags hoặc tất cả = 0, dùng rating làm fallback
+        # Điều này đảm bảo POI chưa được gắn tags vẫn có score hợp lý
+        if not tags or all(v == 0.0 for v in tags.values()):
+            rating = poi.get('rating', 3.5)
+            review_count = poi.get('reviewCount', 0)
+            
+            # Rating score: cao hơn = tốt hơn
+            # rating 5.0 → 1.0, rating 3.0 → 0.6, rating 1.0 → 0.2
+            rating_score = (rating / 5.0) * 0.7 + min(review_count / 100.0, 1.0) * 0.3
+            
+            # Kết hợp: ECS 60% + Rating 40% (ưu tiên ECS từ emotional_tags)
+            # Nếu chưa có tags, rating là cơ sở an toàn để filter POI tốt
+            final_score = normalized_ecs * 0.6 + rating_score * 0.4
+            return final_score
+        
+        # Nếu có tags, trả về normalized ECS trực tiếp
+        return normalized_ecs
 
     def calculate_ecs_score(poi: Dict[str, Any], moods: Any) -> float:
         """
@@ -526,20 +582,72 @@ async def optimize_for_chatbot(request: OptimizerRequest):
     # BƯỚC 2: Tính ECS cho các POI đã lọc (sau khi lọc mở cửa - ít POI hơn)
     print(f"Bước 2: Tính ECS cho {len(open_pois)} POI với mood {request.user_mood}...")
     scored_pois: List[Dict[str, Any]] = []
-    for poi in open_pois:
+    ecs_scores_debug = []  # Debug: track ECS scores distribution
+    
+    for idx, poi in enumerate(open_pois):
         ecs_score = calculate_ecs_score(poi, request.user_mood)
         poi_with_score = poi.copy()
         poi_with_score['ecs_score'] = ecs_score
         scored_pois.append(poi_with_score)
+        ecs_scores_debug.append(ecs_score)
+        
+        # DEBUG: In top 5 POI với ECS score cao nhất
+        if idx < 5:
+            print(f"  → POI {idx+1}: {poi.get('name', 'Unknown')}")
+            print(f"     Rating: {poi.get('rating', 'N/A')}, Reviews: {poi.get('reviewCount', 0)}")
+            print(f"     Emotional tags: {poi.get('emotional_tags', {})}")
+            print(f"     ECS Score: {ecs_score:.4f}")
+    
+    if ecs_scores_debug:
+        avg_ecs = sum(ecs_scores_debug) / len(ecs_scores_debug)
+        max_ecs = max(ecs_scores_debug)
+        min_ecs = min(ecs_scores_debug)
+        print(f"  📊 ECS Score Stats:")
+        print(f"     Min: {min_ecs:.4f}, Max: {max_ecs:.4f}, Avg: {avg_ecs:.4f}")
+    
     print(f"  → Đã tính ECS cho {len(scored_pois)} POI")
 
-    # BƯỚC 3: Lọc POI có ecs_score >= threshold (đổi từ > thành >= để bao gồm threshold=0.0)
+    # BƯỚC 3: Lọc POI có ecs_score >= threshold với logic giảm dần nếu thiếu POI
     print(f"Bước 3: Lọc POI có ecs_score >= {request.ecs_score_threshold}...")
+    
+    MIN_POIS_PER_DAY = 4  # Target: 4 POI/ngày
+    required_pois = MIN_POIS_PER_DAY * request.duration_days
+    
+    # Vòng lặp giảm dần threshold nếu không đủ POI
+    current_threshold = request.ecs_score_threshold
     high_score_pois: List[Dict[str, Any]] = []
-    for poi in scored_pois:
-        if poi.get('ecs_score', 0) >= request.ecs_score_threshold:
-            high_score_pois.append(poi)
-    print(f"  → Còn lại {len(high_score_pois)} POI sau khi lọc theo ECS threshold")
+    threshold_reductions = 0
+    max_reductions = 10  # Giảm tối đa 10 lần
+    
+    while threshold_reductions <= max_reductions:
+        high_score_pois = []
+        for poi in scored_pois:
+            if poi.get('ecs_score', 0) >= current_threshold:
+                high_score_pois.append(poi)
+        
+        print(f"  → Còn lại {len(high_score_pois)} POI với ECS threshold = {current_threshold:.2f}")
+        
+        # Lọc ra POI không phải nhà hàng
+        non_restaurant_pois = [p for p in high_score_pois if not is_restaurant_poi(p)]
+        print(f"  → {len(non_restaurant_pois)} POI sau khi loại nhà hàng")
+        
+        # Nếu đủ POI, dừng giảm threshold
+        if len(non_restaurant_pois) >= required_pois:
+            print(f"✅ Đủ POI: {len(non_restaurant_pois)} >= {required_pois} (mục tiêu)")
+            break
+        
+        # Nếu chưa đủ, giảm threshold và thử lại
+        if threshold_reductions < max_reductions:
+            # Giảm threshold từ từ (0.05 mỗi lần)
+            current_threshold = max(0.0, current_threshold - 0.05)
+            threshold_reductions += 1
+            print(f"  ⚠️  Chưa đủ POI, giảm threshold xuống {current_threshold:.2f} và thử lại...")
+        else:
+            # Đã giảm tối đa, dừng
+            print(f"⚠️  Đã giảm threshold tối đa, chỉ có {len(non_restaurant_pois)} POI khả dụng")
+            break
+    
+    print(f"  → Final: {len(high_score_pois)} POI sau khi lọc ECS (threshold = {current_threshold:.2f})")
 
     # Nếu thiếu eta_from_current, tính bằng Distance Matrix (sau khi lọc ECS)
     # Dùng travel mode mặc định driving (có thể mở rộng lấy từ request nếu cần)
@@ -577,25 +685,146 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         return {"optimized_route": []}
 
     # Kiểm tra số lượng POI tối thiểu
-    MIN_POIS_PER_DAY = 3
-    required_pois = MIN_POIS_PER_DAY * request.duration_days
     
     if len(non_restaurant_pois) < required_pois:
         print(f"⚠️  Cảnh báo: Chỉ có {len(non_restaurant_pois)} POI cho {request.duration_days} ngày")
         print(f"  → Cần tối thiểu {required_pois} POI ({MIN_POIS_PER_DAY} POI/ngày)")
-        print(f"  → Backend cần lọc với bán kính lớn hơn hoặc giảm ECS threshold")
+        print(f"  → Đã giảm ECS threshold từ {request.ecs_score_threshold:.2f} xuống {current_threshold:.2f}")
+        print(f"  → Nếu vẫn chưa đủ, Backend cần lọc với bán kính lớn hơn")
     
-    # Phân bổ đều POI cho các ngày (round-robin)
+    # BƯỚC 5: K-Means Clustering POI theo vị trí địa lý (thay vì round-robin)
+    print(f"Bước 5: K-Means clustering POI theo vị trí...")
+    
+    radius_limit_km = 10.0
+    pois_within_radius = [poi for poi in non_restaurant_pois if within_start_radius(poi, radius_limit_km)]
+    print(f"  → {len(pois_within_radius)} POI trong bán kính {radius_limit_km}km")
+    
+    if not pois_within_radius:
+        print(f"⚠️  Không có POI trong bán kính {radius_limit_km}km, sử dụng tất cả POI")
+        pois_within_radius = non_restaurant_pois
+    
+    poi_coordinates = []
+    poi_indices = []
+    for idx, poi in enumerate(pois_within_radius):
+        loc = poi.get('location', {})
+        lat, lng = loc.get('lat'), loc.get('lng')
+        if lat is not None and lng is not None:
+            poi_coordinates.append([lat, lng])
+            poi_indices.append(idx)
+    
+    if not poi_coordinates:
+        print(f"❌ Không thể extract tọa độ từ POI")
+        return {"optimized_route": []}
+    
+    # K-Means clustering với số cụm = duration_days + 2
+    print(f"  → Chạy K-Means với {request.duration_days + 2} cluster(s)...")
+    
+    # QUAN TRỌNG: Set num_clusters = duration_days + 2 để:
+    # - Tạo nhiều cluster hơn số ngày → K-Means tách POI ra nhiều cluster nhỏ hơn
+    # - Các cluster sẽ cân bằng hơn (tránh 1 cluster to + các cluster nhỏ)
+    # - Sau đó gộp các cluster nhỏ vào cluster lớn → POI chia đều cho các ngày
+    # 
+    # Ví dụ: 12 POI, 3 ngày → k=5 cluster
+    #   K-Means tạo 5 cluster cân bằng (~2-3 POI/cluster)
+    #   Sau đó gộp 2 cluster nhỏ nhất vào để có 3 cluster cho 3 ngày
+    
+    num_clusters = min(request.duration_days + 2, len(poi_coordinates))
+    num_clusters = max(request.duration_days, num_clusters)  # Ít nhất duration_days cluster
+    
+    print(f"  → Num clusters: {num_clusters} (duration_days: {request.duration_days}, num_poi: {len(poi_coordinates)})")
+    
+    # Chạy K-Means với số cluster tối ưu
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
+    cluster_labels = kmeans.fit_predict(np.array(poi_coordinates))
+    
+    # Nhóm POI theo cluster
+    clusters: Dict[int, List[Dict[str, Any]]] = {}
+    for cluster_id, poi_idx in zip(cluster_labels, poi_indices):
+        clusters.setdefault(cluster_id, []).append(pois_within_radius[poi_idx])
+    
+    # Phân bổ cluster cho các ngày
     daily_poi_groups: List[List[Dict[str, Any]]] = [[] for _ in range(request.duration_days)]
     
-    for idx, poi in enumerate(non_restaurant_pois):
-        day_idx = idx % request.duration_days
-        daily_poi_groups[day_idx].append(poi)
+    sorted_clusters = sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)
+    
+    if num_clusters == request.duration_days:
+        # Trường hợp lý tưởng: num_clusters = duration_days
+        # Mỗi ngày được 1 cluster
+        for day_idx, (cluster_id, cluster_pois) in enumerate(sorted_clusters):
+            daily_poi_groups[day_idx] = cluster_pois
+            print(f"  → Ngày {day_idx + 1}: {len(cluster_pois)} POI từ cluster {cluster_id}")
+    
+    elif num_clusters > request.duration_days:
+        # Nhiều cluster hơn ngày: gộp các cluster nhỏ vào cluster lớn
+        print(f"  → Merge {num_clusters - request.duration_days} cluster nhỏ vào cluster lớn...")
+        
+        # Lấy top duration_days cluster lớn nhất
+        for day_idx in range(request.duration_days):
+            if day_idx < len(sorted_clusters):
+                cluster_id, cluster_pois = sorted_clusters[day_idx]
+                daily_poi_groups[day_idx] = cluster_pois
+                print(f"  → Ngày {day_idx + 1}: {len(cluster_pois)} POI từ cluster {cluster_id}")
+        
+        # Gộp các cluster còn lại vào cluster cuối cùng
+        for day_idx in range(request.duration_days, len(sorted_clusters)):
+            cluster_id, cluster_pois = sorted_clusters[day_idx]
+            daily_poi_groups[-1].extend(cluster_pois)
+            print(f"     Gộp cluster {cluster_id} ({len(cluster_pois)} POI) vào ngày {request.duration_days}")
+    
+    else:
+        # Ít cluster hơn ngày: chia cluster lớn thành sub-cluster
+        print(f"  → Split {request.duration_days - num_clusters} cluster lớn...")
+        
+        # Đầu tiên, gán cluster sẵn có cho các ngày
+        for day_idx in range(num_clusters):
+            cluster_id, cluster_pois = sorted_clusters[day_idx]
+            daily_poi_groups[day_idx] = cluster_pois
+            print(f"  → Ngày {day_idx + 1}: {len(cluster_pois)} POI từ cluster {cluster_id}")
+        
+        # Với các ngày còn lại, split cluster lớn nhất
+        remaining_days = request.duration_days - num_clusters
+        if remaining_days > 0 and num_clusters > 0:
+            # Lấy cluster lớn nhất để split
+            largest_cluster_idx = 0
+            max_cluster_size = len(sorted_clusters[0][1])
+            
+            for day_idx in range(num_clusters, request.duration_days):
+                # Split cluster lớn nhất thành 2 sub-cluster bằng K-Means
+                if sorted_clusters[largest_cluster_idx][1]:
+                    large_poi_coords = []
+                    large_poi_list = []
+                    for poi in sorted_clusters[largest_cluster_idx][1]:
+                        loc = poi.get('location', {})
+                        lat, lng = loc.get('lat'), loc.get('lng')
+                        if lat is not None and lng is not None:
+                            large_poi_coords.append([lat, lng])
+                            large_poi_list.append(poi)
+                    
+                    if len(large_poi_coords) > 1:
+                        # Split thành 2
+                        kmeans_split = KMeans(n_clusters=min(2, len(large_poi_coords)), random_state=42, n_init=10)
+                        split_labels = kmeans_split.fit_predict(np.array(large_poi_coords))
+                        
+                        # Tách thành 2 nhóm
+                        sub_cluster_0 = []
+                        sub_cluster_1 = []
+                        for poi, label in zip(large_poi_list, split_labels):
+                            if label == 0:
+                                sub_cluster_0.append(poi)
+                            else:
+                                sub_cluster_1.append(poi)
+                        
+                        # Cập nhật cluster lớn
+                        sorted_clusters[largest_cluster_idx] = (sorted_clusters[largest_cluster_idx][0], sub_cluster_0)
+                        
+                        # Gán sub-cluster vào ngày hiện tại
+                        daily_poi_groups[day_idx] = sub_cluster_1
+                        print(f"     Ngày {day_idx + 1}: Split cluster lớn ({len(sub_cluster_1)} POI)")
     
     # Kiểm tra và cảnh báo cho từng ngày
     for day_idx, day_pois in enumerate(daily_poi_groups, start=1):
         status = "✅" if len(day_pois) >= MIN_POIS_PER_DAY else "⚠️"
-        print(f"  {status} Ngày {day_idx}: {len(day_pois)} POI được phân bổ")
+        print(f"  {status} Ngày {day_idx}: {len(day_pois)} POI từ K-Means cluster")
 
     # Hàm helper để tính ETA giữa 2 POI
     def eta_between(a_id: str, b_id: str, fallback_list: Optional[List[Dict[str, Any]]] = None) -> float:
@@ -789,6 +1018,16 @@ async def optimize_with_kmeans(request: OptimizerRequest):
         ecs_score = 0.0
         for tag_name, weight in weights.items():
             ecs_score += tags.get(tag_name, 0.0) * weight
+        
+        # FALLBACK: Nếu emotional_tags rỗng, dùng rating + review count
+        if not tags or ecs_score == 0.0:
+            rating = poi.get('rating', 3.5)
+            review_count = poi.get('reviewCount', 0)
+            # Normalize: rating (0-5) + reviewCount normalized
+            # score = (rating/5) * 0.7 + min(review_count/100, 1.0) * 0.3
+            fallback_score = (rating / 5.0) * 0.7 + min(review_count / 100.0, 1.0) * 0.3
+            return fallback_score
+        
         return ecs_score
 
     def calculate_ecs_score(poi: Dict[str, Any], moods: Any) -> float:

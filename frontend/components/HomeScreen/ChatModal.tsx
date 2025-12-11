@@ -239,20 +239,6 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
     setInputText('');
     setIsLoading(true);
 
-    // Check if user is asking about nearby places and request location if needed
-    const isNearbyQuery = message.toLowerCase().includes('gần') ||
-      message.toLowerCase().includes('quanh') ||
-      message.toLowerCase().includes('xung quanh');
-
-    let currentLocation = location;
-    if (isNearbyQuery && !currentLocation) {
-      console.debug('[Chat] Nearby query detected, requesting location...');
-      currentLocation = await requestLocation();
-      if (currentLocation) {
-        console.debug('[Chat] Location obtained for nearby query:', currentLocation);
-      }
-    }
-
     try {
       let attempt = 0;
       let lastError: any = null;
@@ -261,16 +247,8 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
         try {
           const requestBody: any = { message, sessionId };
 
-          // Add location in context if available
-          if (currentLocation) {
-            requestBody.context = {
-              current_location: {
-                lat: currentLocation.latitude,
-                lng: currentLocation.longitude,
-              },
-            };
-            console.debug('[Chat] Sending location in context:', requestBody.context.current_location);
-          }
+          // Start location is now handled through chat messages, not input field
+          // Agent will ask user for start location in conversation
 
           console.debug('Sending chat request', requestBody);
           const response = await fetch(`${API_BASE_URL}/api/v1/ai/chat`, {
@@ -376,8 +354,58 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             if (dataOk.itinerary.length > 0) {
               console.log('[DEBUG] First itinerary item structure:', JSON.stringify(dataOk.itinerary[0], null, 2));
             }
+
+            // Transform itinerary to match ItineraryItem interface
+            const transformedItinerary = dataOk.itinerary.map((item: any, index: number) => {
+              // Extract day from item or use calculated day
+              const day = item.day || Math.floor(index / 3) + 1;
+              
+              return {
+                day,
+                time: item.time || item.estimated_arrival || item.arrival_time || '09:00',
+                activity: item.activity || item.name || 'Hoạt động',
+                place: {
+                  name: item.place?.name || item.name || 'Địa điểm',
+                  address: item.place?.address || item.address,
+                  googlePlaceId: item.place?.googlePlaceId || item.google_place_id || item.googlePlaceId,
+                  location: item.place?.location || (item.location && {
+                    lat: typeof item.location.lat === 'number' ? item.location.lat : item.location[1],
+                    lng: typeof item.location.lng === 'number' ? item.location.lng : item.location[0],
+                  }),
+                  rating: item.place?.rating || item.rating,
+                },
+                duration_minutes: item.duration_minutes || item.duration || 90,
+                notes: item.notes,
+                encoded_polyline: item.encoded_polyline || item.start_encoded_polyline,
+                start_location_polyline: item.start_location_polyline,
+                travel_duration_minutes: item.travel_duration_minutes || item.start_travel_duration_minutes,
+                travel_duration_from_start: item.travel_duration_from_start,
+                type: item.type,
+                ecs_score: item.ecs_score,
+              };
+            });
+
+            console.debug('[Chat Response] Transformed itinerary:', transformedItinerary);
             
-            setItinerary(dataOk.itinerary);
+            // Log for debugging - check if polylines exist
+            const hasPolylines = transformedItinerary.some((item: any) => item.encoded_polyline);
+            const hasStartLocationPolylines = transformedItinerary.some((item: any) => item.start_location_polyline);
+            console.debug('[Chat Response] Has polylines:', hasPolylines);
+            console.debug('[Chat Response] Has start_location_polylines:', hasStartLocationPolylines);
+            if (!hasPolylines) {
+              console.warn('[Chat Response] ⚠️  No encoded_polyline found in itinerary data');
+            }
+            if (hasStartLocationPolylines) {
+              console.log('[Chat Response] ✅ START LOCATION POLYLINE found!');
+              const itemWithStartPolyline = transformedItinerary.find((item: any) => item.start_location_polyline);
+              console.log('[Chat Response] First item with start_location_polyline:', {
+                place: itemWithStartPolyline?.place?.name,
+                start_location_polyline_length: itemWithStartPolyline?.start_location_polyline?.length,
+                travel_duration_from_start: itemWithStartPolyline?.travel_duration_from_start,
+              });
+            }
+            
+            setItinerary(transformedItinerary);
           }
 
           // Capture start_location from response
@@ -689,7 +717,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
                           {[
                             'Gần đây có quán cà phê nào không?',
-                            'Tôi muốn du lịch Hà Nội, 4 người, 3 ngày, ngân sách 10 triệu đồng',
+                            'Tôi muốn đi du lịch ở thành phố Hồ Chí Minh, 2 người, 3 ngày, ngân sách 7 triệu, náo nhiệt, 227 nguyễn văn cừ',
                             'Gợi ý lộ trình du lịch Đà Nẵng - Hội An, 2 người, 2 ngày, 5 triệu đồng'
                           ].map((suggestion, index) => (
                             <TouchableOpacity
