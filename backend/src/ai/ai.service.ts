@@ -89,7 +89,7 @@ export class AiService {
             // FALLBACK: If itinerary lacks polylines, enrich them
             if (responseData.itinerary && responseData.itinerary.length > 0) {
                 const hasPolylines = responseData.itinerary.some((item: any) => item.encoded_polyline);
-                
+
                 if (!hasPolylines) {
                     this.logger.warn('⚠️ Itinerary has no polylines, attempting enrichment...');
                     try {
@@ -442,7 +442,7 @@ export class AiService {
 
             // Add computed fields for frontend
             const response = itinerary.toObject ? itinerary.toObject() : itinerary;
-            
+
             // Add start_location (departure point) calculated from preferences
             const startLocation = this.extractStartLocation(
                 itinerary.itinerary || [],
@@ -510,8 +510,8 @@ export class AiService {
             }
 
             // 2. Chuyển đổi dữ liệu từ AI format sang Itinerary format
-            const userObjectId = Types.ObjectId.isValid(userId) 
-                ? new Types.ObjectId(userId) 
+            const userObjectId = Types.ObjectId.isValid(userId)
+                ? new Types.ObjectId(userId)
                 : userId;
 
             // Convert itinerary items to route_data_json format
@@ -571,13 +571,13 @@ export class AiService {
      */
     private groupItineraryByDay(itinerary: any[]): any[] {
         const dayMap = new Map<number, any[]>();
-        
+
         itinerary.forEach(item => {
             const day = item.day || 1;
             if (!dayMap.has(day)) {
                 dayMap.set(day, []);
             }
-            
+
             // Extract location from place for frontend compatibility
             let location: { lat: number; lng: number } | null = null;
             if (item.place?.location) {
@@ -594,7 +594,7 @@ export class AiService {
                     };
                 }
             }
-            
+
             dayMap.get(day)!.push({
                 name: item.place?.name || item.activity,
                 activity: item.activity,
@@ -644,7 +644,7 @@ export class AiService {
                 lng: preferences.departure_coordinates.lng,
             };
         }
-        
+
         // Priority 2: Use first place in itinerary (fallback)
         if (!itinerary || itinerary.length === 0) return null;
         const firstPlace = itinerary[0]?.place;
@@ -788,7 +788,7 @@ export class AiService {
      */
     private async enrichItineraryWithPolylines(itinerary: any[], startLocation?: { lat: number; lng: number } | null): Promise<any[]> {
         const googleApiKey = this.configService.get<string>('GOOGLE_DIRECTIONS_API_KEY') ||
-                           this.configService.get<string>('GOOGLE_PLACES_API_KEY');
+            this.configService.get<string>('GOOGLE_PLACES_API_KEY');
 
         if (!googleApiKey) {
             this.logger.warn('No Google API key available for enriching polylines');
@@ -796,7 +796,7 @@ export class AiService {
         }
 
         const enriched = [...itinerary];
-        
+
         // Group items by day to process routes within each day
         const itemsByDay = new Map<number, any[]>();
         enriched.forEach(item => {
@@ -821,14 +821,14 @@ export class AiService {
                 return timeA.localeCompare(timeB);
             });
 
-            // Add polyline from start_location to first activity (only for day 1)
-            if (day === 1 && dayItems.length > 0 && startLocation) {
+            // Add polyline from start_location to first activity (for all days)
+            if (dayItems.length > 0 && startLocation) {
                 const firstItem = dayItems[0];
                 try {
                     // Skip if already has start_location_polyline
                     if (!firstItem.start_location_polyline) {
                         const firstLoc = firstItem.place?.location || firstItem.location;
-                        
+
                         if (firstLoc) {
                             // Handle various location formats
                             const getFirstCoords = () => {
