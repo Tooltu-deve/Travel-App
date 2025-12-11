@@ -18,8 +18,11 @@ import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Calendar, DateData } from 'react-native-calendars';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
+import { checkWeatherAPI } from '../../services/api';
+import WeatherWarningModal, { WeatherSeverity } from '../../components/WeatherWarningModal';
 
 const ManualFormScreen: React.FC = () => {
   const router = useRouter();
@@ -36,6 +39,12 @@ const ManualFormScreen: React.FC = () => {
 
   // Current step (for wizard-like flow)
   const [currentStep, setCurrentStep] = useState<number>(1);
+
+  // Weather warning state
+  const [weatherModalVisible, setWeatherModalVisible] = useState(false);
+  const [weatherSeverity, setWeatherSeverity] = useState<WeatherSeverity>('normal');
+  const [weatherAlert, setWeatherAlert] = useState<string>('');
+  const [isCheckingWeather, setIsCheckingWeather] = useState(false);
 
   // Danh sách các thành phố từ scrape_poi_reviews.py
   const vietnamCities = [
@@ -113,7 +122,59 @@ const ManualFormScreen: React.FC = () => {
     setCurrentStep(currentStep + 1);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    try {
+      setIsCheckingWeather(true);
+
+      // Get token from AsyncStorage
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để tạo lộ trình');
+        router.replace('/(auth)/login');
+        return;
+      }
+
+      // Kiểm tra thời tiết trước khi tạo lộ trình
+      console.log('🌤️ Checking weather for:', destination);
+      const weatherResult = await checkWeatherAPI(
+        startDate!.toISOString(),
+        endDate!.toISOString(),
+        destination.trim(),
+        token
+      );
+      console.log('🌤️ Weather check result:', weatherResult);
+
+      setIsCheckingWeather(false);
+
+      // Xử lý theo mức độ cảnh báo thời tiết
+      if (weatherResult.severity === 'danger') {
+        // Danger: Hiển thị cảnh báo và tự động quay về form
+        setWeatherSeverity('danger');
+        setWeatherAlert(weatherResult.alert || '');
+        setWeatherModalVisible(true);
+        return;
+      }
+
+      if (weatherResult.severity === 'warning') {
+        // Warning: Hiển thị modal cho người dùng chọn
+        setWeatherSeverity('warning');
+        setWeatherAlert(weatherResult.alert || '');
+        setWeatherModalVisible(true);
+        return;
+      }
+
+      // Normal: Tiếp tục tạo lộ trình
+      proceedToManualPreview();
+    } catch (error: any) {
+      console.error('❌ Weather check error:', error);
+      setIsCheckingWeather(false);
+      // Nếu lỗi khi kiểm tra thời tiết, vẫn cho phép tiếp tục tạo lộ trình
+      proceedToManualPreview();
+    }
+  };
+
+  // Hàm chuyển sang màn hình manual preview
+  const proceedToManualPreview = () => {
     const durationDays = calculateDurationDays();
     
     // Navigate to manual preview screen
@@ -127,6 +188,22 @@ const ManualFormScreen: React.FC = () => {
         currentLocationText: currentLocationText,
       },
     });
+  };
+
+  // Xử lý khi người dùng chọn "Tiếp tục" trong modal warning
+  const handleWeatherContinue = () => {
+    setWeatherModalVisible(false);
+    proceedToManualPreview();
+  };
+
+  // Xử lý khi người dùng chọn "Quay lại" trong modal
+  const handleWeatherGoBack = () => {
+    setWeatherModalVisible(false);
+    if (weatherSeverity === 'danger') {
+      // Danger: Quay về bước 1 (chọn ngày đi)
+      setCurrentStep(1);
+    }
+    // Warning: Chỉ đóng modal, giữ nguyên form
   };
 
   const getStepTitle = () => {
@@ -488,12 +565,15 @@ const ManualFormScreen: React.FC = () => {
         {/* Footer */}
         <View style={[styles.footer, { paddingBottom: insets.bottom + SPACING.md }]}>
           <TouchableOpacity
-            style={[styles.footerButton, styles.nextButton]}
+            style={[styles.footerButton, styles.nextButton, isCheckingWeather && styles.submitButtonDisabled]}
             onPress={handleNextStep}
             activeOpacity={0.7}
+            disabled={isCheckingWeather}
           >
             <Text style={styles.nextButtonText}>
-              {currentStep === 4 ? 'Tiếp tục' : 'Tiếp theo'}
+              {currentStep === 4 
+                ? (isCheckingWeather ? 'Đang kiểm tra thời tiết...' : 'Tiếp tục') 
+                : 'Tiếp theo'}
             </Text>
             <FontAwesome
               name={currentStep === 4 ? 'check' : 'arrow-right'}
@@ -502,6 +582,17 @@ const ManualFormScreen: React.FC = () => {
             />
           </TouchableOpacity>
         </View>
+
+        {/* Weather Warning Modal */}
+        <WeatherWarningModal
+          visible={weatherModalVisible}
+          severity={weatherSeverity}
+          alertMessage={weatherAlert}
+          destination={destination}
+          onContinue={handleWeatherContinue}
+          onGoBack={handleWeatherGoBack}
+          onClose={() => setWeatherModalVisible(false)}
+        />
       </View>
     </LinearGradient>
   );
@@ -860,6 +951,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: COLORS.textWhite,
+  },
+  submitButtonDisabled: {
+    backgroundColor: COLORS.disabled,
+    opacity: 0.7,
   },
 });
 
