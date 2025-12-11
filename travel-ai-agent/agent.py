@@ -51,47 +51,76 @@ def geocode_location(location_name: str, destination: Optional[str] = None) -> O
         Dict with 'lat', 'lng', 'formatted_address' or None if failed
     """
     if not location_name or not location_name.strip():
+        print(f"   ⚠️ Empty location name provided")
         return None
     
-    google_api_key = os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_GEOCODING_API_KEY")
-    if not google_api_key:
-        print(f"   ⚠️ No Google API key for geocoding")
+    # Try multiple API keys in order of preference
+    api_keys = [
+        os.getenv("GOOGLE_GEOCODING_API_KEY"),
+        os.getenv("GOOGLE_DIRECTIONS_API_KEY"),
+        os.getenv("GOOGLE_DISTANCE_MATRIX_API_KEY"),
+        os.getenv("GOOGLE_PLACES_API_KEY"),
+    ]
+    api_keys = [k for k in api_keys if k]  # Filter out None values
+    
+    if not api_keys:
+        print(f"   ⚠️ No Google API keys available for geocoding")
         return None
     
-    try:
-        # Add destination context if available
-        query = location_name
-        if destination and destination not in location_name:
-            query = f"{location_name}, {destination}, Vietnam"
-        else:
-            query = f"{location_name}, Vietnam"
-        
-        url = "https://maps.googleapis.com/maps/api/geocode/json"
-        params = {
-            "address": query,
-            "key": google_api_key
-        }
-        
-        response = requests.get(url, params=params, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("results") and len(data["results"]) > 0:
-                result = data["results"][0]
-                location = result.get("geometry", {}).get("location", {})
-                formatted_address = result.get("formatted_address", "")
+    # Add destination context if available
+    query = location_name
+    if destination and destination not in location_name:
+        query = f"{location_name}, {destination}, Vietnam"
+    else:
+        query = f"{location_name}, Vietnam"
+    
+    print(f"   🔍 Geocoding query: '{query}'")
+    
+    url = "https://maps.googleapis.com/maps/api/geocode/json"
+    
+    # Try each API key
+    for idx, google_api_key in enumerate(api_keys):
+        try:
+            params = {
+                "address": query,
+                "key": google_api_key
+            }
+            
+            response = requests.get(url, params=params, timeout=5)
+            print(f"   📡 API response status: {response.status_code} (key #{idx+1})")
+            
+            if response.status_code == 200:
+                data = response.json()
                 
-                if location.get("lat") and location.get("lng"):
-                    return {
-                        "lat": location.get("lat"),
-                        "lng": location.get("lng"),
-                        "formatted_address": formatted_address
-                    }
+                # Check for authorization error
+                if data.get("status") == "REQUEST_DENIED":
+                    print(f"   ⚠️ API key #{idx+1} not authorized. Trying next key...")
+                    continue
+                
+                if data.get("results") and len(data["results"]) > 0:
+                    result = data["results"][0]
+                    location = result.get("geometry", {}).get("location", {})
+                    formatted_address = result.get("formatted_address", "")
+                    
+                    print(f"   ✅ Found location: {formatted_address}")
+                    print(f"   📍 Coordinates: lat={location.get('lat')}, lng={location.get('lng')}")
+                    
+                    if location.get("lat") and location.get("lng"):
+                        return {
+                            "lat": location.get("lat"),
+                            "lng": location.get("lng"),
+                            "formatted_address": formatted_address
+                        }
+                else:
+                    print(f"   ❌ No results from API. Status: {data.get('status', 'Unknown error')}")
+            else:
+                print(f"   ❌ API request failed with status: {response.status_code}")
         
-        print(f"   ⚠️ Geocoding failed for '{location_name}': {data.get('status', 'Unknown error')}")
-        return None
-    except Exception as e:
-        print(f"   ⚠️ Geocoding error for '{location_name}': {e}")
-        return None
+        except Exception as e:
+            print(f"   ❌ Geocoding error with key #{idx+1} for '{location_name}': {e}")
+    
+    print(f"   ❌ Could not geocode '{location_name}' with any available API key")
+    return None
 
 # Default coordinates for Vietnamese cities
 DEFAULT_CITY_COORDINATES = {
@@ -597,13 +626,53 @@ def profile_collector_node(state: TravelState) -> TravelState:
     preferences = state.get("user_preferences", UserPreferences())
     last_message = messages[-1].content if messages else ""
     
+    # CHECK: If user hasn't provided start location, try to detect from user message first
+    # IMPORTANT: Start location MUST be provided explicitly by user
+    start_location_just_detected = False
+    
+    if not preferences.departure_location and last_message:
+        # Try to geocode the user message - they might be answering our question about start location
+        print(f"   🔍 Attempting to geocode user message as start location: '{last_message}'")
+        geocoded = geocode_location(last_message)
+        if geocoded:
+            # Successfully geocoded!
+            preferences.departure_location = last_message.strip()
+            preferences.departure_coordinates = {"lat": geocoded['lat'], "lng": geocoded['lng']}
+            print(f"   ✅ Geocoded start location: {last_message} → ({geocoded['lat']}, {geocoded['lng']})")
+            start_location_just_detected = True
+        else:
+            # Geocoding failed - ask user again
+            print(f"   ❌ Geocoding failed for: {last_message}")
+            ai_response = f"❌ Không tìm thấy địa điểm '{last_message}'.\n\nVui lòng nhập tên thành phố hoặc địa điểm khác (ví dụ: Hà Nội, TP.HCM, Đà Nẵng, hoặc bất kỳ nơi nào)."
+            state["messages"].append(AIMessage(content=ai_response))
+            return state
+    
+    # If still no start location after attempted geocode, ask user
+    if not preferences.departure_location:
+        # Check if this is first message (no destination asked yet)
+        # If yes, ask for start location FIRST
+        if not preferences.destination and not preferences.start_location:
+            # Very first turn - ask for start location immediately
+            print(f"   ❓ First turn - no start location, asking user...")
+            ai_response = "Xin chào! 👋 Tôi là AI Travel Assistant của bạn.\n\nĐầu tiên, mình cần biết bạn **muốn khởi hành từ đâu?** 📍\n\nVui lòng nhập tên thành phố hoặc địa điểm (ví dụ: Hà Nội, TP.HCM, Đà Nẵng, 227 Nguyễn văn cừ, v.v.)"
+            state["messages"].append(AIMessage(content=ai_response))
+            return state
+        else:
+            # User has destination but no start location yet
+            print(f"   ❓ Has destination but no start location - asking user...")
+            ai_response = "Còn một thông tin quan trọng nữa - **bạn muốn khởi hành từ đâu?** 📍\n\nVui lòng nhập tên thành phố hoặc địa điểm (ví dụ: Hà Nội, TP.HCM, Đà Nẵng, 227 Nguyễn văn cừ, v.v.)"
+            state["messages"].append(AIMessage(content=ai_response))
+            return state
+    
     # Determine what information we're still missing
     missing_info = []
     # Use destination field, fallback to start_location for backward compatibility
     current_destination = preferences.destination or preferences.start_location
     if not current_destination:
         missing_info.append("destination")
-    # Removed: departure_location - no longer asking for this
+    # Check departure_location (start location)
+    if not preferences.departure_location:
+        missing_info.append("departure_location")
     # Removed: travel_style - NOT required (doesn't affect ECS score, only for internal mapping)
     if not preferences.group_type:
         missing_info.append("group_type") 
@@ -688,19 +757,33 @@ def profile_collector_node(state: TravelState) -> TravelState:
     # NOTE: Departure location detection removed - no longer asking users for this
     # Departure location will be auto-set to destination in the logic below
     
+    # START LOCATION DETECTION (from user input if they're answering the "where are you starting from?" question)
+    # Accept ANY string and geocode it to validate
+    if not preferences.departure_location and last_message:
+        # Try to geocode the entire user message as a location
+        geocoded = geocode_location(last_message)
+        if geocoded:
+            # Successfully geocoded - use this as start location
+            updated_preferences.departure_location = last_message.strip()
+            updated_preferences.departure_coordinates = {"lat": geocoded['lat'], "lng": geocoded['lng']}
+            print(f"   ✅ Geocoded start location from user input: '{last_message}' → ({geocoded['lat']}, {geocoded['lng']})")
+        # If geocode fails, we'll ask user again in the "missing_info" logic
+    
     # Auto-set departure_location to destination if not set
-    if not updated_preferences.departure_location:
-        current_dest = updated_preferences.destination or updated_preferences.start_location
-        if current_dest:
-            updated_preferences.departure_location = current_dest
-            print(f"   ⚙️ Auto-setting departure_location to destination: {current_dest}")
-    elif preferences.departure_location:
+    # Handle departure_location preservation
+    # NOTE: Do NOT auto-set to destination! User MUST explicitly provide start location
+    print(f"   🔍 DEBUG: updated_preferences.departure_location = {updated_preferences.departure_location}, preferences.departure_location = {preferences.departure_location}")
+    
+    if preferences.departure_location:
         # Preserve existing departure_location if set
         updated_preferences.departure_location = preferences.departure_location
         # Also preserve geocoded coordinates
         if preferences.departure_coordinates:
             updated_preferences.departure_coordinates = preferences.departure_coordinates
         print(f"   🔄 PRESERVED departure_location from state: {preferences.departure_location}")
+    elif updated_preferences.departure_location:
+        # departure_location was just set by geocoding from user message
+        print(f"   ✅ departure_location just set in updated_preferences: {updated_preferences.departure_location}")
     
     # Travel style detection
     if any(word in user_text for word in ["chill", "nghỉ dưỡng", "thư giãn", "yên tĩnh"]):
@@ -832,6 +915,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     has_destination = updated_preferences.destination or updated_preferences.start_location
     is_info_complete = all([
         has_destination,  # MUST have destination!
+        updated_preferences.departure_location,  # MUST have start location!
         updated_preferences.group_type, 
         updated_preferences.budget_range,
         updated_preferences.duration,
@@ -850,16 +934,31 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     # NOW call LLM with UPDATED preferences to generate natural response
     missing_fields = []
-    if not has_destination:
-        missing_fields.append("điểm đến (bạn muốn đi đâu?)")
-    if not updated_preferences.duration:
-        missing_fields.append("thời gian (mấy ngày?)")
-    if not updated_preferences.group_type:
-        missing_fields.append("nhóm đi (bao nhiêu người?)")
-    if not updated_preferences.budget_range:
-        missing_fields.append("ngân sách")
-    if not updated_preferences.user_mood:
-        missing_fields.append("tâm trạng/mood (yên tĩnh, náo nhiệt, lãng mạn...)")
+    
+    # PRIORITY: If user just provided start location (from message detection), 
+    # ONLY ask for destination next, don't ask for mood/group_type yet
+    just_got_start_location = start_location_just_detected
+    
+    if just_got_start_location:
+        # User just provided start location - only ask for destination next
+        print(f"   ⚡ User just provided start location, focusing on destination")
+        if not has_destination:
+            missing_fields.append("điểm đến (bạn muốn đi đâu?)")
+        # Don't ask for other fields yet
+    else:
+        # Normal flow - ask for all missing fields
+        if not has_destination:
+            missing_fields.append("điểm đến (bạn muốn đi đâu?)")
+        if not updated_preferences.departure_location:
+            missing_fields.append("điểm xuất phát (khởi hành từ đâu?)")
+        if not updated_preferences.duration:
+            missing_fields.append("thời gian (mấy ngày?)")
+        if not updated_preferences.group_type:
+            missing_fields.append("nhóm đi (bao nhiêu người?)")
+        if not updated_preferences.budget_range:
+            missing_fields.append("ngân sách")
+        if not updated_preferences.user_mood:
+            missing_fields.append("tâm trạng/mood (yên tĩnh, náo nhiệt, lãng mạn...)")
     
     missing_info = ", ".join(missing_fields) if missing_fields else "Đã đủ"
     
@@ -1114,10 +1213,82 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
         # Get Google API key for directions
         google_api_key = os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_DIRECTIONS_API_KEY")
         
+        # Helper function to extract lat/lng from various formats
+        def extract_coords(loc):
+            """Extract (lat, lng) from various location formats"""
+            if not loc:
+                return None, None
+            
+            # Format 1: Dict with lat/lng keys
+            if isinstance(loc, dict):
+                lat = loc.get("lat") or loc.get("latitude")
+                lng = loc.get("lng") or loc.get("longitude")
+                if lat is not None and lng is not None:
+                    return float(lat), float(lng)
+                
+                # Format 2: Dict with coordinates array (GeoJSON)
+                if "coordinates" in loc and isinstance(loc["coordinates"], (list, tuple)):
+                    coords = loc["coordinates"]
+                    if len(coords) >= 2:
+                        # GeoJSON is [lng, lat], so swap if needed
+                        return float(coords[1]), float(coords[0])
+            
+            # Format 3: Direct list/tuple [lat, lng]
+            if isinstance(loc, (list, tuple)) and len(loc) >= 2:
+                try:
+                    return float(loc[0]), float(loc[1])
+                except:
+                    pass
+            
+            return None, None
+        
         itinerary = []
+        is_first_activity_overall = True  # Track if this is the first activity of the entire itinerary
+        
         for day_data in optimized_route:
             day_num = day_data.get("day", 1)
             day_activities = day_data.get("activities", [])
+            
+            # Add polyline from start location to first activity of the entire itinerary
+            if is_first_activity_overall and day_activities and preferences.departure_coordinates and google_api_key:
+                try:
+                    start_coords = preferences.departure_coordinates
+                    first_activity_loc = day_activities[0].get("location", {})
+                    
+                    print(f"   📍 [Polyline] START LOCATION: type={type(start_coords)}, value={start_coords}")
+                    print(f"   📍 [Polyline] First Activity: type={type(first_activity_loc)}, value={first_activity_loc}")
+                    
+                    lat_start, lng_start = extract_coords(start_coords)
+                    lat_first, lng_first = extract_coords(first_activity_loc)
+                    
+                    print(f"   📍 [Polyline] START → FIRST: ({lat_start}, {lng_start}) → ({lat_first}, {lng_first})")
+                    
+                    if all([lat_start is not None, lng_start is not None, lat_first is not None, lng_first is not None]):
+                        # Call Google Directions API
+                        directions_url = f"https://maps.googleapis.com/maps/api/directions/json?origin={lat_start},{lng_start}&destination={lat_first},{lng_first}&mode=driving&key={google_api_key}"
+                        print(f"   🌐 [Polyline START→FIRST] Calling API...")
+                        try:
+                            resp = requests.get(directions_url, timeout=5)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                if data.get("routes"):
+                                    polyline = data["routes"][0].get("overview_polyline", {}).get("points")
+                                    duration = data["routes"][0].get("legs", [{}])[0].get("duration", {}).get("value", 0)
+                                    
+                                    # Store polyline for first activity (it will be used for start_location polyline)
+                                    if polyline:
+                                        day_activities[0]["start_location_polyline"] = polyline
+                                        day_activities[0]["travel_duration_from_start"] = duration // 60 if duration > 0 else 0
+                                        print(f"   ✅ [Polyline START→FIRST] SUCCESS! Length: {len(polyline)}")
+                                        is_first_activity_overall = False  # Mark that we've processed the first activity
+                        except Exception as e:
+                            print(f"   ⚠️ [Polyline START→FIRST] Request failed: {e}")
+                except Exception as e:
+                    print(f"   ❌ [Polyline START→FIRST] Error: {e}")
+            else:
+                is_first_activity_overall = False  # Mark that we've passed the first day
+
+
             
             for idx, activity in enumerate(day_activities):
                 activity_item = {
@@ -1132,6 +1303,11 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
                     "google_place_id": activity.get("google_place_id"),
                 }
                 
+                # Add start_location_polyline if it exists (polyline from start location to first activity)
+                if activity.get("start_location_polyline"):
+                    activity_item["start_location_polyline"] = activity.get("start_location_polyline")
+                    activity_item["travel_duration_from_start"] = activity.get("travel_duration_from_start", 0)
+                
                 # Add encoded polyline for travel between this activity and the next one
                 if idx < len(day_activities) - 1 and google_api_key:
                     next_activity = day_activities[idx + 1]
@@ -1139,29 +1315,49 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
                         current_loc = activity.get("location", {})
                         next_loc = next_activity.get("location", {})
                         
-                        if current_loc and next_loc:
-                            lat1 = current_loc.get("lat") if isinstance(current_loc, dict) else (current_loc.get("coordinates", [None, None])[1] if "coordinates" in current_loc else None)
-                            lng1 = current_loc.get("lng") if isinstance(current_loc, dict) else (current_loc.get("coordinates", [None, None])[0] if "coordinates" in current_loc else None)
-                            lat2 = next_loc.get("lat") if isinstance(next_loc, dict) else (next_loc.get("coordinates", [None, None])[1] if "coordinates" in next_loc else None)
-                            lng2 = next_loc.get("lng") if isinstance(next_loc, dict) else (next_loc.get("coordinates", [None, None])[0] if "coordinates" in next_loc else None)
-                            
-                            if all([lat1, lng1, lat2, lng2]):
-                                # Call Google Directions API
-                                directions_url = f"https://maps.googleapis.com/maps/api/directions/json?origin={lat1},{lng1}&destination={lat2},{lng2}&mode=driving&key={google_api_key}"
-                                try:
-                                    resp = requests.get(directions_url, timeout=5)
-                                    if resp.status_code == 200:
-                                        data = resp.json()
-                                        if data.get("routes"):
-                                            polyline = data["routes"][0].get("overview_polyline", {}).get("points")
-                                            duration = data["routes"][0].get("legs", [{}])[0].get("duration", {}).get("value", 0)
-                                            if polyline:
-                                                activity_item["encoded_polyline"] = polyline
-                                                activity_item["travel_duration_minutes"] = duration // 60 if duration > 0 else 0
-                                except Exception as e:
-                                    print(f"   ⚠️ Could not get directions: {e}")
+                        print(f"   📍 [Polyline] Activity {idx}: current_loc type={type(current_loc)}, value={current_loc}")
+                        print(f"   📍 [Polyline] Next activity: next_loc type={type(next_loc)}, value={next_loc}")
+                        
+                        lat1, lng1 = extract_coords(current_loc)
+                        lat2, lng2 = extract_coords(next_loc)
+                        
+                        print(f"   📍 [Polyline] Extracted coords: ({lat1}, {lng1}) → ({lat2}, {lng2})")
+                        
+                        if all([lat1 is not None, lng1 is not None, lat2 is not None, lng2 is not None]):
+                            # Call Google Directions API
+                            directions_url = f"https://maps.googleapis.com/maps/api/directions/json?origin={lat1},{lng1}&destination={lat2},{lng2}&mode=driving&key={google_api_key}"
+                            print(f"   🌐 [Polyline] Calling API: {directions_url[:80]}...")
+                            try:
+                                resp = requests.get(directions_url, timeout=5)
+                                print(f"   📡 [Polyline] Response: {resp.status_code}")
+                                
+                                if resp.status_code == 200:
+                                    data = resp.json()
+                                    print(f"   ✓ [Polyline] API returned: status={data.get('status')}, routes={len(data.get('routes', []))}")
+                                    
+                                    if data.get("routes"):
+                                        polyline = data["routes"][0].get("overview_polyline", {}).get("points")
+                                        duration = data["routes"][0].get("legs", [{}])[0].get("duration", {}).get("value", 0)
+                                        
+                                        if polyline:
+                                            activity_item["encoded_polyline"] = polyline
+                                            activity_item["travel_duration_minutes"] = duration // 60 if duration > 0 else 0
+                                            print(f"   ✅ [Polyline] SUCCESS! Length: {len(polyline)}, Duration: {activity_item['travel_duration_minutes']} mins")
+                                        else:
+                                            print(f"   ⚠️ [Polyline] No polyline in overview_polyline")
+                                    else:
+                                        print(f"   ⚠️ [Polyline] No routes: {data.get('status', 'Unknown error')}")
+                                else:
+                                    print(f"   ❌ [Polyline] API error: {resp.status_code}")
+                                    print(f"      Response: {resp.text[:200]}")
+                            except Exception as e:
+                                print(f"   ⚠️ [Polyline] Request failed: {e}")
+                        else:
+                            print(f"   ⚠️ [Polyline] Invalid coords - lat1:{lat1}, lng1:{lng1}, lat2:{lat2}, lng2:{lng2}")
                     except Exception as e:
-                        print(f"   ⚠️ Error processing polyline for activity: {e}")
+                        print(f"   ❌ [Polyline] Error processing: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 itinerary.append(activity_item)
     
@@ -1202,11 +1398,20 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
     explanation += "\n\n💡 Lộ trình này đã được kiểm tra và tối ưu hóa. Tiếp theo tôi sẽ kiểm tra thời tiết và tính chi phí!"
     
     # Store departure_location in state for route calculation later
+    # Format user_location as "lat,lng" string for route calculation
+    user_location_str = None
+    if preferences.departure_coordinates:
+        lat = preferences.departure_coordinates.get("lat")
+        lng = preferences.departure_coordinates.get("lng")
+        if lat is not None and lng is not None:
+            user_location_str = f"{lat},{lng}"
+    
     return {
         **state,
         "current_itinerary": itinerary,
         "user_preferences": preferences,  # Update with mood
-        "user_location": departure,  # Store departure for route calculation
+        "user_location": user_location_str,  # Store departure coordinates as "lat,lng" string for route calculation
+        "departure_coordinates": preferences.departure_coordinates,  # Also store coordinates dict
         "optimization_applied": True,  # Mark as optimized
         "session_stage": "optimizing",
         "itinerary_status": "DRAFT",  # New itinerary starts as DRAFT

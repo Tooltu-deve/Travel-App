@@ -83,7 +83,28 @@ export class AiService {
                 itinerary: response.data.itinerary,
                 suggestions: response.data.suggestions || [],
                 metadata: response.data.metadata || {},
+                start_location: response.data.start_location || response.data.metadata?.start_location, // Include start_location
             };
+
+            // FALLBACK: If itinerary lacks polylines, enrich them
+            if (responseData.itinerary && responseData.itinerary.length > 0) {
+                const hasPolylines = responseData.itinerary.some((item: any) => item.encoded_polyline);
+                
+                if (!hasPolylines) {
+                    this.logger.warn('⚠️ Itinerary has no polylines, attempting enrichment...');
+                    try {
+                        const startLocation = this.extractStartLocation(responseData.itinerary, responseData.preferences);
+                        responseData.itinerary = await this.enrichItineraryWithPolylines(responseData.itinerary, startLocation);
+                        this.logger.log('✅ Successfully enriched itinerary with polylines');
+                    } catch (enrichError) {
+                        this.logger.warn(`Could not enrich polylines: ${enrichError.message}`);
+                        // Continue without polylines - not critical
+                    }
+                } else {
+                    const itemsWithPolylines = responseData.itinerary.filter((item: any) => item.encoded_polyline).length;
+                    this.logger.log(`✓ Itinerary already has polylines (${itemsWithPolylines}/${responseData.itinerary.length} items)`);
+                }
+            }
 
             // Auto-save completed itinerary to database
             if (response.data.stage === 'complete' && response.data.itinerary?.length > 0) {
@@ -586,7 +607,9 @@ export class AiService {
                 estimated_departure: item.estimated_departure,
                 google_place_id: item.google_place_id || item.place?.googlePlaceId,
                 encoded_polyline: item.encoded_polyline,
+                start_location_polyline: item.start_location_polyline,
                 travel_duration_minutes: item.travel_duration_minutes,
+                travel_duration_from_start: item.travel_duration_from_start,
             });
         });
 
@@ -757,5 +780,199 @@ export class AiService {
                 HttpStatus.INTERNAL_SERVER_ERROR,
             );
         }
+    }
+
+    /**
+     * FALLBACK: Enrich itinerary array with polylines from Google Directions API
+     * Used when AI Agent response lacks polylines
+     */
+    private async enrichItineraryWithPolylines(itinerary: any[], startLocation?: { lat: number; lng: number } | null): Promise<any[]> {
+        const googleApiKey = this.configService.get<string>('GOOGLE_DIRECTIONS_API_KEY') ||
+                           this.configService.get<string>('GOOGLE_PLACES_API_KEY');
+
+        if (!googleApiKey) {
+            this.logger.warn('No Google API key available for enriching polylines');
+            return itinerary;
+        }
+
+        const enriched = [...itinerary];
+        
+        // Group items by day to process routes within each day
+        const itemsByDay = new Map<number, any[]>();
+        enriched.forEach(item => {
+            const day = item.day || 1;
+            if (!itemsByDay.has(day)) {
+                itemsByDay.set(day, []);
+            }
+            const dayItems = itemsByDay.get(day);
+            if (dayItems) {
+                dayItems.push(item);
+            }
+        });
+
+        // Process each day's route
+        for (const [day, dayItems] of itemsByDay.entries()) {
+            this.logger.debug(`Processing ${dayItems.length} items for day ${day}`);
+
+            // Sort by time to get correct order
+            dayItems.sort((a, b) => {
+                const timeA = a.time || '00:00';
+                const timeB = b.time || '00:00';
+                return timeA.localeCompare(timeB);
+            });
+
+            // Add polyline from start_location to first activity (only for day 1)
+            if (day === 1 && dayItems.length > 0 && startLocation) {
+                const firstItem = dayItems[0];
+                try {
+                    // Skip if already has start_location_polyline
+                    if (!firstItem.start_location_polyline) {
+                        const firstLoc = firstItem.place?.location || firstItem.location;
+                        
+                        if (firstLoc) {
+                            // Handle various location formats
+                            const getFirstCoords = () => {
+                                if (typeof firstLoc.lat === 'number' && typeof firstLoc.lng === 'number') {
+                                    return { lat: firstLoc.lat, lng: firstLoc.lng };
+                                }
+                                if (Array.isArray(firstLoc) && firstLoc.length >= 2) {
+                                    return { lat: firstLoc[1], lng: firstLoc[0] }; // GeoJSON [lng, lat]
+                                }
+                                if (firstLoc.coordinates && Array.isArray(firstLoc.coordinates)) {
+                                    return { lat: firstLoc.coordinates[1], lng: firstLoc.coordinates[0] };
+                                }
+                                return null;
+                            };
+
+                            const toCoords = getFirstCoords();
+
+                            if (toCoords) {
+                                // Call Google Directions API
+                                const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?` +
+                                    `origin=${startLocation.lat},${startLocation.lng}&` +
+                                    `destination=${toCoords.lat},${toCoords.lng}&` +
+                                    `mode=driving&key=${googleApiKey}`;
+
+                                try {
+                                    const response = await firstValueFrom(
+                                        this.httpService.get(directionsUrl, { timeout: 5000 })
+                                    );
+
+                                    const data = response.data;
+                                    if (data.routes && data.routes.length > 0) {
+                                        const polyline = data.routes[0].overview_polyline?.points;
+                                        const duration = data.routes[0].legs?.[0]?.duration?.value || 0;
+
+                                        if (polyline) {
+                                            firstItem.start_location_polyline = polyline;
+                                            firstItem.travel_duration_from_start = Math.round(duration / 60);
+                                            this.logger.debug(`✓ Added start_location_polyline for day ${day} (${polyline.length} chars)`);
+                                        }
+                                    } else {
+                                        this.logger.debug(`No route found from start_location to first activity`);
+                                    }
+                                } catch (apiError) {
+                                    this.logger.warn(`Failed to fetch directions from start_location: ${apiError.message}`);
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    this.logger.warn(`Error processing start_location_polyline: ${error.message}`);
+                }
+            }
+
+            // Add polylines between consecutive activities
+            for (let i = 0; i < dayItems.length - 1; i++) {
+                const currentItem = dayItems[i];
+                const nextItem = dayItems[i + 1];
+
+                try {
+                    // Skip if polyline already exists
+                    if (currentItem.encoded_polyline) {
+                        this.logger.debug(`Item ${i} already has polyline`);
+                        continue;
+                    }
+
+                    // Extract locations
+                    const currentLoc = currentItem.place?.location || currentItem.location;
+                    const nextLoc = nextItem.place?.location || nextItem.location;
+
+                    if (!currentLoc || !nextLoc) {
+                        this.logger.debug(`Skipping item ${i}: missing location`);
+                        continue;
+                    }
+
+                    // Handle various location formats
+                    const getCurrentCoords = () => {
+                        if (typeof currentLoc.lat === 'number' && typeof currentLoc.lng === 'number') {
+                            return { lat: currentLoc.lat, lng: currentLoc.lng };
+                        }
+                        if (Array.isArray(currentLoc) && currentLoc.length >= 2) {
+                            return { lat: currentLoc[1], lng: currentLoc[0] }; // GeoJSON [lng, lat]
+                        }
+                        if (currentLoc.coordinates && Array.isArray(currentLoc.coordinates)) {
+                            return { lat: currentLoc.coordinates[1], lng: currentLoc.coordinates[0] };
+                        }
+                        return null;
+                    };
+
+                    const getNextCoords = () => {
+                        if (typeof nextLoc.lat === 'number' && typeof nextLoc.lng === 'number') {
+                            return { lat: nextLoc.lat, lng: nextLoc.lng };
+                        }
+                        if (Array.isArray(nextLoc) && nextLoc.length >= 2) {
+                            return { lat: nextLoc[1], lng: nextLoc[0] }; // GeoJSON [lng, lat]
+                        }
+                        if (nextLoc.coordinates && Array.isArray(nextLoc.coordinates)) {
+                            return { lat: nextLoc.coordinates[1], lng: nextLoc.coordinates[0] };
+                        }
+                        return null;
+                    };
+
+                    const fromCoords = getCurrentCoords();
+                    const toCoords = getNextCoords();
+
+                    if (!fromCoords || !toCoords) {
+                        this.logger.debug(`Could not parse coordinates for day ${day} item ${i}`);
+                        continue;
+                    }
+
+                    // Call Google Directions API using HttpService
+                    const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?` +
+                        `origin=${fromCoords.lat},${fromCoords.lng}&` +
+                        `destination=${toCoords.lat},${toCoords.lng}&` +
+                        `mode=driving&key=${googleApiKey}`;
+
+                    try {
+                        const response = await firstValueFrom(
+                            this.httpService.get(directionsUrl, { timeout: 5000 })
+                        );
+
+                        const data = response.data;
+                        if (data.routes && data.routes.length > 0) {
+                            const polyline = data.routes[0].overview_polyline?.points;
+                            const duration = data.routes[0].legs?.[0]?.duration?.value || 0;
+
+                            if (polyline) {
+                                currentItem.encoded_polyline = polyline;
+                                currentItem.travel_duration_minutes = Math.round(duration / 60);
+                                this.logger.debug(`✓ Added polyline for day ${day} item ${i} (${polyline.length} chars)`);
+                            }
+                        } else {
+                            this.logger.debug(`No route found for day ${day} item ${i}`);
+                        }
+                    } catch (apiError) {
+                        this.logger.warn(`Failed to fetch directions: ${apiError.message}`);
+                    }
+
+                } catch (error) {
+                    this.logger.warn(`Error processing polyline for day ${day} item ${i}: ${error.message}`);
+                    // Continue with next item
+                }
+            }
+        }
+
+        return enriched;
     }
 }

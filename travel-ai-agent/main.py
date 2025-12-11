@@ -79,6 +79,7 @@ class ChatResponse(BaseModel):
     itinerary: List[Dict[str, Any]]
     suggestions: List[str] = []
     metadata: Dict[str, Any] = {}
+    start_location: Optional[Dict[str, Any]] = None
 
 class ResetRequest(BaseModel):
     """Request model for reset endpoint"""
@@ -190,8 +191,15 @@ async def chat_with_agent(request: ChatRequest):
             if request.context.get('itinerary_id'):
                 conversation_state['itinerary_id'] = request.context['itinerary_id']
                 logging.info(f"   🔗 Updated state with itinerary_id from context: {request.context['itinerary_id']}")
+            if request.context.get('start_location'):
+                conversation_state['start_location_str'] = request.context['start_location']
+                logging.info(f"   📍 Updated state with start_location from context: {request.context['start_location']}")
             if request.context.get('current_location'):
                 conversation_state['current_location'] = request.context['current_location']
+                # Also set user_location for start_location in response (GPS coordinates)
+                current_loc = request.context['current_location']
+                if isinstance(current_loc, dict) and 'lat' in current_loc and 'lng' in current_loc:
+                    conversation_state['user_location'] = f"{current_loc['lat']},{current_loc['lng']}"
                 logging.info(f"   📍 Updated state with current_location from context: {request.context['current_location']}")
             if request.context.get('active_place_id'):
                 conversation_state['active_place_id'] = request.context['active_place_id']
@@ -201,6 +209,14 @@ async def chat_with_agent(request: ChatRequest):
                 logging.info(f"   ✅ Updated state with itinerary_status from context: {request.context['itinerary_status']}")
         elif request.context and not conversation_state:
             # New conversation - create initial state with context
+            user_location_str = None
+            if request.context.get('current_location'):
+                current_loc = request.context['current_location']
+                if isinstance(current_loc, dict) and 'lat' in current_loc and 'lng' in current_loc:
+                    user_location_str = f"{current_loc['lat']},{current_loc['lng']}"
+            
+            start_location_str = request.context.get('start_location')  # String address from user input
+            
             conversation_state = {
                 'messages': [],
                 'user_preferences': {},
@@ -209,7 +225,8 @@ async def chat_with_agent(request: ChatRequest):
                 'weather_checked': False,
                 'budget_calculated': False,
                 'session_stage': 'profiling',
-                'user_location': None,
+                'user_location': user_location_str,
+                'start_location_str': start_location_str,
                 'travel_date': None,
                 'intent': None,
                 'itinerary_status': None,
@@ -249,6 +266,26 @@ async def chat_with_agent(request: ChatRequest):
             "itinerary_id": result["state"].get("itinerary_id")  # Include itinerary_id for modifications
         }
         
+        # Extract start_location from state (departure point for GPS)
+        start_location = None
+        if result["state"].get("user_location"):
+            user_location = result["state"]["user_location"]
+            # Parse if it's string format "lat,lng"
+            if isinstance(user_location, str) and "," in user_location:
+                try:
+                    parts = user_location.split(",")
+                    start_location = {"lat": float(parts[0]), "lng": float(parts[1])}
+                except:
+                    pass
+            elif isinstance(user_location, dict):
+                start_location = user_location
+        
+        # Fallback to departure_coordinates if user_location is not set
+        if not start_location and result["state"].get("departure_coordinates"):
+            dep_coords = result["state"]["departure_coordinates"]
+            if isinstance(dep_coords, dict):
+                start_location = {"lat": dep_coords.get("lat"), "lng": dep_coords.get("lng")}
+        
         return ChatResponse(
             response=result["response"],
             session_id=session_id,
@@ -256,7 +293,8 @@ async def chat_with_agent(request: ChatRequest):
             preferences=result["preferences"],
             itinerary=result["itinerary"],
             suggestions=suggestions,
-            metadata=metadata
+            metadata=metadata,
+            start_location=start_location
         )
         
     except Exception as e:

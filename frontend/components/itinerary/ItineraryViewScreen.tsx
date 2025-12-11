@@ -50,7 +50,9 @@ interface Activity {
   encoded_polyline?: string;
   steps?: Step[];
   start_encoded_polyline?: string; // polyline từ điểm bắt đầu tới POI đầu tiên (nếu có)
+  start_location_polyline?: string; // polyline từ điểm xuất phát (từ backend)
   start_travel_duration_minutes?: number; // thời gian di chuyển từ điểm bắt đầu tới POI đầu tiên
+  travel_duration_from_start?: number; // thời gian di chuyển từ điểm xuất phát (từ backend)
   google_place_id?: string;
   time?: string;
   activity?: string;

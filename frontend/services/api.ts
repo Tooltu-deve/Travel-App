@@ -355,41 +355,6 @@ export const generateRouteAPI = async (
 };
 
 /**
- * geocodeAddressAPI: Geocode địa chỉ text sang tọa độ lat/lng
- * 
- * @param token - JWT token
- * @param address - Địa chỉ cần geocode
- * @returns { lat, lng, address } - Tọa độ và địa chỉ đã geocode
- * 
- * Endpoint: POST /api/v1/geocode
- * Headers: Authorization: Bearer <token>
- * Request: { address }
- * Response: { lat, lng, address }
- */
-interface GeocodeRequest {
-  address: string;
-}
-
-interface GeocodeResponse {
-  lat: number;
-  lng: number;
-  address: string;
-}
-
-export const geocodeAddressAPI = async (
-  token: string,
-  address: string
-): Promise<GeocodeResponse> => {
-  return makeRequest<GeocodeResponse>('/api/v1/geocode', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ address }),
-  });
-};
-
-/**
  * updateRouteStatusAPI: Cập nhật trạng thái lộ trình
  * 
  * @param token - JWT token

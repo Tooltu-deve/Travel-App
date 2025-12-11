@@ -463,6 +463,21 @@ export default function ItineraryDetailsScreen() {
                   lineCap="round"
                   lineJoin="round"
                 />
+              )}
+
+              {/* Polylines between activities */}
+              {routeSegments.map((segment, idx) => (
+                <Polyline
+                  key={`polyline-${selectedDay}-${idx}`}
+                  coordinates={segment.points}
+                  strokeColor={
+                    segment.mode === 'TRANSIT' ? '#F44336' : ROUTE_COLORS.main
+                  }
+                  strokeWidth={segment.mode === 'TRANSIT' ? 10 : 3}
+                  lineDashPattern={segment.mode === 'WALK' ? [20, 10] : undefined}
+                  lineCap="round"
+                  lineJoin="round"
+                />
               ))}
 
               {/* Markers */}
