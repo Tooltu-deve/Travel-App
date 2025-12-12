@@ -761,7 +761,9 @@ def profile_collector_node(state: TravelState) -> TravelState:
     # Accept ANY string and geocode it to validate
     if not preferences.departure_location and last_message:
         # Try to geocode the entire user message as a location
-        geocoded = geocode_location(last_message)
+        # Pass destination context for better geocoding accuracy
+        destination_context = updated_preferences.destination or updated_preferences.start_location
+        geocoded = geocode_location(last_message, destination_context)
         if geocoded:
             # Successfully geocoded - use this as start location
             updated_preferences.departure_location = last_message.strip()
@@ -832,54 +834,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     elif any(word in user_text for word in ["bạn bè", "nhóm", "đồng nghiệp"]):
         updated_preferences.group_type = "friends"
         
-    # Budget detection - parse số tiền hoặc keyword
-    budget_amount = None
-    
-    # Try to extract budget amount (in million VND)
-    budget_patterns = [
-        r'(\d+)\s*triệu',           # "10 triệu"
-        r'(\d+)\s*tr',              # "10tr"
-        r'(\d+)\s*million',         # "10 million"
-        r'(\d+\.?\d*)\s*triệu',     # "1.5 triệu"
-    ]
-    
-    for pattern in budget_patterns:
-        match = re.search(pattern, user_text)
-        if match:
-            budget_amount = float(match.group(1))
-            print(f"   💰 Detected budget: {budget_amount} triệu VND")
-            break
-    
-    # Classify based on amount or keywords
-    if budget_amount:
-        # Per day calculation (assume if total budget mentioned)
-        # If duration is known, divide by duration
-        duration_days = 1
-        if updated_preferences.duration and "_" in updated_preferences.duration:
-            try:
-                duration_days = int(updated_preferences.duration.split("_")[0])
-            except:
-                duration_days = 1
-        
-        per_day_budget = budget_amount / duration_days if duration_days > 0 else budget_amount
-        print(f"   💰 Budget per day: {per_day_budget:.1f} triệu VND")
-        
-        if per_day_budget < 1:
-            updated_preferences.budget_range = "budget"
-        elif per_day_budget >= 3:
-            updated_preferences.budget_range = "luxury"
-        else:
-            updated_preferences.budget_range = "mid-range"
-    elif any(word in user_text for word in ["tiết kiệm", "rẻ", "bình dân", "sinh viên"]):
-        updated_preferences.budget_range = "budget"
-    elif any(word in user_text for word in ["cao cấp", "sang", "luxury", "đắt tiền"]):
-        updated_preferences.budget_range = "luxury"
-    else:
-        # Only default if no budget info at all
-        if not updated_preferences.budget_range:
-            updated_preferences.budget_range = "mid-range"
-        
-    # Duration detection - support 1-7+ days with regex
+    # Duration detection FIRST - support 1-7+ days with regex
     # Try regex pattern first for flexible number detection (e.g., "4 ngày", "5 ngày 4 đêm")
     duration_match = re.search(r'(\d+)\s*ngày', user_text)
     if duration_match:
@@ -910,6 +865,58 @@ def profile_collector_node(state: TravelState) -> TravelState:
     elif any(word in user_text for word in ["bảy ngày", "tuần", "1 tuần"]):
         updated_preferences.duration = "7_days"
     
+    # NOW Budget detection AFTER duration is known
+    # This way we can calculate per-day budget correctly
+    budget_amount = None
+    
+    # Try to extract budget amount (in million VND)
+    budget_patterns = [
+        r'(\d+)\s*triệu',           # "10 triệu"
+        r'(\d+)\s*tr',              # "10tr"
+        r'(\d+)\s*million',         # "10 million"
+        r'(\d+\.?\d*)\s*triệu',     # "1.5 triệu"
+    ]
+    
+    for pattern in budget_patterns:
+        match = re.search(pattern, user_text)
+        if match:
+            budget_amount = float(match.group(1))
+            print(f"   💰 Detected budget: {budget_amount} triệu VND")
+            break
+    
+    # Classify budget based on amount or keywords
+    # NOW we have duration info, so we can calculate per-day budget accurately
+    if budget_amount:
+        # Per day calculation (assume if total budget mentioned)
+        # If duration is known, divide by duration
+        duration_days = 1
+        if updated_preferences.duration:
+            if "_" in updated_preferences.duration:
+                try:
+                    duration_days = int(updated_preferences.duration.split("_")[0])
+                except:
+                    duration_days = 1
+            elif updated_preferences.duration == "half_day":
+                duration_days = 0.5
+            elif updated_preferences.duration == "full_day":
+                duration_days = 1
+        
+        per_day_budget = budget_amount / duration_days if duration_days > 0 else budget_amount
+        print(f"   💰 Budget per day: {per_day_budget:.1f} triệu VND (total: {budget_amount}, days: {duration_days})")
+        
+        if per_day_budget < 1:
+            updated_preferences.budget_range = "budget"
+        elif per_day_budget >= 3:
+            updated_preferences.budget_range = "luxury"
+        else:
+            updated_preferences.budget_range = "mid-range"
+    elif any(word in user_text for word in ["tiết kiệm", "rẻ", "bình dân", "sinh viên"]):
+        updated_preferences.budget_range = "budget"
+    elif any(word in user_text for word in ["cao cấp", "sang", "luxury", "đắt tiền"]):
+        updated_preferences.budget_range = "luxury"
+    # NOTE: Do NOT set default budget_range here - let it remain None
+    # This ensures the assistant will ask the user to specify their budget
+    
     # Determine next stage
     # Use destination field, fallback to start_location for backward compatibility
     has_destination = updated_preferences.destination or updated_preferences.start_location
@@ -935,30 +942,23 @@ def profile_collector_node(state: TravelState) -> TravelState:
     # NOW call LLM with UPDATED preferences to generate natural response
     missing_fields = []
     
-    # PRIORITY: If user just provided start location (from message detection), 
-    # ONLY ask for destination next, don't ask for mood/group_type yet
-    just_got_start_location = start_location_just_detected
+    # SEQUENTIAL QUESTIONING - Ask ONE field at a time in priority order
+    # Priority: destination → departure → duration → group → budget → MOOD (LAST!)
+    # CRITICAL: ONLY add the FIRST missing field, not all missing fields!
     
-    if just_got_start_location:
-        # User just provided start location - only ask for destination next
-        print(f"   ⚡ User just provided start location, focusing on destination")
-        if not has_destination:
-            missing_fields.append("điểm đến (bạn muốn đi đâu?)")
-        # Don't ask for other fields yet
-    else:
-        # Normal flow - ask for all missing fields
-        if not has_destination:
-            missing_fields.append("điểm đến (bạn muốn đi đâu?)")
-        if not updated_preferences.departure_location:
-            missing_fields.append("điểm xuất phát (khởi hành từ đâu?)")
-        if not updated_preferences.duration:
-            missing_fields.append("thời gian (mấy ngày?)")
-        if not updated_preferences.group_type:
-            missing_fields.append("nhóm đi (bao nhiêu người?)")
-        if not updated_preferences.budget_range:
-            missing_fields.append("ngân sách")
-        if not updated_preferences.user_mood:
-            missing_fields.append("tâm trạng/mood (yên tĩnh, náo nhiệt, lãng mạn...)")
+    if not has_destination:
+        missing_fields.append("điểm đến (bạn muốn đi đâu?)")
+    elif not updated_preferences.departure_location:
+        missing_fields.append("điểm xuất phát (khởi hành từ đâu?)")
+    elif not updated_preferences.duration:
+        missing_fields.append("thời gian (mấy ngày?)")
+    elif not updated_preferences.group_type:
+        missing_fields.append("nhóm đi (bao nhiêu người?)")
+    elif not updated_preferences.budget_range:
+        missing_fields.append("ngân sách (tiết kiệm/trung bình/cao cấp?)")
+    elif not updated_preferences.user_mood:
+        # MOOD IS LAST - only ask when all others are done!
+        missing_fields.append("tâm trạng/mood (yên tĩnh, náo nhiệt, lãng mạn...)")
     
     missing_info = ", ".join(missing_fields) if missing_fields else "Đã đủ"
     
@@ -971,9 +971,14 @@ def profile_collector_node(state: TravelState) -> TravelState:
     Thông tin hiện tại về khách hàng:
     - Điểm đến: {updated_preferences.destination or updated_preferences.start_location or "Chưa biết"}
     - Nhóm đi: {updated_preferences.group_type or "Chưa biết"}  
-    - Ngân sách: {updated_preferences.budget_range or "Chưa biết"}
+    - Ngân sách: {updated_preferences.budget_range or "Chưa biết"} ⭐ (CẦN THIẾT - ảnh hưởng đến lựa chọn địa điểm và quán ăn)
     - Thời gian: {updated_preferences.duration or "Chưa biết"}
     - Tâm trạng/Mood: {updated_preferences.user_mood or "Chưa biết"} ⭐ (ĐẶC BIỆT QUAN TRỌNG - ảnh hưởng đến chất lượng lộ trình)
+    
+    Các ngân sách có sẵn:
+    - "Tiết kiệm" (< 1 triệu VND/ngày): quán ăn bình dân, chỗ ở rẻ
+    - "Trung bình" (1-3 triệu VND/ngày): quán ăn 3-4 sao, khách sạn 2-3 sao
+    - "Cao cấp" (> 3 triệu VND/ngày): quán hàng đầu, khách sạn 4-5 sao
     
     Các mood có sẵn (hãy giúp khách chọn một):
 {mood_options_str}
@@ -985,9 +990,12 @@ def profile_collector_node(state: TravelState) -> TravelState:
     HƯỚNG DẪN:
     - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ tất cả thông tin → Nói sẽ tạo lộ trình
     - Nếu còn thiếu thông tin → Hỏi những trường còn thiếu một cách tự nhiên
+    - ⭐ HỎI TUẦN TỰ - Chỉ hỏi MỘT trường còn thiếu duy nhất, không hỏi nhiều cái cùng lúc!
+    - ⭐ NGÂN SÁCH là BẮT BUỘC - không được bỏ qua! Nếu khách chưa nói → hỏi cụ thể: "Bạn có ngân sách bao nhiêu cho chuyến du lịch này?"
+    - ⭐ Tâm trạng/MOOD phải HỎI CUỐI CÙNG, sau khi tất cả các trường khác (điểm đến, khởi hành, thời gian, nhóm đi, ngân sách) đã có!
+    - Tâm trạng/mood ảnh hưởng trực tiếp đến mức độ chất lượng của các địa điểm được chọn
     - Hỏi tự nhiên, thân thiện, lồng ghép các câu hỏi
-    - ⭐ Tâm trạng/mood là QUAN TRỌNG NHẤT - nó ảnh hưởng trực tiếp đến mức độ chất lượng của các địa điểm được chọn
-    - Khi hỏi về tâm trạng/mood, giới thiệu ngắn gọn các lựa chọn trên
+    - Khi hỏi về tâm trạng/mood, giới thiệu ngắn gọn các lựa chọn
     - Ví dụ: "Bạn muốn đi với tâm trạng nào - yên tĩnh & thư giãn, náo nhiệt & xã hội, hay mạo hiểm & thú vị?"
     - Chỉ hỏi những trường CHƯA CÓ, không hỏi lại những trường đã có
     
