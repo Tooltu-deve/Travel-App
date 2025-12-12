@@ -271,6 +271,12 @@ const ItineraryScreen: React.FC = () => {
 
   const handleCompleteRoute = async (routeId: string) => {
     try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập.');
+        return;
+      }
+
       // Show confirmation alert
       Alert.alert(
         'Hoàn thành lộ trình',
@@ -285,7 +291,19 @@ const ItineraryScreen: React.FC = () => {
             text: 'Xác nhận',
             onPress: async () => {
               try {
-                // Just remove the main route - no API call needed
+                // Determine if main route is AI or manual based on route_data_json structure
+                const isManual = mainRoute?.route_data_json?.days && Array.isArray(mainRoute.route_data_json.days);
+
+                // Update status to DRAFT to remove from main routes
+                if (isManual) {
+                  await updateCustomItineraryStatusAPI(routeId, 'DRAFT', undefined, token);
+                } else {
+                  await updateRouteStatusAPI(token, routeId, {
+                    status: 'DRAFT',
+                  });
+                }
+
+                // Remove from local state
                 setMainRoute(null);
 
                 // Show beautiful congratulation message
