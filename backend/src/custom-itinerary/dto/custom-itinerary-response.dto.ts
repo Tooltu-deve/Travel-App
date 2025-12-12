@@ -29,6 +29,7 @@ export class PlaceWithRouteDto {
   // snake_case để nhất quán với route_id, user_id, created_at... trong các module khác
   encoded_polyline: string | null;
   travel_duration_minutes: number | null;
+  steps?: any[];
 }
 
 /**

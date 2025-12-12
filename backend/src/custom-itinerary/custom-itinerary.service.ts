@@ -107,23 +107,21 @@ export class CustomItineraryService {
         );
         
         // Call Directions API with this day's specific travelMode
-        const directionsData = await this.getDirections(
-          `${currentPlace.location.lat},${currentPlace.location.lng}`,
-          `${nextPlace.location.lat},${nextPlace.location.lng}`,
-          travelMode, // Use the travelMode specific to this day
-          optimize,
+        // Use itineraryService.fetchDirectionsInfo for robust fallback (Drive -> Bike -> Transit -> Walk -> Ports)
+        const directionsData = await this.itineraryService.fetchDirectionsInfo(
+          currentPlace.location,
+          nextPlace.location,
+          travelMode
         );
-        
-        const route = directionsData.routes[0];
-        const leg = route.legs[0];
         
         placeWithRoute = {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           address: currentPlace.address,
           location: currentPlace.location,
-          encoded_polyline: route.overview_polyline.points,
-          travel_duration_minutes: Math.round(leg.duration.value / 60),
+          encoded_polyline: directionsData.encoded_polyline,
+          travel_duration_minutes: directionsData.travel_duration_minutes ? Math.round(directionsData.travel_duration_minutes) : null,
+          steps: directionsData.steps,
         };
         
         this.logger.debug(
