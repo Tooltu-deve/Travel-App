@@ -302,6 +302,76 @@ export class ItineraryService {
 
 
   /**
+   * Mapping các tên thành phố và các biến thể phổ biến
+   */
+  private getCityVariants(destination: string): string[] {
+    const destLower = destination.toLowerCase().trim();
+    const variants = new Set<string>([destLower]);
+
+    // Xử lý dấu tiếng Việt
+    const removeVietnameseTones = (str: string): string => {
+      return str.replace(/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/g, (match) => {
+        const map: Record<string, string> = {
+          'à': 'a', 'á': 'a', 'ạ': 'a', 'ả': 'a', 'ã': 'a',
+          'â': 'a', 'ầ': 'a', 'ấ': 'a', 'ậ': 'a', 'ẩ': 'a', 'ẫ': 'a',
+          'ă': 'a', 'ằ': 'a', 'ắ': 'a', 'ặ': 'a', 'ẳ': 'a', 'ẵ': 'a',
+          'è': 'e', 'é': 'e', 'ẹ': 'e', 'ẻ': 'e', 'ẽ': 'e',
+          'ê': 'e', 'ề': 'e', 'ế': 'e', 'ệ': 'e', 'ể': 'e', 'ễ': 'e',
+          'ì': 'i', 'í': 'i', 'ị': 'i', 'ỉ': 'i', 'ĩ': 'i',
+          'ò': 'o', 'ó': 'o', 'ọ': 'o', 'ỏ': 'o', 'õ': 'o',
+          'ô': 'o', 'ồ': 'o', 'ố': 'o', 'ộ': 'o', 'ổ': 'o', 'ỗ': 'o',
+          'ơ': 'o', 'ờ': 'o', 'ớ': 'o', 'ợ': 'o', 'ở': 'o', 'ỡ': 'o',
+          'ù': 'u', 'ú': 'u', 'ụ': 'u', 'ủ': 'u', 'ũ': 'u',
+          'ư': 'u', 'ừ': 'u', 'ứ': 'u', 'ự': 'u', 'ử': 'u', 'ữ': 'u',
+          'ỳ': 'y', 'ý': 'y', 'ỵ': 'y', 'ỷ': 'y', 'ỹ': 'y',
+          'đ': 'd'
+        };
+        return map[match] || match;
+      });
+    };
+
+    // Thêm version không dấu
+    variants.add(removeVietnameseTones(destLower));
+
+    // Mapping các tên thành phố phổ biến
+    const cityMappings: Record<string, string[]> = {
+      'thành phố hồ chí minh': ['ho chi minh', 'hcm', 'saigon', 'sài gòn', 'tp.hcm', 'tp hcm', 'ho chi minh city', 'thanh pho ho chi minh'],
+      'hồ chí minh': ['ho chi minh', 'hcm', 'saigon', 'sài gòn', 'tp.hcm', 'tp hcm', 'ho chi minh city'],
+      'hà nội': ['ha noi', 'hanoi', 'thủ đô'],
+      'đà nẵng': ['da nang', 'danang'],
+      'hải phòng': ['hai phong', 'haiphong'],
+      'cần thơ': ['can tho', 'cantho'],
+      'nha trang': ['nha trang'],
+      'huế': ['hue', 'thừa thiên huế', 'thua thien hue'],
+      'vũng tàu': ['vung tau', 'vungtau'],
+      'hạ long': ['ha long', 'halong'],
+      'đà lạt': ['da lat', 'dalat'],
+      'sa pa': ['sapa', 'sa pa'],
+      'hội an': ['hoi an', 'hoian'],
+      'phú quốc': ['phu quoc', 'phuquoc'],
+      'phan thiết': ['phan thiet', 'phantheit'],
+      'ninh bình': ['ninh binh', 'ninhbinh'],
+    };
+
+    // Tìm mapping nếu có
+    const normalizedDest = destLower.replace(/thành phố\s+/i, ''); // Loại bỏ "thành phố" prefix
+    const mappingKey = Object.keys(cityMappings).find(key => 
+      key === destLower || key === normalizedDest || destLower.includes(key) || key.includes(normalizedDest)
+    );
+
+    if (mappingKey) {
+      cityMappings[mappingKey].forEach(v => variants.add(v));
+    } else if (destLower.includes('hồ chí minh') || destLower.includes('ho chi minh')) {
+      // Xử lý riêng cho HCM
+      ['ho chi minh', 'hcm', 'saigon', 'sài gòn', 'tp.hcm', 'tp hcm', 'ho chi minh city'].forEach(v => variants.add(v));
+    } else if (destLower.includes('huế') || destLower.includes('hue')) {
+      ['hue', 'thừa thiên huế', 'thua thien hue'].forEach(v => variants.add(v));
+    }
+
+    return Array.from(variants);
+  }
+
+  /**
    * Lọc POI theo thành phố (destination)
    * Tìm kiếm trong address và name
    */
@@ -313,36 +383,62 @@ export class ItineraryService {
       return pois;
     }
 
-    const destinationLower = destination.toLowerCase().trim();
-    const destinationWords = destinationLower.split(/\s+/); // Tách thành các từ
+    const searchVariants = this.getCityVariants(destination);
 
-    return pois.filter((poi) => {
+    const filteredPois: PlaceDocument[] = [];
+    const excludedPois: PlaceDocument[] = [];
+
+    for (const poi of pois) {
+      let matched = false;
+      
       // Kiểm tra trong address (ưu tiên)
       const address = (poi.address || '').toLowerCase();
       
-      // Tìm kiếm chính xác hoặc một phần của tên thành phố
-      // Ví dụ: "Hồ Chí Minh" hoặc "TP.HCM" hoặc "Ho Chi Minh City"
-      if (address.includes(destinationLower)) {
-        return true;
+      // 1. Tìm kiếm trong address (ưu tiên) - kiểm tra tất cả các biến thể
+      for (const variant of searchVariants) {
+        // Tìm kiếm variant trong address (bỏ qua ký tự đặc biệt và khoảng trắng)
+        const normalizedAddress = address.replace(/[.,;:]/g, ' ').replace(/\s+/g, ' ');
+        if (normalizedAddress.includes(variant)) {
+          matched = true;
+          break;
+        }
+      }
+      
+      if (matched) {
+        filteredPois.push(poi);
+        continue;
       }
 
-      // Tìm kiếm từng từ trong destination (cho trường hợp viết tắt)
-      // Ví dụ: "HCM" sẽ match "Ho Chi Minh"
-      const allWordsMatch = destinationWords.every(word => 
-        word.length > 2 && address.includes(word)
-      );
-      if (allWordsMatch && destinationWords.length > 0) {
-        return true;
-      }
-
-      // Kiểm tra trong name (nếu có)
+      // 2. Kiểm tra trong name (nếu address không match)
       const name = (poi.name || '').toLowerCase();
-      if (name.includes(destinationLower)) {
-        return true;
+      for (const variant of searchVariants) {
+        if (name.includes(variant)) {
+          matched = true;
+          break;
+        }
+      }
+      
+      if (matched) {
+        filteredPois.push(poi);
+        continue;
       }
 
-      return false;
-    });
+      // POI không match
+      excludedPois.push(poi);
+    }
+
+    // Log các POI bị loại bỏ để debug
+    if (excludedPois.length > 0 && excludedPois.length <= 10) {
+      console.log(`⚠️  Các POI bị loại bỏ khi lọc theo "${destination}":`);
+      excludedPois.slice(0, 10).forEach((poi, idx) => {
+        console.log(`   ${idx + 1}. ${poi.name} - Address: ${poi.address || 'N/A'}`);
+      });
+      if (excludedPois.length > 10) {
+        console.log(`   ... và ${excludedPois.length - 10} POI khác`);
+      }
+    }
+
+    return filteredPois;
   }
 
   /**
@@ -584,11 +680,14 @@ export class ItineraryService {
     const tripEndDate = new Date(tripStartDate);
     tripEndDate.setDate(tripEndDate.getDate() + durationDays - 1);
     const tripEndMs = this.normalizeDate(tripEndDate);
+    // Ngày hiện tại (bắt đầu ngày) để loại trừ ngày quá khứ
+    const todayMs = this.normalizeDate(new Date());
 
     const isWithinTripRange = (timestampMs: number): boolean => {
       const normalized = this.normalizeDate(new Date(timestampMs));
+      // Chỉ kiểm tra các ngày TRONG khoảng thời gian du lịch và không phải ngày quá khứ
       return (
-        normalized >= tripStartMs - DAY_MS && normalized <= tripEndMs + DAY_MS
+        normalized >= Math.max(tripStartMs, todayMs) && normalized <= tripEndMs
       );
     };
 
@@ -699,6 +798,91 @@ export class ItineraryService {
     return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
   }
 
+  /**
+   * Dịch các từ khóa thời tiết từ tiếng Anh sang tiếng Việt
+   */
+  private translateWeatherDescription(description: string): string {
+    if (!description) return description;
+
+    const descLower = description.toLowerCase();
+    const weatherTranslations: Record<string, string> = {
+      // Rain
+      'clear sky': 'trời quang đãng',
+      'few clouds': 'ít mây',
+      'scattered clouds': 'mây rải rác',
+      'broken clouds': 'mây rải rác',
+      'overcast clouds': 'trời nhiều mây',
+      'mist': 'sương mù nhẹ',
+      'fog': 'sương mù',
+      'haze': 'sương mù nhẹ',
+      'smoke': 'khói',
+      'dust': 'bụi',
+      'sand': 'cát',
+      'light rain': 'mưa nhẹ',
+      'moderate rain': 'mưa vừa',
+      'heavy rain': 'mưa lớn',
+      'very heavy rain': 'mưa rất lớn',
+      'extreme rain': 'mưa cực lớn',
+      'freezing rain': 'mưa đông',
+      'light intensity shower rain': 'mưa rào nhẹ',
+      'shower rain': 'mưa rào',
+      'heavy intensity shower rain': 'mưa rào lớn',
+      'ragged shower rain': 'mưa rào rải rác',
+      'light intensity drizzle': 'mưa phùn nhẹ',
+      'drizzle': 'mưa phùn',
+      'heavy intensity drizzle': 'mưa phùn lớn',
+      'light intensity drizzle rain': 'mưa phùn nhẹ',
+      'drizzle rain': 'mưa phùn',
+      'heavy intensity drizzle rain': 'mưa phùn lớn',
+      'shower drizzle': 'mưa phùn rải rác',
+      'thunderstorm with light rain': 'dông kèm mưa nhẹ',
+      'thunderstorm with rain': 'dông kèm mưa',
+      'thunderstorm with heavy rain': 'dông kèm mưa lớn',
+      'light thunderstorm': 'dông nhẹ',
+      'thunderstorm': 'dông',
+      'heavy thunderstorm': 'dông lớn',
+      'ragged thunderstorm': 'dông rải rác',
+      'thunderstorm with light drizzle': 'dông kèm mưa phùn nhẹ',
+      'thunderstorm with drizzle': 'dông kèm mưa phùn',
+      'thunderstorm with heavy drizzle': 'dông kèm mưa phùn lớn',
+      // Snow
+      'light snow': 'tuyết nhẹ',
+      'snow': 'tuyết',
+      'heavy snow': 'tuyết lớn',
+      'sleet': 'tuyết mưa',
+      'light shower sleet': 'tuyết mưa nhẹ',
+      'shower sleet': 'tuyết mưa',
+      'light rain and snow': 'mưa tuyết nhẹ',
+      'rain and snow': 'mưa tuyết',
+      'light shower snow': 'mưa tuyết nhẹ',
+      'shower snow': 'mưa tuyết',
+      'heavy shower snow': 'mưa tuyết lớn',
+      // Other
+      'squalls': 'gió giật mạnh',
+      'tornado': 'lốc xoáy',
+      'volcanic ash': 'tro núi lửa',
+    };
+
+    // Tìm kiếm exact match trước
+    if (weatherTranslations[descLower]) {
+      return weatherTranslations[descLower];
+    }
+
+    // Tìm kiếm từng từ khóa (từ dài đến ngắn để ưu tiên match chính xác hơn)
+    const sortedKeys = Object.keys(weatherTranslations).sort((a, b) => b.length - a.length);
+    for (const key of sortedKeys) {
+      if (descLower.includes(key)) {
+        // Thay thế từ khóa bằng bản dịch
+        const translated = descLower.replace(key, weatherTranslations[key]);
+        // Capitalize chữ cái đầu
+        return translated.charAt(0).toUpperCase() + translated.slice(1);
+      }
+    }
+
+    // Nếu không tìm thấy, trả về nguyên bản (có thể đã là tiếng Việt hoặc từ khóa không có trong map)
+    return description;
+  }
+
   private isSevereWeatherCondition(
     weatherMain: string,
     weatherDescription: string,
@@ -740,11 +924,14 @@ export class ItineraryService {
     const tripEndDate = new Date(tripStartDate);
     tripEndDate.setDate(tripEndDate.getDate() + durationDays - 1);
     const tripEndMs = this.normalizeDate(tripEndDate);
+    // Ngày hiện tại (bắt đầu ngày) để loại trừ ngày quá khứ
+    const todayMs = this.normalizeDate(new Date());
 
     const isWithinTripRange = (timestampMs: number): boolean => {
       const normalized = this.normalizeDate(new Date(timestampMs));
+      // Chỉ kiểm tra các ngày TRONG khoảng thời gian du lịch và không phải ngày quá khứ
       return (
-        normalized >= tripStartMs - DAY_MS && normalized <= tripEndMs + DAY_MS
+        normalized >= Math.max(tripStartMs, todayMs) && normalized <= tripEndMs
       );
     };
 
@@ -798,12 +985,13 @@ export class ItineraryService {
         description.includes('heavy') || description.includes('storm')
           ? 'danger'
           : 'warning';
+      const translatedDescription = this.translateWeatherDescription(description);
       addAlert({
         type: 'rain',
         title: `Dự báo mưa (${dateLabel})`,
         message: `Ngày ${entryDate.toLocaleDateString(
           'vi-VN',
-        )} dự báo ${description}. Hãy chuẩn bị ô/áo mưa hoặc cân nhắc điều chỉnh lịch trình cho phù hợp.`,
+        )} dự báo ${translatedDescription}. Hãy chuẩn bị ô/áo mưa hoặc cân nhắc điều chỉnh lịch trình cho phù hợp.`,
         severity,
       });
     };

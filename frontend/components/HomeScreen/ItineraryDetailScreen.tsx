@@ -83,12 +83,13 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
     longitudeDelta: number;
   } | null>(null);
   const [geocodedStartLocation, setGeocodedStartLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [startLocationPolyline, setStartLocationPolyline] = useState<string | null>(null);
   const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
   const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
   const [isEnriching, setIsEnriching] = useState(false);
 
   const itineraryStatus = parentItineraryStatus ?? null;
-  const setItineraryStatus = setParentItineraryStatus || (() => {});
+  const setItineraryStatus = setParentItineraryStatus || (() => { });
 
   // Group items by day
   const itemsByDay = itinerary.reduce((acc, item) => {
@@ -102,6 +103,30 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
     .sort((a, b) => a - b);
 
   const currentDayItems = itemsByDay[selectedDay] || [];
+
+  // Extract start_location_polyline from first item of current day
+  useEffect(() => {
+    if (currentDayItems.length > 0) {
+      const firstItemOfDay = currentDayItems[0];
+      console.log('[ItineraryDetailScreen] First item of day', selectedDay, ':', {
+        name: firstItemOfDay.place?.name,
+        hasPolyline: !!firstItemOfDay.start_location_polyline,
+        polylineLength: firstItemOfDay.start_location_polyline?.length,
+        type: firstItemOfDay.type,
+        location: firstItemOfDay.place?.location,
+      });
+
+      // Use start_location_polyline if available, otherwise set null
+      // (will still render if we have geocodedStartLocation and first item location)
+      if (firstItemOfDay.start_location_polyline) {
+        setStartLocationPolyline(firstItemOfDay.start_location_polyline);
+      } else {
+        setStartLocationPolyline(null);
+      }
+    } else {
+      setStartLocationPolyline(null);
+    }
+  }, [currentDayItems, selectedDay]);
 
   // Geocode start location
   useEffect(() => {
@@ -119,16 +144,21 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
       length: itinerary.length,
       firstItem: itinerary[0],
       hasPolylines: itinerary.some(item => item.encoded_polyline),
+      hasStartLocationPolyline: itinerary.some(item => item.start_location_polyline),
+      startLocationPolyline,
+      selectedDay,
+      sortedDays,
+      currentDayItems: currentDayItems.map(item => item.place?.name),
       startLocation,
       geocodedStartLocation,
     });
-  }, [itinerary, startLocation, geocodedStartLocation]);
+  }, [itinerary, startLocation, geocodedStartLocation, selectedDay, sortedDays, startLocationPolyline, currentDayItems]);
 
   // Decode polyline
   const decodePolyline = (encoded?: string) => {
     if (!encoded) return [];
     const points: { latitude: number; longitude: number }[] = [];
-    let index = 0,lat = 0, lng = 0;
+    let index = 0, lat = 0, lng = 0;
 
     while (index < encoded.length) {
       let shift = 0, result = 0, byte;
@@ -314,7 +344,7 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
       'Xác nhận lộ trình',
       'Sau khi xác nhận, lộ trình không thể chỉnh sửa thêm. Bạn có chắc chắn?',
       [
-        { text: 'Hủy', onPress: () => {}, style: 'cancel' },
+        { text: 'Hủy', onPress: () => { }, style: 'cancel' },
         {
           text: 'Xác nhận',
           onPress: async () => {
@@ -452,18 +482,18 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
                   );
                 })}
 
-                {/* Polyline from start location to first activity */}
-                {geocodedStartLocation && currentDayItems.length > 0 && currentDayItems[0].start_location_polyline && (
+                {/* Polyline from start location to first activity of each day */}
+                {geocodedStartLocation && startLocationPolyline && (
                   <React.Fragment>
                     <Polyline
-                      coordinates={decodePolyline(currentDayItems[0].start_location_polyline)}
+                      coordinates={decodePolyline(startLocationPolyline)}
                       strokeColor={ROUTE_COLORS.main}
                       strokeWidth={3}
                       lineJoin="round"
                       lineCap="round"
                     />
                     <Polyline
-                      coordinates={decodePolyline(currentDayItems[0].start_location_polyline)}
+                      coordinates={decodePolyline(startLocationPolyline)}
                       strokeColor={ROUTE_COLORS.glow}
                       strokeWidth={3}
                       lineJoin="round"
@@ -472,12 +502,49 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
                   </React.Fragment>
                 )}
 
+                {/* Fallback: Direct line from start location to first activity if no polyline */}
+                {geocodedStartLocation && !startLocationPolyline && currentDayItems.length > 0 && (
+                  (() => {
+                    const firstItem = currentDayItems.find(item => item.type !== 'start_location');
+                    const firstItemCoord = firstItem?.place?.location ? toMapCoordinate(firstItem.place.location) : null;
+
+                    if (firstItemCoord) {
+                      const directLineCoords = [
+                        { latitude: geocodedStartLocation.lat, longitude: geocodedStartLocation.lng },
+                        { latitude: firstItemCoord.latitude, longitude: firstItemCoord.longitude },
+                      ];
+
+                      return (
+                        <React.Fragment>
+                          <Polyline
+                            coordinates={directLineCoords}
+                            strokeColor={ROUTE_COLORS.main}
+                            strokeWidth={4}
+                            lineJoin="round"
+                            lineCap="round"
+                            lineDashPattern={[5, 5]}
+                          />
+                          <Polyline
+                            coordinates={directLineCoords}
+                            strokeColor={ROUTE_COLORS.glow}
+                            strokeWidth={8}
+                            lineJoin="round"
+                            lineCap="round"
+                            lineDashPattern={[5, 5]}
+                          />
+                        </React.Fragment>
+                      );
+                    }
+                    return null;
+                  })()
+                )}
+
                 {/* Route polylines */}
                 {currentDayItems.map((item, index) => {
                   if (index === currentDayItems.length - 1) return null;
 
                   const nextItem = currentDayItems[index + 1];
-                  
+
                   // Skip if no polyline
                   if (!item.encoded_polyline) {
                     console.warn(`[Map] Item ${index}: No encoded_polyline. Item:`, item);
@@ -676,7 +743,7 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
             style={[
               styles.confirmButton,
               (isConfirming || itineraryStatus === 'CONFIRMED') &&
-                styles.confirmButtonDisabled,
+              styles.confirmButtonDisabled,
             ]}
             onPress={confirmItinerary}
             disabled={isConfirming || itineraryStatus === 'CONFIRMED'}

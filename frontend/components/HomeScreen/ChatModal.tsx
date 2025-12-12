@@ -349,7 +349,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
           if (dataOk.itinerary && Array.isArray(dataOk.itinerary)) {
             console.debug('[Chat Response] Setting itinerary with', dataOk.itinerary.length, 'items');
-            
+
             // DEBUG: Log first item structure to see if encoded_polyline exists
             if (dataOk.itinerary.length > 0) {
               console.log('[DEBUG] First itinerary item structure:', JSON.stringify(dataOk.itinerary[0], null, 2));
@@ -359,7 +359,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             const transformedItinerary = dataOk.itinerary.map((item: any, index: number) => {
               // Extract day from item or use calculated day
               const day = item.day || Math.floor(index / 3) + 1;
-              
+
               return {
                 day,
                 time: item.time || item.estimated_arrival || item.arrival_time || '09:00',
@@ -386,7 +386,34 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             });
 
             console.debug('[Chat Response] Transformed itinerary:', transformedItinerary);
-            
+
+            // If start_location exists and first item doesn't have start_location_polyline, fetch it
+            if (dataOk.start_location && transformedItinerary.length > 0 && !transformedItinerary[0].start_location_polyline) {
+              console.log('[Chat Response] Fetching start_location_polyline from Google Directions API...');
+              const apiKey = process.env.EXPO_PUBLIC_GOOGLE_DIRECTIONS_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
+              if (apiKey && transformedItinerary[0].place?.location) {
+                const firstActivityLoc = transformedItinerary[0].place.location;
+                const startLoc = dataOk.start_location;
+                const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${startLoc.lat},${startLoc.lng}&destination=${firstActivityLoc.lat},${firstActivityLoc.lng}&mode=driving&key=${apiKey}`;
+
+                fetch(directionsUrl)
+                  .then(res => res.json())
+                  .then(data => {
+                    if (data.routes && data.routes[0]) {
+                      const polyline = data.routes[0].overview_polyline?.points;
+                      const duration = data.routes[0].legs?.[0]?.duration?.value || 0;
+                      if (polyline) {
+                        console.log('[Chat Response] ✅ start_location_polyline fetched!');
+                        transformedItinerary[0].start_location_polyline = polyline;
+                        transformedItinerary[0].travel_duration_from_start = Math.round(duration / 60);
+                        setItinerary([...transformedItinerary]); // Force re-render
+                      }
+                    }
+                  })
+                  .catch(err => console.warn('[Chat Response] Failed to fetch start_location_polyline:', err));
+              }
+            }
+
             // Log for debugging - check if polylines exist
             const hasPolylines = transformedItinerary.some((item: any) => item.encoded_polyline);
             const hasStartLocationPolylines = transformedItinerary.some((item: any) => item.start_location_polyline);
@@ -404,7 +431,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
                 travel_duration_from_start: itemWithStartPolyline?.travel_duration_from_start,
               });
             }
-            
+
             setItinerary(transformedItinerary);
           }
 

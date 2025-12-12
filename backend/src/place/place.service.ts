@@ -282,14 +282,69 @@ export class PlaceService {
 
     const { googlePlaceId, forceRefresh } = enrichDto;
 
-    const place = await this.placeModel
+    let place = await this.placeModel
       .findOne({ googlePlaceId })
       .exec();
 
+    // Nếu POI chưa có trong database, tự động tạo mới từ Google Places API
     if (!place) {
-      throw new NotFoundException(
-        `Không tìm thấy địa điểm với Google Place ID: ${googlePlaceId}`,
-      );
+      console.log(`📝 POI chưa có trong database, đang tạo mới: ${googlePlaceId}`);
+      
+      // Place ID format: thêm prefix "places/" nếu chưa có
+      const placeIdForApi = googlePlaceId.startsWith('places/') 
+        ? googlePlaceId 
+        : `places/${googlePlaceId}`;
+      
+      const url = `https://places.googleapis.com/v1/${placeIdForApi}`;
+      const fieldMask = 'displayName,formattedAddress,location,types,rating';
+      
+      try {
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': this.googlePlacesApiKey,
+              'X-Goog-FieldMask': fieldMask,
+              'Accept-Language': 'vi',
+            },
+            timeout: 10000,
+          }),
+        );
+
+        const data = response.data;
+        
+        // Tạo POI mới với thông tin cơ bản
+        const name = data.displayName?.text || data.displayName || 'Địa điểm';
+        const address = data.formattedAddress || '';
+        const location = data.location?.latitude && data.location?.longitude
+          ? {
+              type: 'Point' as const,
+              coordinates: [data.location.longitude, data.location.latitude],
+            }
+          : {
+              type: 'Point' as const,
+              coordinates: [0, 0], // Default location, sẽ được cập nhật khi enrich
+            };
+        
+        place = new this.placeModel({
+          googlePlaceId,
+          name,
+          address,
+          location,
+          type: data.types?.[0] || 'other',
+          types: data.types || [],
+          rating: data.rating,
+        });
+        
+        await place.save();
+        console.log(`✅ Đã tạo POI mới: ${name}`);
+      } catch (error: any) {
+        console.error(`❌ Lỗi khi tạo POI mới: ${error.message}`);
+        throw new HttpException(
+          `Không thể lấy thông tin địa điểm từ Google Places API: ${error.message}`,
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
 
     const lastEnrichedAt = place.lastEnrichedAt?.getTime() ?? 0;
