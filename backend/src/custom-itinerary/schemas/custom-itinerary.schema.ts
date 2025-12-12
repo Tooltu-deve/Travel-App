@@ -29,6 +29,12 @@ export class CustomItinerary {
   @Prop({ type: String, default: null })
   end_date: string | null; // Ngày kết thúc (ISO string)
 
+  @Prop({ type: String, default: null })
+  start_location_text: string | null; // Địa chỉ xuất phát của toàn bộ lộ trình
+
+  @Prop({ type: Object, default: null })
+  start_location: { lat: number; lng: number } | null; // Tọa độ điểm bắt đầu
+
   @Prop({ type: SchemaTypes.Mixed })
   route_data_json: any;
 }

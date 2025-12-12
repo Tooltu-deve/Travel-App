@@ -336,7 +336,12 @@ export default function ManualPreviewScreen() {
   // Update routes when places change
   useEffect(() => {
     const currentDayPlaces = itinerary[selectedDay - 1]?.places || [];
-    fetchDirections(currentDayPlaces);
+    // Chỉ fetch directions nếu thực sự có places hoặc startLocationCoords thay đổi
+    if (currentDayPlaces.length > 0 || startLocationCoords) {
+      fetchDirections(currentDayPlaces);
+    } else {
+      setRoutePolylines([]);
+    }
   }, [itinerary, selectedDay, startLocationCoords]);
 
   // Backend Autocomplete search
@@ -587,6 +592,7 @@ export default function ManualPreviewScreen() {
         start_date: startDate.toISOString(),
         end_date: endDate.toISOString(),
         optimize: false,
+        startLocationText: currentLocationText,
         days: itinerary.map((day) => {
           // Calculate start location for each day:
           // Day 1: Use current location text
@@ -721,9 +727,9 @@ export default function ManualPreviewScreen() {
     };
   }, []);
 
-  // Get current day data
-  const currentDayData = itinerary[selectedDay - 1];
-  const currentPlaces = currentDayData?.places || [];
+  // Get current day data - use useMemo to prevent creating new array reference on every render
+  const currentDayData = useMemo(() => itinerary[selectedDay - 1], [itinerary, selectedDay]);
+  const currentPlaces = useMemo(() => currentDayData?.places || [], [currentDayData]);
 
   return (
     <View style={styles.container}>

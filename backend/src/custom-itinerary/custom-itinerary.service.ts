@@ -107,23 +107,21 @@ export class CustomItineraryService {
         );
         
         // Call Directions API with this day's specific travelMode
-        const directionsData = await this.getDirections(
-          `${currentPlace.location.lat},${currentPlace.location.lng}`,
-          `${nextPlace.location.lat},${nextPlace.location.lng}`,
-          travelMode, // Use the travelMode specific to this day
-          optimize,
+        // Use itineraryService.fetchDirectionsInfo for robust fallback (Drive -> Bike -> Transit -> Walk -> Ports)
+        const directionsData = await this.itineraryService.fetchDirectionsInfo(
+          currentPlace.location,
+          nextPlace.location,
+          travelMode
         );
-        
-        const route = directionsData.routes[0];
-        const leg = route.legs[0];
         
         placeWithRoute = {
           placeId: currentPlace.placeId,
           name: currentPlace.name,
           address: currentPlace.address,
           location: currentPlace.location,
-          encoded_polyline: route.overview_polyline.points,
-          travel_duration_minutes: Math.round(leg.duration.value / 60),
+          encoded_polyline: directionsData.encoded_polyline,
+          travel_duration_minutes: directionsData.travel_duration_minutes ? Math.round(directionsData.travel_duration_minutes) : null,
+          steps: directionsData.steps,
         };
         
         this.logger.debug(
@@ -199,6 +197,17 @@ export class CustomItineraryService {
       
       this.logger.log(`Successfully calculated routes for ${days.length} days with different travel modes`);
 
+      // Geocode startLocationText để lấy tọa độ điểm bắt đầu
+      let startLocationCoordinates: { lat: number; lng: number } | null = null;
+      if (itineraryData.startLocationText) {
+        try {
+          startLocationCoordinates = await this.getCityCoordinates(itineraryData.startLocationText);
+          this.logger.log(`Geocoded start location: ${itineraryData.startLocationText} -> ${JSON.stringify(startLocationCoordinates)}`);
+        } catch (error) {
+          this.logger.warn(`Failed to geocode start location: ${error.message}`);
+        }
+      }
+
       // Lưu vào collection custom-itineraries
       const saved = await this.customItineraryModel.create({
         route_id: routeId,
@@ -209,12 +218,16 @@ export class CustomItineraryService {
         optimize: itineraryData.optimize ?? false,
         start_date: itineraryData.start_date || null,
         end_date: itineraryData.end_date || null,
+        start_location_text: itineraryData.startLocationText || null,
+        start_location: startLocationCoordinates,
         route_data_json: {
           days: processedDays,
           optimize: itineraryData.optimize,
           destination: itineraryData.destination,
           start_date: itineraryData.start_date,
           end_date: itineraryData.end_date,
+          start_location_text: itineraryData.startLocationText,
+          start_location: startLocationCoordinates,
         },
       });
 
@@ -229,6 +242,8 @@ export class CustomItineraryService {
         status: saved.status,
         start_date: saved.start_date || null,
         end_date: saved.end_date || null,
+        start_location_text: saved.start_location_text || null,
+        start_location: saved.start_location || null,
       };
     } catch (error) {
       this.logger.error(`Lỗi khi tính toán routes: ${error.message}`);
