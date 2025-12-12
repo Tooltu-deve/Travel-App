@@ -61,6 +61,38 @@ export class ActivityDto {
   @IsOptional()
   @IsNumber()
   travel_duration_minutes?: number;
+
+  @IsOptional()
+  @IsArray()
+  steps?: any[];
+
+  @IsOptional()
+  @IsObject()
+  origin_port?: { name: string; place_id: string };
+
+  @IsOptional()
+  @IsObject()
+  destination_port?: { name: string; place_id: string };
+
+  @IsOptional()
+  @IsString()
+  start_encoded_polyline?: string;
+
+  @IsOptional()
+  @IsNumber()
+  start_travel_duration_minutes?: number;
+
+  @IsOptional()
+  @IsArray()
+  start_steps?: any[];
+
+  @IsOptional()
+  @IsObject()
+  start_origin_port?: { name: string; place_id: string };
+
+  @IsOptional()
+  @IsObject()
+  start_destination_port?: { name: string; place_id: string };
 }
 
 /**
