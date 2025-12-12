@@ -825,7 +825,7 @@ async def optimize_with_kmeans(request: OptimizerRequest):
 
     # BƯỚC 4: K-MEANS CLUSTERING
     print(f"Bước 4: K-Means clustering...")
-    radius_limit_km = 10.0
+    radius_limit_km = 15.0
     pois_within_radius = [poi for poi in candidates if within_start_radius(poi, radius_limit_km)]
     print(f"  → {len(pois_within_radius)} POI trong bán kính {radius_limit_km}km")
 
