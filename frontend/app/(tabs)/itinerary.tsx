@@ -324,9 +324,9 @@ const ItineraryScreen: React.FC = () => {
     router.push('/create-itinerary');
   };
 
-  const handleEditRouteName = (route: TravelRoute) => {
+  const handleEditRouteName = (route: TravelRoute, index: number) => {
     setEditingRouteId(route.route_id);
-    setEditingRouteName(route.title || '');
+    setEditingRouteName(getRouteTitle(route, index));
     setIsEditModalVisible(true);
   };
 
@@ -636,7 +636,7 @@ const ItineraryScreen: React.FC = () => {
                       <View style={styles.titleEditContainer}>
                         <Text style={styles.currentCardTitle}>{getRouteTitle(mainRoute, 0)}</Text>
                         <TouchableOpacity
-                          onPress={() => handleEditRouteName(mainRoute)}
+                          onPress={() => handleEditRouteName(mainRoute, 0)}
                           style={styles.editIconButton}
                         >
                           <FontAwesome name="pencil" size={18} color={COLORS.textWhite} />
@@ -787,7 +787,7 @@ const ItineraryScreen: React.FC = () => {
                           {getRouteTitle(route, index)}
                         </Text>
                         <TouchableOpacity
-                          onPress={() => handleEditRouteName(route)}
+                          onPress={() => handleEditRouteName(route, index)}
                           style={styles.cardEditIconButton}
                         >
                           <FontAwesome name="pencil" size={16} color={COLORS.primary} />
