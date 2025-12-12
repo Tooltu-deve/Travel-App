@@ -30,6 +30,58 @@ export class ItineraryService {
   private readonly aiOptimizerServiceUrl: string;
   private readonly googleDirectionsApiKey: string;
   private readonly openWeatherApiKey: string;
+  private readonly googleRoutesApiKey: string;
+
+  private readonly VIETNAM_PORTS = [
+    // TP. Hồ Chí Minh
+    { name: 'Cảng Cát Lái', lat: 10.7608, lng: 106.7958 },
+    { name: 'Cảng Tân Cảng Hiệp Phước', lat: 10.6286, lng: 106.7633 },
+    { name: 'Cảng Container Quốc tế Việt Nam (VICT)', lat: 10.7736, lng: 106.7283 },
+    { name: 'Cảng Bến Nghé', lat: 10.7700, lng: 106.7300 },
+    { name: 'Bến phà Cần Giờ - Vũng Tàu (Bến Tắc Suất)', lat: 10.3983, lng: 106.9750 },
+
+    // Đà Nẵng
+    { name: 'Bến cảng Tiên Sa', lat: 16.1233, lng: 108.2167 },
+    { name: 'Bến cảng Sông Hàn', lat: 16.0778, lng: 108.2250 },
+    { name: 'Bến cảng Nại Hiên', lat: 16.0900, lng: 108.2300 },
+    { name: 'Bến cảng Sơn Trà', lat: 16.1167, lng: 108.2333 },
+    { name: 'Bến cảng Nhà máy xi măng Hải Vân', lat: 16.1333, lng: 108.1333 },
+
+    // Hải Phòng
+    { name: 'Cảng Nam Hải Đình Vũ', lat: 20.8333, lng: 106.7667 },
+    { name: 'Cảng container Vip Greenport', lat: 20.8400, lng: 106.7600 },
+    { name: 'Bến cảng Việt Nhật', lat: 20.8500, lng: 106.7500 },
+    { name: 'Bến phà Đồng Bài', lat: 20.8167, lng: 106.9167 },
+    { name: 'Bến phà Gia Luận', lat: 20.8333, lng: 106.9833 },
+
+    // Nha Trang
+    { name: 'Cảng Cầu Đá Nha Trang', lat: 12.2167, lng: 109.2167 },
+    { name: 'Cảng Nha Trang', lat: 12.2167, lng: 109.2167 },
+    { name: 'Cảng Vân Phong', lat: 12.6000, lng: 109.3000 },
+    { name: 'Cáp Treo Vinpearl Harbour Nha Trang', lat: 12.1859399, lng: 109.184602},
+
+    // Vũng Tàu
+    { name: 'Bến phà Vũng Tàu', lat: 10.3333, lng: 107.0667 },
+    { name: 'Cảng Công vụ', lat: 10.3400, lng: 107.0700 },
+
+    // Hạ Long
+    { name: 'Cảng Du thuyền Quốc tế Hạ Long (Cảng Sun)', lat: 20.9500, lng: 107.0500 },
+    { name: 'Cảng Du thuyền Tuần Châu Hạ Long', lat: 20.9333, lng: 106.9833 },
+    { name: 'Bến tàu khách quốc tế Vinashin Hòn Gai', lat: 20.9500, lng: 107.0833 },
+    { name: 'Cảng tổng hợp Cái Lân', lat: 20.9667, lng: 107.0333 },
+    { name: 'Bến cảng khách Hòn Gai', lat: 20.9500, lng: 107.0833 },
+
+    // Hội An
+    { name: 'Cảng Cửa Đại Cù Lao Chàm', lat: 15.8833, lng: 108.3833 },
+    { name: 'Bến Cảng Giao Thoa Nam Hội An', lat: 15.8500, lng: 108.4000 },
+
+    // Phú Quốc
+    { name: 'Bến phà Bãi Vòng', lat: 10.1500, lng: 104.0500 },
+    { name: 'Cảng An Thới', lat: 10.0167, lng: 104.0167 },
+
+    // Phan Thiết
+    { name: 'Cảng Phan Thiết', lat: 10.9333, lng: 108.1000 },
+  ];
 
   constructor(
     @InjectModel(Place.name) private placeModel: Model<PlaceDocument>,
@@ -49,6 +101,11 @@ export class ItineraryService {
       this.configService.get<string>('GOOGLE_DISTANCE_MATRIX_API_KEY') ||
       process.env.GOOGLE_DIRECTIONS_API_KEY ||
       process.env.GOOGLE_DISTANCE_MATRIX_API_KEY ||
+      '';
+
+    this.googleRoutesApiKey = 
+      this.configService.get<string>('GOOGLE_ROUTES_API_KEY') ||
+      process.env.GOOGLE_ROUTES_API_KEY ||
       '';
 
     this.openWeatherApiKey =
@@ -1326,46 +1383,235 @@ export class ItineraryService {
     };
   }
 
+  private findNearestPort(location: { lat: number; lng: number }): { name: string; lat: number; lng: number; distance: number } | null {
+    if (!location || !location.lat || !location.lng) return null;
+
+    let nearestPort: { name: string; lat: number; lng: number; distance: number } | null = null;
+    let minDistance = Infinity;
+
+    for (const port of this.VIETNAM_PORTS) {
+      const distance = this.calculateHaversineDistance(
+        location.lat,
+        location.lng,
+        port.lat,
+        port.lng,
+      );
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestPort = { ...port, distance };
+      }
+    }
+
+    // Chỉ lấy cảng trong bán kính 100km
+    if (minDistance > 100) {
+        return null;
+    }
+
+    return nearestPort;
+  }
+
+  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371; // Radius of the earth in km
+    const dLat = this.deg2rad(lat2 - lat1);
+    const dLon = this.deg2rad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const d = R * c; // Distance in km
+    return d;
+  }
+
+  private deg2rad(deg: number): number {
+    return deg * (Math.PI / 180);
+  }
+
+  private async getPlaceIdFromTextSearch(query: string): Promise<string | null> {
+    if (!this.googleRoutesApiKey) return null; // Reuse Routes API Key for Places API if possible, or check config
+
+    // Note: Google Places API (New) uses the same project/key usually.
+    // URL: https://places.googleapis.com/v1/places:searchText
+    const url = 'https://places.googleapis.com/v1/places:searchText';
+    
+    const body = {
+      textQuery: query,
+      maxResultCount: 1
+    };
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(url, body, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': this.googleRoutesApiKey, // Assuming same key works
+            'X-Goog-FieldMask': 'places.id,places.displayName',
+          },
+          timeout: 10000,
+        }),
+      );
+
+      const places = response.data.places;
+      if (places && places.length > 0) {
+        return places[0].id;
+      }
+    } catch (error) {
+      console.error(`❌ Error searching place ID for "${query}":`, error?.message || error);
+    }
+    return null;
+  }
+
   private async fetchDirectionsInfo(
     origin: { lat: number; lng: number },
     destination: { lat: number; lng: number },
     mode: string = 'driving',
-  ): Promise<{ encoded_polyline: string | null; travel_duration_minutes: number | null }> {
-    if (!this.googleDirectionsApiKey) {
+  ): Promise<{ 
+    encoded_polyline: string | null; 
+    travel_duration_minutes: number | null;
+    origin_port?: { name: string; place_id: string };
+    destination_port?: { name: string; place_id: string };
+    steps?: any[];
+  }> {
+    if (!this.googleRoutesApiKey) {
       return { encoded_polyline: null, travel_duration_minutes: null };
     }
 
-    const originStr = `${origin.lat},${origin.lng}`;
-    const destStr = `${destination.lat},${destination.lng}`;
-    const travelMode = mode || 'driving';
-    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=${travelMode}&key=${this.googleDirectionsApiKey}`;
+    const travelModesToRetry = ['driving', 'walking', 'bicycling'];
 
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(url, { timeout: 30000 }),
-      );
-      const data = response.data;
+    // Map travel mode từ format cũ sang format Routes API v2
+    const mapTravelMode = (mode: string): string => {
+      const modeMap: { [key: string]: string } = {
+        'driving': 'DRIVE',
+        'walking': 'WALK',
+        'bicycling': 'BICYCLE',
+        'transit': 'TRANSIT',
+      };
+      return modeMap[mode.toLowerCase()] || 'DRIVE';
+    };
 
-      if (data.status === 'OK' && data.routes && data.routes.length > 0) {
-        const route = data.routes[0];
-        const leg = route.legs[0];
-        const overviewPolyline = route.overview_polyline;
-        const encodedPolyline = overviewPolyline?.points || null;
-        const durationSeconds = leg?.duration?.value || 0;
-        const travelDurationMinutes =
-          durationSeconds > 0 ? durationSeconds / 60.0 : null;
+    const fetchRoute = async (travelMode: string, useTraffic: boolean = true) => {
+      const url = `https://routes.googleapis.com/directions/v2:computeRoutes`;
+      const mappedMode = mapTravelMode(travelMode);
+      const body: any = {
+        origin: {
+          location: {
+            latLng: {
+              latitude: origin.lat,
+              longitude: origin.lng,
+            },
+          },
+        },
+        destination: {
+          location: {
+            latLng: {
+              latitude: destination.lat,
+              longitude: destination.lng,
+            },
+          },
+        },
+        travelMode: mappedMode,
+      };
 
-        return {
-          encoded_polyline: encodedPolyline,
-          travel_duration_minutes: travelDurationMinutes,
-        };
+      // Chỉ thêm routingPreference cho DRIVE mode nếu useTraffic = true
+      if (mappedMode === 'DRIVE' && useTraffic) {
+        body.routingPreference = 'TRAFFIC_AWARE';
       }
 
+      try {
+        const response = await firstValueFrom(
+          this.httpService.post(url, body, {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': this.googleRoutesApiKey,
+              'X-Goog-FieldMask': 'routes.duration,routes.polyline.encodedPolyline,routes.legs.steps.travelMode,routes.legs.steps.polyline.encodedPolyline,routes.legs.steps.navigationInstruction',
+            },
+            timeout: 30000,
+          }),
+        );
+        const data = response.data;
+
+        if (data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const polyline = route.polyline?.encodedPolyline || null;
+          const durationSeconds = route.duration ? parseFloat(route.duration.replace('s', '')) : 0;
+          const travelDurationMinutes =
+            durationSeconds > 0 ? durationSeconds / 60.0 : null;
+
+          // Xử lý multimodal steps (ví dụ: walk -> ferry -> walk)
+          let steps: any[] = [];
+          if (route.legs && route.legs.length > 0) {
+             route.legs.forEach((leg: any) => {
+                if (leg.steps && Array.isArray(leg.steps)) {
+                   steps = steps.concat(leg.steps.map((step: any) => ({
+                      travel_mode: step.travelMode,
+                      encoded_polyline: step.polyline?.encodedPolyline,
+                      instruction: step.navigationInstruction?.instructions
+                   })));
+                }
+             });
+          }
+
+          return {
+            encoded_polyline: polyline,
+            travel_duration_minutes: travelDurationMinutes,
+            steps: steps.length > 0 ? steps : undefined
+          };
+        }
+      } catch (error) {
+        if (error?.response?.data) {
+          console.error(`Route API error for mode ${travelMode} (traffic: ${useTraffic}):`, JSON.stringify(error.response.data));
+        } else {
+          console.error(`Route API error for mode ${travelMode} (traffic: ${useTraffic}):`, error?.message || error);
+        }
+      }
       return { encoded_polyline: null, travel_duration_minutes: null };
-    } catch (error) {
-      console.error('Directions API error:', error);
-      return { encoded_polyline: null, travel_duration_minutes: null };
+    };
+
+    // Gọi API với mode ban đầu
+    let result: any = await fetchRoute(mode, true);
+
+    // Nếu mode là 'driving' và thất bại, thử lại không dùng routingPreference (đôi khi gây lỗi hoặc không tìm thấy đường)
+    if (mode === 'driving' && (!result.encoded_polyline || !result.travel_duration_minutes)) {
+      console.log(`⚠️  No result for mode "driving" with traffic. Retrying without traffic preference...`);
+      result = await fetchRoute(mode, false);
     }
+
+    // Nếu thất bại, kiểm tra xem có phải là tuyến đường biển/đảo không (dựa vào việc tìm thấy cảng gần đó)
+    if (!result.encoded_polyline || !result.travel_duration_minutes) {
+      const originPort = this.findNearestPort(origin);
+      const destPort = this.findNearestPort(destination);
+
+      // Chỉ khi tìm thấy cảng ở cả 2 đầu (nghi ngờ là đường ra đảo), mới thử fallback sang walking
+      if (originPort && destPort) {
+        console.log(`⚠️  No result for mode "${mode}". Potential sea route detected (Ports: ${originPort.name} -> ${destPort.name}).`);
+        
+        // Thử lại với walking
+        console.log(`   Retrying with "walking"...`);
+        result = await fetchRoute('walking');
+
+        // Nếu walking vẫn thất bại, trả về thông tin cảng để gợi ý
+        if (!result.encoded_polyline || !result.travel_duration_minutes) {
+          console.log(`⚠️  Walking also failed. Returning port info.`);
+          
+          const [originPortId, destPortId] = await Promise.all([
+            this.getPlaceIdFromTextSearch(originPort.name),
+            this.getPlaceIdFromTextSearch(destPort.name)
+          ]);
+
+          if (originPortId) {
+            result.origin_port = { name: originPort.name, place_id: originPortId };
+          }
+          if (destPortId) {
+            result.destination_port = { name: destPort.name, place_id: destPortId };
+          }
+        }
+      } else {
+        console.log(`⚠️  No result for mode "${mode}" and no ports detected nearby. Returning failure.`);
+      }
+    }
+
+    return result;
   }
 
   private async enrichRouteWithDirections(
@@ -1398,6 +1644,9 @@ export class ItineraryService {
           ...poi,
           encoded_polyline: directionsInfo.encoded_polyline,
           travel_duration_minutes: directionsInfo.travel_duration_minutes,
+          origin_port: directionsInfo.origin_port,
+          steps: directionsInfo.steps,
+          destination_port: directionsInfo.destination_port,
         };
 
         enrichedActivities.push(enrichedPoi);
@@ -1857,12 +2106,22 @@ export class ItineraryService {
           `${current.location.lat},${current.location.lng}`,
           travelMode,
         );
-        const startRoute = directionsFromStart.routes[0];
-        const startLeg = startRoute.legs[0];
-        activityData.start_encoded_polyline = startRoute.overview_polyline.points;
-        activityData.start_travel_duration_minutes = Math.round(
-          startLeg.duration.value / 60,
-        );
+        
+        if (directionsFromStart.status === 'OK' && directionsFromStart.routes.length > 0) {
+          const startRoute = directionsFromStart.routes[0];
+          const startLeg = startRoute.legs[0];
+          activityData.start_encoded_polyline = startRoute.overview_polyline.points;
+          activityData.start_travel_duration_minutes = Math.round(
+            startLeg.duration.value / 60,
+          );
+          activityData.start_steps = startLeg.steps; // Thêm steps cho đoạn đường từ start
+        } else {
+          console.warn(`⚠️ No route from start to first POI`);
+          activityData.start_encoded_polyline = null;
+          activityData.start_travel_duration_minutes = null;
+          if (directionsFromStart.origin_port) activityData.start_origin_port = directionsFromStart.origin_port;
+          if (directionsFromStart.destination_port) activityData.start_destination_port = directionsFromStart.destination_port;
+        }
       }
 
       // Tính Directions đến POI tiếp theo
@@ -1874,13 +2133,22 @@ export class ItineraryService {
           travelMode,
         );
 
-        const route = directions.routes[0];
-        const leg = route.legs[0];
+        if (directions.status === 'OK' && directions.routes.length > 0) {
+          const route = directions.routes[0];
+          const leg = route.legs[0];
 
-        activityData.encoded_polyline = route.overview_polyline.points;
-        activityData.travel_duration_minutes = Math.round(
-          leg.duration.value / 60,
-        );
+          activityData.encoded_polyline = route.overview_polyline.points;
+          activityData.travel_duration_minutes = Math.round(
+            leg.duration.value / 60,
+          );
+          activityData.steps = leg.steps; // Thêm steps vào activityData
+        } else {
+          console.warn(`⚠️ No route between ${current.name} and ${next.name}`);
+          activityData.encoded_polyline = null;
+          activityData.travel_duration_minutes = null;
+          if (directions.origin_port) activityData.origin_port = directions.origin_port;
+          if (directions.destination_port) activityData.destination_port = directions.destination_port;
+        }
       } else {
         activityData.encoded_polyline = null;
         activityData.travel_duration_minutes = null;
@@ -1893,7 +2161,7 @@ export class ItineraryService {
   }
 
   /**
-   * Gọi Google Directions API
+   * Gọi Google Routes API (thay thế Directions API)
    */
   private async getDirections(
     origin: string,
@@ -1901,28 +2169,83 @@ export class ItineraryService {
     mode: string,
   ): Promise<any> {
     try {
-      const url = 'https://maps.googleapis.com/maps/api/directions/json';
-      const params = {
-        origin,
-        destination,
-        mode,
-        key: this.googleDirectionsApiKey,
+      console.log(`🔍 getDirections called with:`, { origin, destination, mode });
+      
+      // Parse origin và destination (có thể là "lat,lng" hoặc place_id)
+      const parseLocation = (location: string) => {
+        if (location.includes(',')) {
+          const [lat, lng] = location.split(',').map(Number);
+          return { lat, lng };
+        }
+        return null;
       };
-      const response = await firstValueFrom(
-        this.httpService.get(url, { params }),
-      );
 
-      if (response.data.status !== 'OK') {
+      const originCoords = parseLocation(origin);
+      const destCoords = parseLocation(destination);
+
+      console.log(`📍 Parsed coordinates:`, { originCoords, destCoords });
+
+      if (!originCoords || !destCoords) {
         throw new HttpException(
-          `Directions API error: ${response.data.status}`,
+          'Invalid origin or destination format',
           HttpStatus.BAD_REQUEST,
         );
       }
 
-      return response.data;
+      // Sử dụng fetchDirectionsInfo đã có sẵn
+      console.log(`🚀 Calling fetchDirectionsInfo...`);
+      const result = await this.fetchDirectionsInfo(
+        originCoords,
+        destCoords,
+        mode || 'driving',
+      );
+
+      console.log(`📥 fetchDirectionsInfo result:`, { 
+        hasPolyline: !!result.encoded_polyline, 
+        hasDuration: !!result.travel_duration_minutes,
+        duration: result.travel_duration_minutes
+      });
+
+      if (!result.encoded_polyline || !result.travel_duration_minutes) {
+        console.warn(`⚠️ No route found for ${origin} -> ${destination} with mode ${mode}`);
+        // Không throw error ngay, trả về response với route rỗng
+        return {
+          status: 'ZERO_RESULTS',
+          routes: [],
+          origin_port: result.origin_port,
+          destination_port: result.destination_port,
+        };
+      }
+
+      // Format lại giống Directions API response để tương thích với code cũ
+      const response = {
+        status: 'OK',
+        routes: [
+          {
+            overview_polyline: {
+              points: result.encoded_polyline,
+            },
+            legs: [
+              {
+                duration: {
+                  value: result.travel_duration_minutes * 60,
+                  text: `${Math.round(result.travel_duration_minutes)} phút`,
+                },
+                steps: result.steps, // Thêm steps vào response
+              },
+            ],
+          },
+        ],
+        origin_port: result.origin_port,
+        destination_port: result.destination_port,
+      };
+      
+      console.log(`✅ getDirections success`);
+      return response;
     } catch (error) {
+      console.error('❌ getDirections error:', error?.message || error);
       throw new HttpException(
-        'Cannot get directions',
+        `Cannot get directions: ${error?.message || 'Unknown error'}`,
         HttpStatus.BAD_REQUEST,
       );
     }
