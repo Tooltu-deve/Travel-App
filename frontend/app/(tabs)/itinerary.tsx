@@ -12,10 +12,14 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useFocusEffect } from '@react-navigation/native';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
 import { ItineraryViewScreen } from '@/components/itinerary/ItineraryViewScreen';
@@ -31,67 +35,118 @@ const ItineraryScreen: React.FC = () => {
   const [mainRoute, setMainRoute] = useState<TravelRoute | null>(null);
   const [confirmedRoutes, setConfirmedRoutes] = useState<TravelRoute[]>([]);
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(true);
+  const [isLoadingConfirmedRoutes, setIsLoadingConfirmedRoutes] = useState(false);
+  const [isLoadingMainRoute, setIsLoadingMainRoute] = useState(true);
   const [routesError, setRoutesError] = useState<string | null>(null);
   const [isActivating, setIsActivating] = useState<string | null>(null);
   const [viewerRouteId, setViewerRouteId] = useState<string | null>(null);
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [viewerRouteData, setViewerRouteData] = useState<TravelRoute | null>(null);
+  const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
+  const [editingRouteName, setEditingRouteName] = useState('');
+  const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   
+  useFocusEffect(
+    React.useCallback(() => {
+      let isMounted = true;
+
+      const fetchConfirmedRoutes = async () => {
+        try {
+          setIsLoadingConfirmedRoutes(true);
+          setRoutesError(null);
+
+          const token = await AsyncStorage.getItem('userToken');
+          if (!token) {
+            setRoutesError('Bạn cần đăng nhập để xem lộ trình.');
+            return;
+          }
+
+          // Fetch confirmed routes based on active tab
+          if (activeTab === 'ai') {
+            // Fetch AI routes (itinerary endpoint)
+            const confirmedResponse = await getRoutesAPI(token, 'CONFIRMED');
+            if (isMounted) {
+              setConfirmedRoutes(confirmedResponse.routes || []);
+            }
+          } else {
+            // Fetch Manual routes (custom-itinerary endpoint)
+            const confirmedResponse = await getCustomItinerariesAPI(token, 'CONFIRMED');
+            if (isMounted) {
+              setConfirmedRoutes(Array.isArray(confirmedResponse) ? confirmedResponse : []);
+            }
+          }
+        } catch (error: any) {
+          console.error('❌ Fetch routes error:', error);
+          if (isMounted) {
+            setRoutesError(error.message || 'Không thể tải lộ trình.');
+          }
+        } finally {
+          if (isMounted) {
+            setIsLoadingConfirmedRoutes(false);
+          }
+        }
+      };
+
+      fetchConfirmedRoutes();
+
+      return () => {
+        isMounted = false;
+      };
+    }, [activeTab]) // Also depend on activeTab to refetch when tab changes
+  );
+
+  // Separate useEffect for main route (runs only once on mount)
   useEffect(() => {
     let isMounted = true;
 
-    const fetchAllRoutes = async () => {
+    const fetchMainRoute = async () => {
       try {
-        setIsLoadingRoutes(true);
-        setRoutesError(null);
-
+        setIsLoadingMainRoute(true);
         const token = await AsyncStorage.getItem('userToken');
-        if (!token) {
-          setRoutesError('Bạn cần đăng nhập để xem lộ trình.');
-          return;
+        if (!token) return;
+
+        // Fetch MAIN route from both AI and Manual sources (MAIN route is unique)
+        let mainRouteData = null;
+        try {
+          // Try AI routes first
+          const aiMainResponse = await getRoutesAPI(token, 'MAIN');
+          if (aiMainResponse.routes?.[0]) {
+            mainRouteData = aiMainResponse.routes[0];
+          }
+        } catch (error) {
+          console.log('No AI main route found, trying manual...');
         }
 
-        if (activeTab === 'ai') {
-          // Fetch AI routes (itinerary endpoint)
-          const mainResponse = await getRoutesAPI(token, 'MAIN');
+        // If no AI main route, try manual
+        if (!mainRouteData) {
+          try {
+            const manualMainResponse = await getCustomItinerariesAPI(token, 'MAIN');
+            if (manualMainResponse?.[0]) {
+              mainRouteData = manualMainResponse[0];
+            }
+          } catch (error) {
+            console.log('No manual main route found either');
+          }
+        }
+
         if (isMounted) {
-            setMainRoute(mainResponse.routes?.[0] || null);
-          }
-
-          const confirmedResponse = await getRoutesAPI(token, 'CONFIRMED');
-          if (isMounted) {
-            setConfirmedRoutes(confirmedResponse.routes || []);
-          }
-        } else {
-          // Fetch Manual routes (custom-itinerary endpoint)
-          const mainResponse = await getCustomItinerariesAPI(token, 'MAIN');
-          if (isMounted) {
-            setMainRoute(mainResponse?.[0] || null);
-          }
-
-          const confirmedResponse = await getCustomItinerariesAPI(token, 'CONFIRMED');
-          if (isMounted) {
-            setConfirmedRoutes(Array.isArray(confirmedResponse) ? confirmedResponse : []);
-          }
+          setMainRoute(mainRouteData);
         }
       } catch (error: any) {
-        console.error('❌ Fetch routes error:', error);
-        if (isMounted) {
-          setRoutesError(error.message || 'Không thể tải lộ trình.');
-        }
+        console.error('❌ Fetch main route error:', error);
       } finally {
         if (isMounted) {
-          setIsLoadingRoutes(false);
+          setIsLoadingMainRoute(false);
         }
       }
     };
 
-    fetchAllRoutes();
+    fetchMainRoute();
 
     return () => {
       isMounted = false;
     };
-  }, [activeTab]);
+  }, []); // Empty dependency array - runs only once on mount
 
   const handleActivateRoute = async (routeId: string) => {
     try {
@@ -118,24 +173,44 @@ const ItineraryScreen: React.FC = () => {
               try {
                 // Update to MAIN status based on active tab
                 if (activeTab === 'ai') {
-                  // Use itinerary endpoint
-                  const response = await updateRouteStatusAPI(token, routeId, {
+                  // Use itinerary endpoint for AI routes
+                  await updateRouteStatusAPI(token, routeId, {
                     status: 'MAIN',
                   });
-
-                  if (response.route) {
-                    // Move from confirmed to main
-                    setMainRoute(response.route);
-                    setConfirmedRoutes(prev => prev.filter(r => r.route_id !== routeId));
-                  }
                 } else {
-                  // Use custom-itinerary endpoint
+                  // Use custom-itinerary endpoint for manual routes
                   await updateCustomItineraryStatusAPI(routeId, 'MAIN', undefined, token);
-                  
-                  // Refresh routes after update
-                  const mainResponse = await getCustomItinerariesAPI(token, 'MAIN');
-                  setMainRoute(mainResponse?.[0] || null);
-                  
+                }
+
+                // Refresh both main and confirmed routes after activation
+                let newMainRoute = null;
+                try {
+                  const aiMainResponse = await getRoutesAPI(token, 'MAIN');
+                  if (aiMainResponse.routes?.[0]) {
+                    newMainRoute = aiMainResponse.routes[0];
+                  }
+                } catch (error) {
+                  console.log('No AI main route found');
+                }
+
+                if (!newMainRoute) {
+                  try {
+                    const manualMainResponse = await getCustomItinerariesAPI(token, 'MAIN');
+                    if (manualMainResponse?.[0]) {
+                      newMainRoute = manualMainResponse[0];
+                    }
+                  } catch (error) {
+                    console.log('No manual main route found');
+                  }
+                }
+
+                setMainRoute(newMainRoute);
+
+                // Refresh confirmed routes for current tab
+                if (activeTab === 'ai') {
+                  const confirmedResponse = await getRoutesAPI(token, 'CONFIRMED');
+                  setConfirmedRoutes(confirmedResponse.routes || []);
+                } else {
                   const confirmedResponse = await getCustomItinerariesAPI(token, 'CONFIRMED');
                   setConfirmedRoutes(Array.isArray(confirmedResponse) ? confirmedResponse : []);
                 }
@@ -156,14 +231,170 @@ const ItineraryScreen: React.FC = () => {
     }
   };
 
+  const handleDeleteRoute = async (routeId: string) => {
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập.');
+        return;
+      }
+
+      try {
+        // Update status to DRAFT based on active tab
+        if (activeTab === 'ai') {
+          // Use itinerary endpoint for AI routes
+          await updateRouteStatusAPI(token, routeId, {
+            status: 'DRAFT',
+          });
+        } else {
+          // Use custom-itinerary endpoint for manual routes
+          await updateCustomItineraryStatusAPI(routeId, 'DRAFT', undefined, token);
+        }
+
+        // Remove from confirmed routes list
+        setConfirmedRoutes(prev => prev.filter(r => r.route_id !== routeId));
+      } catch (error: any) {
+        console.error('❌ Delete route error:', error);
+        Alert.alert('Lỗi', error.message || 'Không thể xóa lộ trình.');
+      }
+    } catch (error: any) {
+      console.error('❌ Error:', error);
+      Alert.alert('Lỗi', 'Đã xảy ra lỗi.');
+    }
+  };
+
   const handleViewRoute = (route: TravelRoute) => {
     setViewerRouteId(route.route_id);
     setViewerRouteData(route);
     setIsViewerVisible(true);
   };
 
+  const handleCompleteRoute = async (routeId: string) => {
+    try {
+      // Show confirmation alert
+      Alert.alert(
+        'Hoàn thành lộ trình',
+        'Bạn có chắc đã hoàn thành lộ trình này?',
+        [
+          {
+            text: 'Hủy',
+            onPress: () => {},
+            style: 'cancel',
+          },
+          {
+            text: 'Xác nhận',
+            onPress: async () => {
+              try {
+                // Just remove the main route - no API call needed
+                setMainRoute(null);
+
+                // Show beautiful congratulation message
+                Alert.alert(
+                  '🎉 Chúc mừng bạn! 🎉',
+                  'Bạn đã hoàn thành một hành trình tuyệt vời! Cảm ơn bạn đã tin tưởng ứng dụng của chúng tôi. Hãy lên kế hoạch cho chuyến du lịch tiếp theo của bạn!',
+                  [
+                    {
+                      text: 'Tạo lộ trình mới',
+                      onPress: () => handleCreateItinerary(),
+                      style: 'default',
+                    },
+                    {
+                      text: 'Để sau',
+                      onPress: () => {},
+                      style: 'cancel',
+                    },
+                  ]
+                );
+              } catch (error: any) {
+                console.error('❌ Complete route error:', error);
+                Alert.alert('Lỗi', error.message || 'Không thể hoàn thành lộ trình.');
+              }
+            },
+            style: 'default',
+          },
+        ]
+      );
+    } catch (error: any) {
+      console.error('❌ Error:', error);
+      Alert.alert('Lỗi', 'Đã xảy ra lỗi.');
+    }
+  };
+
   const handleCreateItinerary = () => {
     router.push('/create-itinerary');
+  };
+
+  const handleEditRouteName = (route: TravelRoute) => {
+    setEditingRouteId(route.route_id);
+    setEditingRouteName(route.title || '');
+    setIsEditModalVisible(true);
+  };
+
+  const handleSaveRouteName = async () => {
+    if (!editingRouteId || !editingRouteName.trim()) {
+      Alert.alert('Lỗi', 'Tên lộ trình không được để trống.');
+      return;
+    }
+
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập.');
+        return;
+      }
+
+      // Update the route title
+      if (activeTab === 'ai') {
+        await updateRouteStatusAPI(token, editingRouteId, {
+          status: mainRoute?.route_id === editingRouteId ? 'MAIN' : 'CONFIRMED',
+          title: editingRouteName.trim(),
+        });
+      } else {
+        await updateCustomItineraryStatusAPI(
+          editingRouteId,
+          mainRoute?.route_id === editingRouteId ? 'MAIN' : 'CONFIRMED',
+          editingRouteName.trim(),
+          token
+        );
+      }
+
+      // Update local state
+      if (mainRoute?.route_id === editingRouteId) {
+        setMainRoute({ ...mainRoute, title: editingRouteName.trim() });
+      } else {
+        setConfirmedRoutes(prev =>
+          prev.map(r =>
+            r.route_id === editingRouteId
+              ? { ...r, title: editingRouteName.trim() }
+              : r
+          )
+        );
+      }
+
+      setIsEditModalVisible(false);
+      setEditingRouteId(null);
+      setEditingRouteName('');
+    } catch (error: any) {
+      console.error('❌ Edit route name error:', error);
+      Alert.alert('Lỗi', error.message || 'Không thể cập nhật tên lộ trình.');
+    }
+  };
+
+  const renderRightActions = (routeId: string) => {
+    return (
+      <TouchableOpacity
+        style={styles.deleteAction}
+        onPress={() => handleDeleteRoute(routeId)}
+        activeOpacity={0.7}
+      >
+        <LinearGradient
+          colors={[COLORS.error, '#FF6B6B']}
+          style={styles.deleteActionGradient}
+        >
+          <FontAwesome name="trash" size={20} color={COLORS.textWhite} />
+        </LinearGradient>
+      </TouchableOpacity>
+    );
   };
 
   const formatDate = (dateValue: string | Date) => {
@@ -214,11 +445,48 @@ const ItineraryScreen: React.FC = () => {
       route.route_data_json?.metadata?.title ||
       route.route_data_json?.destination;
 
-    return (
+    const baseTitle =
       route.title?.trim() ||
       (typeof fallbackTitle === 'string' && fallbackTitle.trim()) ||
-      `Lộ trình ${route.route_id?.slice(-6) || index + 1}`
-    );
+      `Lộ trình ${route.route_id?.slice(-6) || index + 1}`;
+
+    // Get helper function to extract title from a route
+    const extractTitle = (r: TravelRoute, fallbackIndex: number) => {
+      return (
+        r.title?.trim() ||
+        (typeof (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination) === 'string'
+          ? (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination).trim()
+          : `Lộ trình ${r.route_id?.slice(-6) || fallbackIndex}`)
+      );
+    };
+
+    // Combine mainRoute and confirmedRoutes for duplicate checking
+    const allRoutes: TravelRoute[] = [];
+    if (mainRoute) {
+      allRoutes.push(mainRoute);
+    }
+    allRoutes.push(...confirmedRoutes);
+
+    // Find all routes with the same base title
+    const sameNameRoutes = allRoutes.filter(r => {
+      const otherTitle = extractTitle(r, allRoutes.indexOf(r) + 1);
+      return otherTitle === baseTitle;
+    });
+
+    // If only one route with this name, no suffix needed
+    if (sameNameRoutes.length === 1) {
+      return baseTitle;
+    }
+
+    // Find position of current route in the same-name group (1-indexed)
+    const positionInGroup = sameNameRoutes.findIndex(r => r.route_id === route.route_id) + 1;
+
+    // Only add suffix if it's the 2nd or later occurrence
+    if (positionInGroup > 1) {
+      return `${baseTitle} (${positionInGroup})`;
+    }
+
+    return baseTitle;
   };
 
   const getRouteDestination = (route: TravelRoute) => {
@@ -305,11 +573,12 @@ const ItineraryScreen: React.FC = () => {
   };
 
   return (
-    <LinearGradient
-      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={[0, 0.3, 0.6, 1]}
-      style={styles.gradientContainer}
-    >
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <LinearGradient
+        colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
+        locations={[0, 0.3, 0.6, 1]}
+        style={styles.gradientContainer}
+      >
       <ScrollView 
         style={{flex:1}}
         showsVerticalScrollIndicator={false}
@@ -345,10 +614,10 @@ const ItineraryScreen: React.FC = () => {
         {/* Current Itinerary Section */}
             <Text style={[styles.sectionTitle, {marginLeft: SPACING.lg}]}>Lộ trình hiện tại</Text>
             <View style={{marginHorizontal: SPACING.lg}}>
-          {isLoadingRoutes ? (
-            <View style={styles.dataStateContainer}>
-              <ActivityIndicator size="small" color={COLORS.primary} />
-              <Text style={styles.dataStateText}>Đang tải...</Text>
+          {isLoadingMainRoute ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
+              <Text style={styles.loadingText}>Đang tải lộ trình chính...</Text>
             </View>
           ) : mainRoute ? (
             <TouchableOpacity 
@@ -364,7 +633,15 @@ const ItineraryScreen: React.FC = () => {
                 >
                   <View style={styles.currentCardHeader}>
                     <View style={styles.currentCardTitleContainer}>
-                    <Text style={styles.currentCardTitle}>{getRouteTitle(mainRoute, 0)}</Text>
+                      <View style={styles.titleEditContainer}>
+                        <Text style={styles.currentCardTitle}>{getRouteTitle(mainRoute, 0)}</Text>
+                        <TouchableOpacity
+                          onPress={() => handleEditRouteName(mainRoute)}
+                          style={styles.editIconButton}
+                        >
+                          <FontAwesome name="pencil" size={18} color={COLORS.textWhite} />
+                        </TouchableOpacity>
+                      </View>
                       <View style={styles.statusBadge}> 
                       <Text style={[styles.statusText, { color: COLORS.success }]}>
                         Đang hoạt động
@@ -403,6 +680,17 @@ const ItineraryScreen: React.FC = () => {
                       </View>
                     </View>
                   </View>
+                  {/* Complete Button */}
+                  <TouchableOpacity
+                    style={styles.completeButton}
+                    onPress={() => handleCompleteRoute(mainRoute.route_id)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.completeButtonContent}>
+                      <FontAwesome name="check" size={18} color={COLORS.primary} />
+                      <Text style={styles.completeButtonText}>Hoàn thành</Text>
+                    </View>
+                  </TouchableOpacity>
                 </LinearGradient>
             </TouchableOpacity>
           ) : (
@@ -454,14 +742,14 @@ const ItineraryScreen: React.FC = () => {
             Lộ trình đã lưu
           </Text>
           <View style={{marginHorizontal: SPACING.lg}}>
-            {isLoadingRoutes && (
+            {isLoadingConfirmedRoutes && (
               <View style={styles.dataStateContainer}>
                 <ActivityIndicator size="small" color={COLORS.primary} />
                 <Text style={styles.dataStateText}>Đang tải lộ trình...</Text>
               </View>
             )}
 
-            {!isLoadingRoutes && routesError && (
+            {!isLoadingConfirmedRoutes && routesError && (
               <View style={styles.dataStateContainer}>
                 <FontAwesome name="exclamation-circle" size={18} color={COLORS.error} />
                 <Text style={[styles.dataStateText, styles.errorText]}>
@@ -470,7 +758,7 @@ const ItineraryScreen: React.FC = () => {
               </View>
             )}
 
-            {!isLoadingRoutes && !routesError && confirmedRoutes.length === 0 && (
+            {!isLoadingConfirmedRoutes && !routesError && confirmedRoutes.length === 0 && (
               <View style={styles.dataStateContainer}>
                 <FontAwesome name="info-circle" size={18} color={COLORS.textSecondary} />
                 <Text style={styles.dataStateText}>
@@ -479,21 +767,31 @@ const ItineraryScreen: React.FC = () => {
               </View>
             )}
 
-            {!isLoadingRoutes && !routesError && confirmedRoutes.length > 0 && (
+            {!isLoadingConfirmedRoutes && !routesError && confirmedRoutes.length > 0 && (
               confirmedRoutes.map((route, index) => (
-                <TouchableOpacity
+                <Swipeable
                   key={route.route_id}
-                  style={styles.itineraryCard}
-                  activeOpacity={0.9}
-                  onPress={() => handleViewRoute(route)}
+                  renderRightActions={() => renderRightActions(route.route_id)}
+                  rightThreshold={40}
                 >
+                  <TouchableOpacity
+                    style={styles.itineraryCard}
+                    activeOpacity={0.9}
+                    onPress={() => handleViewRoute(route)}
+                  >
                   <View style={styles.cardContent}>
                     <View style={styles.cardHeader}>
                       <View style={styles.cardTitleContainer}>
-                        <View style={{ flex: 1 }}>
+                        <View style={[styles.cardTitleWrapper, { flex: 1 }]}>
                         <Text style={styles.cardTitle} numberOfLines={2}>
                           {getRouteTitle(route, index)}
                         </Text>
+                        <TouchableOpacity
+                          onPress={() => handleEditRouteName(route)}
+                          style={styles.cardEditIconButton}
+                        >
+                          <FontAwesome name="pencil" size={16} color={COLORS.primary} />
+                        </TouchableOpacity>
                         </View>
                         <View style={styles.cardHeaderRight}>
                         <View
@@ -582,13 +880,14 @@ const ItineraryScreen: React.FC = () => {
                     </View>
                   </View>
                 </TouchableOpacity>
+                </Swipeable>
               ))
             )}
           </View>
         </>
 
         {/* Empty State */}
-        {!isLoadingRoutes && !mainRoute && confirmedRoutes.length === 0 && (
+        {!isLoadingMainRoute && !mainRoute && confirmedRoutes.length === 0 && (
           <View style={styles.emptyStateContainer}>
             <FontAwesome name="map-o" size={64} color={COLORS.textSecondary} />
             <Text style={styles.emptyStateText}>Chưa có lộ trình nào</Text>
@@ -626,7 +925,44 @@ const ItineraryScreen: React.FC = () => {
           }}
         />
       )}
+
+      {/* Edit Route Name Modal */}
+      <Modal
+        visible={isEditModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsEditModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Chỉnh sửa tên lộ trình</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Nhập tên lộ trình mới"
+              placeholderTextColor={COLORS.textSecondary}
+              value={editingRouteName}
+              onChangeText={setEditingRouteName}
+              maxLength={50}
+            />
+            <View style={styles.modalButtonContainer}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setIsEditModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={handleSaveRouteName}
+              >
+                <Text style={styles.saveButtonText}>Lưu</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
+    </GestureHandlerRootView>
   );
 };
 
@@ -1014,6 +1350,140 @@ const styles = StyleSheet.create({
   tabTextActive: {
     color: COLORS.textWhite,
     fontWeight: '700',
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: SPACING.xl,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: 12,
+    marginVertical: SPACING.md,
+  },
+  loadingText: {
+    marginTop: SPACING.md,
+    fontSize: 16,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
+  deleteAction: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    marginVertical: SPACING.sm,
+    marginRight: SPACING.md,
+  },
+  deleteActionGradient: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 12,
+    width: '100%',
+  },
+  completeButton: {
+    marginTop: SPACING.md,
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 5,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.textWhite,
+  },
+  completeButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+  },
+  completeButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.primary,
+    letterSpacing: 0.5,
+  },
+  titleEditContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs / 2,
+    flex: 1,
+  },
+  editIconButton: {
+    padding: SPACING.xs / 2,
+    marginLeft: SPACING.xs / 2,
+  },
+  cardTitleWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs / 2,
+  },
+  cardEditIconButton: {
+    padding: SPACING.xs / 2,
+    marginLeft: SPACING.xs / 2,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: COLORS.textWhite,
+    borderRadius: 16,
+    padding: SPACING.lg,
+    width: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: SPACING.md,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    borderRadius: 12,
+    padding: SPACING.md,
+    fontSize: 16,
+    color: COLORS.textDark,
+    marginBottom: SPACING.lg,
+  },
+  modalButtonContainer: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  cancelButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
+  saveButton: {
+    backgroundColor: COLORS.primary,
+  },
+  saveButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textWhite,
   },
 });
 

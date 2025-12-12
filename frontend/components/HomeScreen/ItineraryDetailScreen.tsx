@@ -519,7 +519,7 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
                           <Polyline
                             coordinates={directLineCoords}
                             strokeColor={ROUTE_COLORS.main}
-                            strokeWidth={4}
+                            strokeWidth={3}
                             lineJoin="round"
                             lineCap="round"
                             lineDashPattern={[5, 5]}
@@ -527,7 +527,7 @@ export const ItineraryDetailScreen: React.FC<ItineraryDetailScreenProps> = ({
                           <Polyline
                             coordinates={directLineCoords}
                             strokeColor={ROUTE_COLORS.glow}
-                            strokeWidth={8}
+                            strokeWidth={3}
                             lineJoin="round"
                             lineCap="round"
                             lineDashPattern={[5, 5]}
