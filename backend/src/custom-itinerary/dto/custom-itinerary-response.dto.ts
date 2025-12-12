@@ -29,6 +29,7 @@ export class PlaceWithRouteDto {
   // snake_case để nhất quán với route_id, user_id, created_at... trong các module khác
   encoded_polyline: string | null;
   travel_duration_minutes: number | null;
+  steps?: any[];
 }
 
 /**
@@ -59,4 +60,7 @@ export class CalculateRoutesResponseDto {
   status?: 'DRAFT' | 'CONFIRMED' | 'MAIN' | null;
   start_date?: string | null; // Ngày bắt đầu (ISO string)
   end_date?: string | null; // Ngày kết thúc (ISO string)
+  start_location_text?: string | null; // Địa chỉ xuất phát của toàn bộ lộ trình
+  start_location?: { lat: number; lng: number } | null; // Tọa độ điểm bắt đầu
+  alerts?: any[];
 }

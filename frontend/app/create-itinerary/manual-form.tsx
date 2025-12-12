@@ -146,7 +146,7 @@ const ManualFormScreen: React.FC = () => {
 
       setIsCheckingWeather(false);
 
-      // Xử lý theo mức độ cảnh báo thời tiết
+      // Xử lý theo mức độ cảnh báo thời tiết - LUÔN hiển thị modal cho cả 3 mức
       if (weatherResult.severity === 'danger') {
         // Danger: Hiển thị cảnh báo và tự động quay về form
         setWeatherSeverity('danger');
@@ -163,8 +163,10 @@ const ManualFormScreen: React.FC = () => {
         return;
       }
 
-      // Normal: Tiếp tục tạo lộ trình
-      proceedToManualPreview();
+      // Normal: Hiển thị modal thông báo thời tiết bình thường
+      setWeatherSeverity('normal');
+      setWeatherAlert(weatherResult.alert || 'Thời tiết bình thường, chúc bạn có chuyến đi chơi vui vẻ!');
+      setWeatherModalVisible(true);
     } catch (error: any) {
       console.error('❌ Weather check error:', error);
       setIsCheckingWeather(false);

@@ -483,9 +483,9 @@ export default function ItineraryDetailsScreen() {
                   key={`polyline-${selectedDay}-${idx}`}
                   coordinates={segment.points}
                   strokeColor={
-                    segment.mode === 'TRANSIT' ? '#4CAF50' : ROUTE_COLORS.main
+                    segment.mode === 'TRANSIT' ? '#F44336' : ROUTE_COLORS.main
                   }
-                  strokeWidth={3}
+                  strokeWidth={segment.mode === 'TRANSIT' ? 10 : 3}
                   lineDashPattern={segment.mode === 'WALK' ? [20, 10] : undefined}
                   lineCap="round"
                   lineJoin="round"

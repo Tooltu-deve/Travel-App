@@ -74,4 +74,8 @@ export class CalculateRoutesDto {
   @IsOptional()
   @IsString()
   end_date?: string; // Ngày kết thúc (ISO string)
+
+  @IsOptional()
+  @IsString()
+  startLocationText?: string; // Địa chỉ xuất phát của toàn bộ lộ trình
 }

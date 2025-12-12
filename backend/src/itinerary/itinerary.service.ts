@@ -1462,7 +1462,7 @@ export class ItineraryService {
     return null;
   }
 
-  private async fetchDirectionsInfo(
+  public async fetchDirectionsInfo(
     origin: { lat: number; lng: number },
     destination: { lat: number; lng: number },
     mode: string = 'driving',

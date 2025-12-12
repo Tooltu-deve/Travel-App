@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, ReactNode } from 'react';
+import React, { useState, useEffect, useRef, ReactNode, useMemo } from 'react';
 import {
   View,
   Text,
@@ -98,6 +98,7 @@ interface CustomItineraryResponse {
   start_date?: string;
   end_date?: string;
   start_location?: { lat: number; lng: number };
+  start_location_text?: string;
   route_data_json?: any;
   days?: CustomDayWithRoutes[];
 }
@@ -235,6 +236,12 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     routeData?.city ||
     'Điểm đến';
 
+  // Get start location name
+  const startLocationName =
+    (routeDetails as any)?.start_location_text ||
+    routeData?.start_location_text ||
+    'Điểm bắt đầu';
+
   // Format time
   const formatTime = (isoString?: string) => {
     if (!isoString) return '--:--';
@@ -302,9 +309,15 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     return points;
   };
 
-  // Get current day activities
-  const currentDayData = optimizedRoute.find((d: DayPlan) => d.day === selectedDay);
-  const activities: Activity[] = currentDayData?.activities || [];
+  // Get current day activities - use useMemo to prevent creating new array reference on every render
+  const currentDayData = useMemo(
+    () => optimizedRoute.find((d: DayPlan) => d.day === selectedDay),
+    [optimizedRoute, selectedDay]
+  );
+  const activities: Activity[] = useMemo(
+    () => currentDayData?.activities || [],
+    [currentDayData]
+  );
 
   // Convert to map coordinate
   const toMapCoordinate = (point?: { lat: number; lng: number } | { coordinates: [number, number] }) => {
@@ -358,51 +371,62 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   };
 
   // Route segments for polylines (bao gồm đoạn từ điểm bắt đầu đến POI đầu tiên nếu có)
-  const routeSegments = (() => {
-    const segments: { points: { latitude: number; longitude: number }[]; mode: string }[] = [];
+    const routeSegments = (() => {
+      const segments: { points: { latitude: number; longitude: number }[]; mode: string }[] = [];
 
-    if (
-      startLocation &&
-      activities.length > 0 &&
-      (activities[0]?.start_location_polyline || activities[0]?.start_encoded_polyline)
-    ) {
-      segments.push({
-        points: decodePolyline(activities[0].start_encoded_polyline),
-        mode: 'DRIVE', // Default to DRIVE for start segment
-      });
-    }
-
-    activities.forEach((activity) => {
-      if (activity.steps && activity.steps.length > 0) {
-        activity.steps.forEach((step) => {
-          const decoded = decodePolyline(step.encoded_polyline);
-          if (decoded.length > 1) {
-            segments.push({
-              points: decoded,
-              mode: step.travel_mode,
-            });
-          }
-        });
-      } else {
-        const decoded = decodePolyline(activity.encoded_polyline);
-        if (decoded.length > 1) {
+      // Đoạn từ điểm bắt đầu đến POI đầu tiên
+      if (startLocation && activities.length > 0) {
+        if (activities[0]?.start_encoded_polyline) {
           segments.push({
-            points: decoded,
-            mode: 'DRIVE', // Default
+            points: decodePolyline(activities[0].start_encoded_polyline),
+            mode: 'DRIVE', // Default to DRIVE for start segment
           });
         }
       }
-    });
 
-    return segments.filter((segment) => segment.points.length > 1);
-  })();
+      activities.forEach((activity, idx) => {
+        if (activity.steps && activity.steps.length > 0) {
+          activity.steps.forEach((step) => {
+            const decoded = decodePolyline(step.encoded_polyline);
+            if (decoded.length > 1) {
+              segments.push({
+                points: decoded,
+                mode: step.travel_mode,
+              });
+            }
+          });
+        } else {
+          const decoded = decodePolyline(activity.encoded_polyline);
+          if (decoded.length > 1) {
+            segments.push({
+              points: decoded,
+              mode: 'DRIVE', // Default
+            });
+          }
+        }
+      });
+
+      return segments.filter((segment) => segment.points.length > 1);
+    })();
 
   // Update map region when day changes
   useEffect(() => {
     const region = calculateMapRegion(activities, startLocation);
     if (region) {
-      setMapRegion(region);
-      mapRef.current?.animateToRegion(region, 500);
+      setMapRegion((prev) => {
+        // Chỉ update nếu region thực sự thay đổi (tránh vòng lặp)
+        if (
+          !prev ||
+          Math.abs(prev.latitude - region.latitude) > 0.0001 ||
+          Math.abs(prev.longitude - region.longitude) > 0.0001 ||
+          Math.abs(prev.latitudeDelta - region.latitudeDelta) > 0.0001 ||
+          Math.abs(prev.longitudeDelta - region.longitudeDelta) > 0.0001
+        ) {
+          mapRef.current?.animateToRegion(region, 500);
+          return region;
+        }
+        return prev;
+      });
     }
   }, [selectedDay, activities, startLocation]);
 
@@ -565,7 +589,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   // Debounced search for autocomplete
   useEffect(() => {
     if (!isReplacePOIModalVisible || !searchQuery.trim()) {
-      setAutocompleteResults([]);
+      // Chỉ set state nếu autocompleteResults không rỗng (tránh vòng lặp vô hạn)
+      setAutocompleteResults((prev) => prev.length > 0 ? [] : prev);
       return;
     }
 
@@ -843,9 +868,9 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   key={`polyline-${selectedDay}-${idx}`}
                   coordinates={segment.points}
                   strokeColor={
-                    segment.mode === 'TRANSIT' ? '#4CAF50' : ROUTE_COLORS.main
+                    segment.mode === 'TRANSIT' ? '#F44336' : ROUTE_COLORS.main
                   }
-                  strokeWidth={4}
+                  strokeWidth={segment.mode === 'TRANSIT' ? 6 : 4}
                   lineDashPattern={segment.mode === 'WALK' ? [20, 10] : undefined}
                   lineCap="round"
                   lineJoin="round"
@@ -937,7 +962,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                     <View style={styles.cardContent}>
                       <View style={styles.cardInfo}>
                         <Text style={styles.cardTitle} numberOfLines={2}>
-                          Điểm bắt đầu
+                          {startLocationName}
                         </Text>
                         <View style={styles.cardRow}>
                           <FontAwesome name="map-marker" size={12} color={COLORS.primary} />
