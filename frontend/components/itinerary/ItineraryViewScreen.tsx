@@ -384,7 +384,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
           const startCoord = toMapCoordinate(startLocation);
           const firstCoord = toMapCoordinate(activities[0].location);
           if (startCoord && firstCoord) {
-            segments.push([startCoord, firstCoord]);
+            segments.push({ points: [startCoord, firstCoord], mode: 'DRIVE' });
           }
         }
       }
@@ -408,12 +408,12 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             mode: 'DRIVE', // Default
           });
         }
-        } else if (idx > 0) {
+        } if (idx > 0) {
           // Nếu không có polyline, vẽ đoạn thẳng giữa các POI liên tiếp
           const prevCoord = toMapCoordinate(activities[idx - 1].location);
           const currCoord = toMapCoordinate(activity.location);
           if (prevCoord && currCoord) {
-            segments.push([prevCoord, currCoord]);
+            segments.push({ points: [prevCoord, currCoord], mode: 'DRIVE' });
           }
         }
       });
