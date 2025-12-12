@@ -14,15 +14,16 @@ import {
   Animated,
   PanResponder,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { COLORS, SPACING } from '../../constants';
-import { getPlaceByIdAPI } from '@/services/api';
+import { getPlaceByIdAPI, chatWithAIAPI, API_BASE_URL } from '@/services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 
-// API Base URL - should match with services/api.ts
-const API_BASE_URL = 'http://localhost:3000';
+// API Base URL - imported from services/api.ts
+// const API_BASE_URL = 'http://localhost:3000';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const BOTTOM_SHEET_HEIGHT = SCREEN_HEIGHT * 0.75; // 3/4 màn hình
@@ -44,6 +45,12 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
   const [place, setPlace] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [imageIndex, setImageIndex] = useState(0);
+  const [translatedDescription, setTranslatedDescription] = useState<string>('');
+  const [translatedReviews, setTranslatedReviews] = useState<{ [key: number]: string }>({});
+  const [isDescriptionTranslated, setIsDescriptionTranslated] = useState(false);
+  const [isReviewsTranslated, setIsReviewsTranslated] = useState<{ [key: number]: boolean }>({});
+  const [isTranslatingDescription, setIsTranslatingDescription] = useState(false);
+  const [translatingReviewIndex, setTranslatingReviewIndex] = useState<number | null>(null);
   const { isLiked, toggleLike } = useFavorites();
   
   const translateY = React.useRef(new Animated.Value(BOTTOM_SHEET_HEIGHT)).current;
@@ -84,6 +91,7 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
 
   // Load place details khi placeId hoặc placeData thay đổi
   useEffect(() => {
+    console.log('[POIDetailBottomSheet] useEffect triggered:', { visible, placeId: !!placeId, placeData: !!placeData });
     if (visible) {
       if (placeData) {
         // Nếu có placeData trực tiếp, dùng luôn
@@ -105,6 +113,12 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
       panY.setValue(0);
       setPlace(null);
       setImageIndex(0);
+      setTranslatedDescription('');
+      setTranslatedReviews({});
+      setIsDescriptionTranslated(false);
+      setIsReviewsTranslated({});
+      setIsTranslatingDescription(false);
+      setTranslatingReviewIndex(null);
     }
   }, [visible, placeId, placeData]);
 
@@ -128,6 +142,214 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
     }).start(() => {
       onClose();
     });
+  };
+
+  // Language detection: Check if text is predominantly Vietnamese
+  const isVietnamese = (text: string): boolean => {
+    if (!text || text.trim().length === 0) return true; // Empty text is considered Vietnamese
+
+    // Split text into words
+    const words = text.toLowerCase().split(/\s+/).filter(word => word.length > 0);
+    if (words.length === 0) return true;
+
+    // Common Vietnamese words (expanded list)
+    const vietnameseWords = new Set([
+      'và', 'hoặc', 'là', 'của', 'tại', 'được', 'cho', 'này', 'có', 'không',
+      'trong', 'với', 'từ', 'đến', 'làm', 'đang', 'đã', 'sẽ', 'như', 'theo',
+      'về', 'để', 'khi', 'nếu', 'thì', 'cũng', 'mà', 'còn', 'lại', 'chỉ',
+      'vẫn', 'các', 'những', 'điều', 'đó', 'ấy', 'kia', 'ta', 'tôi', 'bạn',
+      'ông', 'bà', 'anh', 'chị', 'em', 'cháu', 'cô', 'thím', 'dì', 'chú',
+      'thầy', 'bác', 'chú', 'thím', 'ông', 'bà', 'cậu', 'mợ', 'dượng', 'mẹ',
+      'cha', 'con', 'người', 'nhà', 'đi', 'đến', 'từ', 'ở', 'ra', 'vào', 'lên',
+      'xuống', 'trước', 'sau', 'bên', 'trong', 'ngoài', 'trên', 'dưới', 'giữa',
+      'gần', 'xa', 'nhỏ', 'lớn', 'tốt', 'xấu', 'đẹp', 'xinh', 'giỏi', 'kém',
+      'nhanh', 'chậm', 'mới', 'cũ', 'sạch', 'bẩn', 'đầy', 'trống', 'mua', 'bán',
+      'ăn', 'uống', 'ngủ', 'thức', 'đọc', 'viết', 'học', 'dạy', 'làm', 'nghỉ',
+      'chơi', 'nghe', 'nhìn', 'thấy', 'biết', 'hiểu', 'nói', 'kể', 'hỏi', 'trả lời'
+    ]);
+
+    // Check for Vietnamese diacritical marks
+    const vietnameseChars = /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệđìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]/i;
+
+    let vietnameseWordCount = 0;
+    let englishWordCount = 0;
+    let hasVietnameseChars = false;
+
+    for (const word of words) {
+      // Check if word contains Vietnamese characters
+      if (vietnameseChars.test(word)) {
+        hasVietnameseChars = true;
+        vietnameseWordCount++;
+      }
+      // Check if it's a common Vietnamese word
+      else if (vietnameseWords.has(word)) {
+        vietnameseWordCount++;
+      }
+      // Check if it's likely an English word (contains only English letters)
+      else if (/^[a-z]+$/i.test(word) && word.length > 1) {
+        englishWordCount++;
+      }
+    }
+
+    // If text has Vietnamese characters, it's likely Vietnamese
+    if (hasVietnameseChars) {
+      const totalMeaningfulWords = vietnameseWordCount + englishWordCount;
+      // If more than 30% of meaningful words are English, show translate button
+      const englishRatio = totalMeaningfulWords > 0 ? englishWordCount / totalMeaningfulWords : 0;
+      const isPredominantlyVietnamese = englishRatio < 0.3;
+
+// Only log for mixed language cases to avoid spam
+      if (englishRatio > 0.1) {
+        console.log('[Language Detection] Mixed language detected:', {
+          text: text.substring(0, 50) + '...',
+          englishRatio: englishRatio.toFixed(2),
+          isPredominantlyVietnamese
+        });
+      }
+
+      return isPredominantlyVietnamese;
+    }
+
+    // If no Vietnamese characters but has Vietnamese words, likely Vietnamese
+    if (vietnameseWordCount > 0) {
+      // Only log if mixed with English words
+      if (englishWordCount > 0) {
+        console.log('[Language Detection] Vietnamese words with English:', {
+          text: text.substring(0, 50) + '...',
+          vietnameseWords: vietnameseWordCount,
+          englishWords: englishWordCount,
+          isVietnamese: true
+        });
+      }
+      return true;
+    }
+
+    // If mostly English words or no identifiable language, assume needs translation
+    // Only log for debugging if needed
+    if (englishWordCount > 2) {
+      console.log('[Language Detection] English text detected:', {
+        text: text.substring(0, 50) + '...',
+        englishWords: englishWordCount,
+        isVietnamese: false
+      });
+    }
+
+    return false;
+  };
+
+  // Translate text using MyMemory Translation API (free, no API key needed)
+  const translateText = async (text: string): Promise<string> => {
+    try {
+      console.log('[Translation] Starting translation...');
+      console.log('[Translation] Original text:', text.substring(0, 100) + '...');
+      
+      // Split long text into chunks if needed (API has 500 char limit per request)
+      const maxChunkLength = 500;
+      if (text.length <= maxChunkLength) {
+        return await translateChunk(text);
+      }
+      
+      // Split by sentences for better translation
+      const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+      let translatedText = '';
+      let currentChunk = '';
+      
+      for (const sentence of sentences) {
+        if ((currentChunk + sentence).length > maxChunkLength && currentChunk) {
+          // Translate current chunk
+          const translated = await translateChunk(currentChunk);
+          translatedText += translated + ' ';
+          currentChunk = sentence;
+        } else {
+          currentChunk += sentence;
+        }
+      }
+      
+      // Translate remaining chunk
+      if (currentChunk) {
+        const translated = await translateChunk(currentChunk);
+        translatedText += translated;
+      }
+      
+      return translatedText.trim() || text;
+    } catch (error) {
+      console.error('[Translation] Error:', error);
+      return text;
+    }
+  };
+
+  // Helper function to translate a single chunk
+  const translateChunk = async (text: string): Promise<string> => {
+    try {
+      // MyMemory Translation API - Free, no API key needed
+      const encodedText = encodeURIComponent(text);
+      const url = `https://api.mymemory.translated.net/get?q=${encodedText}&langpair=en|vi`;
+      
+      console.log('[Translation] Calling MyMemory API...');
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        console.error('[Translation] API error:', response.status);
+        return text;
+      }
+      
+      const data = await response.json();
+      console.log('[Translation] API response:', data);
+      
+      if (data.responseStatus === 200 && data.responseData?.translatedText) {
+        const translated = data.responseData.translatedText;
+        console.log('[Translation] Translated chunk:', translated.substring(0, 100) + '...');
+        return translated;
+      }
+      
+      console.error('[Translation] Invalid response format');
+      return text;
+    } catch (error) {
+      console.error('[Translation] Chunk translation error:', error);
+      return text;
+    }
+  };
+
+  const handleTranslateDescription = async () => {
+    if (!place?.description && !place?.editorialSummary) return;
+
+    const originalText = place.editorialSummary || place.description;
+
+    if (isDescriptionTranslated) {
+      // Switch back to original
+      setIsDescriptionTranslated(false);
+    } else {
+      // Translate to Vietnamese
+      if (!translatedDescription) {
+        setIsTranslatingDescription(true);
+        const translated = await translateText(originalText);
+        setTranslatedDescription(translated);
+        setIsTranslatingDescription(false);
+      }
+      setIsDescriptionTranslated(true);
+    }
+  };
+
+  const handleTranslateReview = async (reviewIndex: number, reviewText: string) => {
+    if (isReviewsTranslated[reviewIndex]) {
+      // Switch back to original
+      setIsReviewsTranslated(prev => ({ ...prev, [reviewIndex]: false }));
+    } else {
+      // Translate to Vietnamese
+      if (!translatedReviews[reviewIndex]) {
+        setTranslatingReviewIndex(reviewIndex);
+        const translated = await translateText(reviewText);
+        setTranslatedReviews(prev => ({ ...prev, [reviewIndex]: translated }));
+        setTranslatingReviewIndex(null);
+      }
+      setIsReviewsTranslated(prev => ({ ...prev, [reviewIndex]: true }));
+    }
   };
 
   const handlePhonePress = (phone: string) => {
@@ -248,15 +470,15 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
     ? getImageUrl(place.photos[imageIndex], imageIndex)
     : null;
   
-  // Debug: Log photos data
+  // Debug: Log photos data (only when photos change)
   useEffect(() => {
     if (place?.photos) {
       console.log('[POIDetailBottomSheet] Total photos:', place.photos.length);
-      console.log('[POIDetailBottomSheet] Photos data:', JSON.stringify(place.photos, null, 2));
+      // Remove heavy logging that causes performance issues
+      // console.log('[POIDetailBottomSheet] Photos data:', JSON.stringify(place.photos, null, 2));
       console.log('[POIDetailBottomSheet] Current image index:', imageIndex);
-      console.log('[POIDetailBottomSheet] Current image URL:', currentImageUrl);
     }
-  }, [place?.photos, imageIndex, currentImageUrl]);
+  }, [place?.photos]); // Remove imageIndex and currentImageUrl to prevent re-runs
 
   return (
     <Modal
@@ -389,22 +611,86 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
                 </View>
               ) : null}
 
-              {/* Rating và số lượng reviews */}
-              <View style={styles.ratingContainer}>
-                {renderStars(place.rating)}
-                {place.user_ratings_total ? (
-                  <Text style={styles.reviewsCount}>
-                    ({place.user_ratings_total} đánh giá)
-                  </Text>
-                ) : null}
+              {/* Rating và số lượng reviews + Contact Icons */}
+              <View style={styles.ratingAndContactContainer}>
+                <View style={styles.ratingContainer}>
+                  {renderStars(place.rating)}
+                  {place.user_ratings_total ? (
+                    <Text style={styles.reviewsCount}>
+                      ({place.user_ratings_total} đánh giá)
+                    </Text>
+                  ) : null}
+                </View>
+
+                {/* Thông tin liên hệ - Icons nhỏ */}
+                <View style={styles.contactIconsContainer}>
+                  {place.contactNumber || place.phone ? (
+                    <TouchableOpacity
+                      style={styles.contactIconButton}
+                      onPress={() => handlePhonePress(place.contactNumber || place.phone)}
+                    >
+                      <MaterialCommunityIcons
+                        name="phone"
+                        size={18}
+                        color={COLORS.primary}
+                      />
+                    </TouchableOpacity>
+                  ) : null}
+                  {place.websiteUri || place.website ? (
+                    <TouchableOpacity
+                      style={styles.contactIconButton}
+                      onPress={() => handleWebsitePress(place.websiteUri || place.website)}
+                    >
+                      <MaterialCommunityIcons
+                        name="web"
+                        size={18}
+                        color={COLORS.primary}
+                      />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
 
               {/* Mô tả */}
               {place.description || place.editorialSummary ? (
                 <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Mô tả</Text>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Mô tả</Text>
+                    {(() => {
+                      const originalText = place.editorialSummary || place.description;
+                      const isViet = isVietnamese(originalText);
+                      if (!isViet) {
+                        return (
+                          <TouchableOpacity
+                            style={styles.translateButton}
+                            onPress={handleTranslateDescription}
+                            disabled={isTranslatingDescription}
+                          >
+                            {isTranslatingDescription ? (
+                              <ActivityIndicator size="small" color={COLORS.primary} />
+                            ) : (
+                              <>
+                                <MaterialCommunityIcons
+                                  name="translate"
+                                  size={16}
+                                  color={COLORS.primary}
+                                />
+                                <Text style={styles.translateButtonText}>
+                                  {isDescriptionTranslated ? 'Gốc' : 'Dịch'}
+                                </Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </View>
                   <Text style={styles.descriptionText}>
-                    {place.editorialSummary || place.description}
+                    {isDescriptionTranslated && translatedDescription
+                      ? translatedDescription
+                      : (place.editorialSummary || place.description)
+                    }
                   </Text>
                 </View>
               ) : null}
@@ -434,15 +720,42 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
                             </View>
                           ) : null}
                         </View>
-                        {(review.relativePublishTimeDescription || review.publishTime) && (
-                          <Text style={styles.reviewTime}>
-                            {review.relativePublishTimeDescription || review.publishTime}
-                          </Text>
-                        )}
+                        <View style={styles.reviewHeaderRight}>
+                          {(review.relativePublishTimeDescription || review.publishTime) && (
+                            <Text style={styles.reviewTime}>
+                              {review.relativePublishTimeDescription || review.publishTime}
+                            </Text>
+                          )}
+                          {review.text && !isVietnamese(review.text) && (
+                            <TouchableOpacity
+                              style={styles.translateButtonSmall}
+                              onPress={() => handleTranslateReview(index, review.text)}
+                              disabled={translatingReviewIndex === index}
+                            >
+                              {translatingReviewIndex === index ? (
+                                <ActivityIndicator size="small" color={COLORS.primary} />
+                              ) : (
+                                <>
+                                  <MaterialCommunityIcons
+                                    name="translate"
+                                    size={16}
+                                    color={COLORS.primary}
+                                  />
+                                  <Text style={styles.translateButtonText}>
+                                    {isReviewsTranslated[index] ? 'Gốc' : 'Dịch'}
+                                  </Text>
+                                </>
+                              )}
+                            </TouchableOpacity>
+                          )}
+                        </View>
                       </View>
                       {review.text && (
                         <Text style={styles.reviewText} numberOfLines={5}>
-                          {review.text}
+                          {isReviewsTranslated[index] && translatedReviews[index]
+                            ? translatedReviews[index]
+                            : review.text
+                          }
                         </Text>
                       )}
                     </View>
@@ -450,54 +763,7 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
                 </View>
               ) : null}
 
-              {/* Thông tin liên hệ */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Thông tin liên hệ</Text>
 
-                {/* Số điện thoại */}
-                {place.contactNumber || place.phone ? (
-                  <TouchableOpacity
-                    style={styles.contactRow}
-                    onPress={() => handlePhonePress(place.contactNumber || place.phone)}
-                  >
-                    <MaterialCommunityIcons
-                      name="phone"
-                      size={20}
-                      color={COLORS.primary}
-                    />
-                    <Text style={styles.contactText}>
-                      {place.contactNumber || place.phone}
-                    </Text>
-                    <MaterialCommunityIcons
-                      name="chevron-right"
-                      size={20}
-                      color={COLORS.textSecondary}
-                    />
-                  </TouchableOpacity>
-                ) : null}
-
-                {/* Website */}
-                {place.websiteUri || place.website ? (
-                  <TouchableOpacity
-                    style={styles.contactRow}
-                    onPress={() => handleWebsitePress(place.websiteUri || place.website)}
-                  >
-                    <MaterialCommunityIcons
-                      name="web"
-                      size={20}
-                      color={COLORS.primary}
-                    />
-                    <Text style={styles.contactText} numberOfLines={1}>
-                      {place.websiteUri || place.website}
-                    </Text>
-                    <MaterialCommunityIcons
-                      name="chevron-right"
-                      size={20}
-                      color={COLORS.textSecondary}
-                    />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
             </View>
           </ScrollView>
         ) : (
@@ -657,10 +923,6 @@ const styles = StyleSheet.create({
   ratingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: SPACING.lg,
-    paddingBottom: SPACING.md,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.borderLight,
   },
   ratingRow: {
     flexDirection: 'row',
@@ -681,14 +943,55 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textSecondary,
   },
+  ratingAndContactContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.lg,
+    paddingBottom: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  contactIconsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  contactIconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.bgLightBlue,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   section: {
     marginBottom: SPACING.xl,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.md,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: COLORS.textMain,
-    marginBottom: SPACING.md,
+  },
+  translateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs / 2,
+    backgroundColor: COLORS.bgLightBlue,
+    borderRadius: 16,
+  },
+  translateButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.primary,
   },
   descriptionText: {
     fontSize: 15,
@@ -724,25 +1027,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.textSecondary,
   },
+  reviewHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  translateButtonSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs / 2,
+    backgroundColor: COLORS.bgLightBlue,
+    borderRadius: 16,
+  },
   reviewText: {
     fontSize: 14,
     color: COLORS.textMain,
     lineHeight: 20,
-  },
-  contactRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.md,
-    backgroundColor: COLORS.bgLightBlue,
-    borderRadius: 12,
-    marginBottom: SPACING.sm,
-  },
-  contactText: {
-    flex: 1,
-    fontSize: 15,
-    color: COLORS.textMain,
-    marginLeft: SPACING.md,
   },
   errorContainer: {
     flex: 1,
