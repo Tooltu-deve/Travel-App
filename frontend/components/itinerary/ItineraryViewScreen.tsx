@@ -33,6 +33,12 @@ const ROUTE_COLORS = {
 
 const CARD_WIDTH = SCREEN_WIDTH - SPACING.lg * 2;
 
+interface Step {
+  travel_mode: string;
+  encoded_polyline: string;
+  instruction: string;
+}
+
 interface Activity {
   name: string;
   location: { lat: number; lng: number };
@@ -42,6 +48,7 @@ interface Activity {
   ecs_score?: number;
   travel_duration_minutes?: number;
   encoded_polyline?: string;
+  steps?: Step[];
   start_encoded_polyline?: string; // polyline từ điểm bắt đầu tới POI đầu tiên (nếu có)
   start_location_polyline?: string; // polyline từ điểm xuất phát (từ backend)
   start_travel_duration_minutes?: number; // thời gian di chuyển từ điểm bắt đầu tới POI đầu tiên
@@ -352,26 +359,42 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
   // Route segments for polylines (bao gồm đoạn từ điểm bắt đầu đến POI đầu tiên nếu có)
   const routeSegments = (() => {
-    const segments: { latitude: number; longitude: number }[][] = [];
+    const segments: { points: { latitude: number; longitude: number }[]; mode: string }[] = [];
 
     if (
       startLocation &&
       activities.length > 0 &&
       (activities[0]?.start_location_polyline || activities[0]?.start_encoded_polyline)
     ) {
-      // Prefer start_location_polyline (from backend), fallback to start_encoded_polyline (from manual)
-      const polyline = activities[0].start_location_polyline || activities[0].start_encoded_polyline;
-      segments.push(decodePolyline(polyline));
+      segments.push({
+        points: decodePolyline(activities[0].start_encoded_polyline),
+        mode: 'DRIVE', // Default to DRIVE for start segment
+      });
     }
 
     activities.forEach((activity) => {
-      const decoded = decodePolyline(activity.encoded_polyline);
-      if (decoded.length > 1) {
-        segments.push(decoded);
+      if (activity.steps && activity.steps.length > 0) {
+        activity.steps.forEach((step) => {
+          const decoded = decodePolyline(step.encoded_polyline);
+          if (decoded.length > 1) {
+            segments.push({
+              points: decoded,
+              mode: step.travel_mode,
+            });
+          }
+        });
+      } else {
+        const decoded = decodePolyline(activity.encoded_polyline);
+        if (decoded.length > 1) {
+          segments.push({
+            points: decoded,
+            mode: 'DRIVE', // Default
+          });
+        }
       }
     });
 
-    return segments.filter((segment) => segment.length > 1);
+    return segments.filter((segment) => segment.points.length > 1);
   })();
 
   // Update map region when day changes
@@ -817,10 +840,13 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               {/* Polylines */}
               {routeSegments.map((segment, idx) => (
                 <Polyline
-                  key={`polyline-${idx}`}
-                  coordinates={segment}
-                  strokeColor={ROUTE_COLORS.main}
-                  strokeWidth={3}
+                  key={`polyline-${selectedDay}-${idx}`}
+                  coordinates={segment.points}
+                  strokeColor={
+                    segment.mode === 'TRANSIT' ? '#4CAF50' : ROUTE_COLORS.main
+                  }
+                  strokeWidth={4}
+                  lineDashPattern={segment.mode === 'WALK' ? [20, 10] : undefined}
                   lineCap="round"
                   lineJoin="round"
                 />
@@ -828,7 +854,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
               {/* Start marker */}
               {startLocation && toMapCoordinate(startLocation) && (
-                <Marker coordinate={toMapCoordinate(startLocation)!} title="Điểm bắt đầu">
+                <Marker 
+                  key={`start-${selectedDay}`}
+                  coordinate={toMapCoordinate(startLocation)!} 
+                  title="Điểm bắt đầu"
+                >
                   <View style={styles.startMarker}>
                     <Text style={styles.markerText}>BĐ</Text>
                   </View>
@@ -841,7 +871,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 if (!coord) return null;
 
                 return (
-                  <Marker key={`marker-${index}`} coordinate={coord}>
+                  <Marker key={`marker-${selectedDay}-${index}`} coordinate={coord}>
                     <View style={styles.marker}>
                       <Text style={styles.markerText}>{index + 1}</Text>
                     </View>
@@ -926,6 +956,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   {(() => {
                     const startToFirst =
                       activities[0]?.start_travel_duration_minutes ??
+                      // Nếu không có start_travel_duration_minutes, dùng travel_duration_minutes của POI đầu tiên
+                      // (vì travel_duration_minutes của POI là thời gian đi từ điểm trước đó đến nó)
                       activities[0]?.travel_duration_minutes ??
                       null;
                     if (startToFirst == null) return null;
@@ -955,11 +987,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const arrival = activity.estimated_arrival || activity.time;
                 const departure = activity.estimated_departure;
                 const duration = calculateDuration(arrival, departure);
-                // travel_duration_minutes nằm ở activity trước (đoạn từ activity trước tới activity hiện tại)
-                const travelTimeRaw =
-                  index > 0
-                    ? activities[index - 1]?.travel_duration_minutes
-                    : activity.start_travel_duration_minutes;
+                // travel_duration_minutes của activity hiện tại là thời gian di chuyển từ điểm trước đó đến nó
+                const travelTimeRaw = activity.travel_duration_minutes;
                 // Làm tròn thời gian di chuyển thành số nguyên
                 const travelTime = travelTimeRaw != null ? Math.round(travelTimeRaw) : null;
                 const showTravelIndicator =

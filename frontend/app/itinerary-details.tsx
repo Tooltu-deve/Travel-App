@@ -27,6 +27,12 @@ const ROUTE_COLORS = {
   main: COLORS.primary,
 } as const;
 
+interface Step {
+  travel_mode: string;
+  encoded_polyline: string;
+  instruction: string;
+}
+
 interface Activity {
   name: string;
   location: { lat: number; lng: number };
@@ -36,8 +42,7 @@ interface Activity {
   ecs_score?: number;
   travel_duration_minutes?: number;
   encoded_polyline?: string;
-  start_location_polyline?: string;
-  travel_duration_from_start?: number;
+  steps?: Step[];
   google_place_id?: string;
   time?: string;
   activity?: string;
@@ -247,9 +252,33 @@ export default function ItineraryDetailsScreen() {
   };
 
   // Route segments for polylines
-  const routeSegments = activities
-    .map((activity) => decodePolyline(activity.encoded_polyline))
-    .filter((segment) => segment.length > 1);
+  const routeSegments = (() => {
+    const segments: { points: { latitude: number; longitude: number }[]; mode: string }[] = [];
+
+    activities.forEach((activity) => {
+      if (activity.steps && activity.steps.length > 0) {
+        activity.steps.forEach((step) => {
+          const decoded = decodePolyline(step.encoded_polyline);
+          if (decoded.length > 1) {
+            segments.push({
+              points: decoded,
+              mode: step.travel_mode,
+            });
+          }
+        });
+      } else {
+        const decoded = decodePolyline(activity.encoded_polyline);
+        if (decoded.length > 1) {
+          segments.push({
+            points: decoded,
+            mode: 'DRIVE', // Default
+          });
+        }
+      }
+    });
+
+    return segments.filter((segment) => segment.points.length > 1);
+  })();
 
   // Start location polyline (from start point to first activity)
   const startLocationPolyline = activities.length > 0 && activities[0].start_location_polyline
@@ -451,10 +480,13 @@ export default function ItineraryDetailsScreen() {
               {/* Polylines between activities */}
               {routeSegments.map((segment, idx) => (
                 <Polyline
-                  key={`polyline-${idx}`}
-                  coordinates={segment}
-                  strokeColor={ROUTE_COLORS.main}
+                  key={`polyline-${selectedDay}-${idx}`}
+                  coordinates={segment.points}
+                  strokeColor={
+                    segment.mode === 'TRANSIT' ? '#4CAF50' : ROUTE_COLORS.main
+                  }
                   strokeWidth={3}
+                  lineDashPattern={segment.mode === 'WALK' ? [20, 10] : undefined}
                   lineCap="round"
                   lineJoin="round"
                 />
@@ -464,7 +496,7 @@ export default function ItineraryDetailsScreen() {
               {/* Start Location Marker */}
               {routeDetails?.start_location && (
                 <Marker 
-                  key="start-location" 
+                  key={`start-location-${selectedDay}`}
                   coordinate={{
                     latitude: routeDetails.start_location.lat,
                     longitude: routeDetails.start_location.lng,
@@ -482,7 +514,7 @@ export default function ItineraryDetailsScreen() {
                 if (!coord) return null;
 
                 return (
-                  <Marker key={`marker-${index}`} coordinate={coord}>
+                  <Marker key={`marker-${selectedDay}-${index}`} coordinate={coord}>
                     <View style={styles.marker}>
                       <Text style={styles.markerText}>{index + 1}</Text>
                     </View>
@@ -535,13 +567,15 @@ export default function ItineraryDetailsScreen() {
               const arrival = activity.estimated_arrival || activity.time;
               const departure = activity.estimated_departure;
               const duration = calculateDuration(arrival, departure);
-              const travelTime = activity.travel_duration_minutes;
+              // travel_duration_minutes của activity hiện tại là thời gian di chuyển từ điểm trước đó đến nó
+              const travelTimeRaw = activity.travel_duration_minutes;
+              const travelTime = travelTimeRaw != null ? Math.round(travelTimeRaw) : null;
               const rating = activity.ecs_score;
 
               return (
                 <View key={`activity-${index}`}>
                   {/* Travel time indicator */}
-                  {index > 0 && travelTime && (
+                  {index > 0 && travelTime != null && (
                     <View style={styles.travelTimeIndicator}>
                       <View style={styles.travelDashedLine} />
                       <View style={styles.travelTimebadge}>

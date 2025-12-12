@@ -182,7 +182,7 @@ class OptimizerRequest(BaseModel):
     current_location: Dict[str, float]  # { lat, lng } - vị trí hiện tại của user
     start_datetime: Optional[str] = None  # ISO 8601 datetime bắt đầu chuyến đi
     # Ngưỡng ECS tối thiểu (chỉ giữ POI có ecs_score > threshold này)
-    ecs_score_threshold: float = 0.15
+    ecs_score_threshold: float = 0.3
     # Ma trận ETA (phút) giữa các POIs, ví dụ: { "poiA": { "poiB": 12, ... }, ... }
     eta_matrix: Optional[Dict[str, Dict[str, float]]] = None
     # ETA từ vị trí hiện tại đến từng POI, ví dụ: { "poiA": 8, "poiB": 15 }
@@ -1064,7 +1064,7 @@ async def optimize_with_kmeans(request: OptimizerRequest):
 
     # BƯỚC 4: K-MEANS CLUSTERING
     print(f"Bước 4: K-Means clustering...")
-    radius_limit_km = 10.0
+    radius_limit_km = 15.0
     pois_within_radius = [poi for poi in candidates if within_start_radius(poi, radius_limit_km)]
     print(f"  → {len(pois_within_radius)} POI trong bán kính {radius_limit_km}km")
 
