@@ -376,44 +376,30 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       if (startLocation && activities.length > 0) {
         if (activities[0]?.start_encoded_polyline) {
           segments.push({
-        points: decodePolyline(activities[0].start_encoded_polyline),
-        mode: 'DRIVE', // Default to DRIVE for start segment
-      });
-        } else {
-          // Nếu không có polyline, tự tạo đoạn thẳng từ điểm bắt đầu đến POI đầu tiên
-          const startCoord = toMapCoordinate(startLocation);
-          const firstCoord = toMapCoordinate(activities[0].location);
-          if (startCoord && firstCoord) {
-            segments.push({ points: [startCoord, firstCoord], mode: 'DRIVE' });
-          }
+            points: decodePolyline(activities[0].start_encoded_polyline),
+            mode: 'DRIVE', // Default to DRIVE for start segment
+          });
         }
       }
 
       activities.forEach((activity, idx) => {
-      if (activity.steps && activity.steps.length > 0) {
-        activity.steps.forEach((step) => {
-          const decoded = decodePolyline(step.encoded_polyline);
-          if (decoded.length > 1) {
-            segments.push({
-              points: decoded,
-              mode: step.travel_mode,
-            });
-          }
-        });
-      } else {
+        if (activity.steps && activity.steps.length > 0) {
+          activity.steps.forEach((step) => {
+            const decoded = decodePolyline(step.encoded_polyline);
+            if (decoded.length > 1) {
+              segments.push({
+                points: decoded,
+                mode: step.travel_mode,
+              });
+            }
+          });
+        } else {
           const decoded = decodePolyline(activity.encoded_polyline);
           if (decoded.length > 1) {
             segments.push({
-            points: decoded,
-            mode: 'DRIVE', // Default
-          });
-        }
-        } if (idx > 0) {
-          // Nếu không có polyline, vẽ đoạn thẳng giữa các POI liên tiếp
-          const prevCoord = toMapCoordinate(activities[idx - 1].location);
-          const currCoord = toMapCoordinate(activity.location);
-          if (prevCoord && currCoord) {
-            segments.push({ points: [prevCoord, currCoord], mode: 'DRIVE' });
+              points: decoded,
+              mode: 'DRIVE', // Default
+            });
           }
         }
       });
@@ -880,9 +866,9 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   key={`polyline-${selectedDay}-${idx}`}
                   coordinates={segment.points}
                   strokeColor={
-                    segment.mode === 'TRANSIT' ? '#4CAF50' : ROUTE_COLORS.main
+                    segment.mode === 'TRANSIT' ? '#F44336' : ROUTE_COLORS.main
                   }
-                  strokeWidth={4}
+                  strokeWidth={segment.mode === 'TRANSIT' ? 6 : 4}
                   lineDashPattern={segment.mode === 'WALK' ? [20, 10] : undefined}
                   lineCap="round"
                   lineJoin="round"
