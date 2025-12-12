@@ -838,7 +838,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               {/* Polylines */}
               {routeSegments.map((segment, idx) => (
                 <Polyline
-                  key={`polyline-${idx}`}
+                  key={`polyline-${selectedDay}-${idx}`}
                   coordinates={segment.points}
                   strokeColor={
                     segment.mode === 'TRANSIT' ? '#4CAF50' : ROUTE_COLORS.main
@@ -852,7 +852,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
               {/* Start marker */}
               {startLocation && toMapCoordinate(startLocation) && (
-                <Marker coordinate={toMapCoordinate(startLocation)!} title="Điểm bắt đầu">
+                <Marker 
+                  key={`start-${selectedDay}`}
+                  coordinate={toMapCoordinate(startLocation)!} 
+                  title="Điểm bắt đầu"
+                >
                   <View style={styles.startMarker}>
                     <Text style={styles.markerText}>BĐ</Text>
                   </View>
@@ -865,7 +869,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 if (!coord) return null;
 
                 return (
-                  <Marker key={`marker-${index}`} coordinate={coord}>
+                  <Marker key={`marker-${selectedDay}-${index}`} coordinate={coord}>
                     <View style={styles.marker}>
                       <Text style={styles.markerText}>{index + 1}</Text>
                     </View>
