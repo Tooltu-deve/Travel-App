@@ -21,7 +21,7 @@ import { Calendar, DateData } from 'react-native-calendars';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { checkWeatherAPI } from '../../services/api';
+import { checkWeatherAPI, autocompletePlacesAPI } from '../../services/api';
 import WeatherWarningModal, { WeatherSeverity } from '../../components/WeatherWarningModal';
 
 const ManualFormScreen: React.FC = () => {
@@ -46,6 +46,12 @@ const ManualFormScreen: React.FC = () => {
   const [weatherAlert, setWeatherAlert] = useState<string>('');
   const [isCheckingWeather, setIsCheckingWeather] = useState(false);
 
+  // Autocomplete state
+  const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<any[]>([]);
+  const [isAutocompleteLoading, setIsAutocompleteLoading] = useState(false);
+  const [showAutocompleteSuggestions, setShowAutocompleteSuggestions] = useState(false);
+  const [autocompleteSessionToken, setAutocompleteSessionToken] = useState<string>('');
+
   // Danh sách các thành phố từ scrape_poi_reviews.py
   const vietnamCities = [
     'Hà Nội',
@@ -64,6 +70,41 @@ const ManualFormScreen: React.FC = () => {
     'Phan Thiết',
     'Ninh Bình',
   ];
+
+  // Generate session token for autocomplete on mount
+  useEffect(() => {
+    setAutocompleteSessionToken(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  }, []);
+
+  // Debounced autocomplete handler
+  useEffect(() => {
+    const timeoutId = setTimeout(async () => {
+      if (currentLocationText.trim().length >= 2 && destination) {
+        try {
+          setIsAutocompleteLoading(true);
+          const token = await AsyncStorage.getItem('userToken');
+          const suggestions = await autocompletePlacesAPI(
+            currentLocationText,
+            autocompleteSessionToken,
+            destination,
+            token || undefined
+          );
+          setAutocompleteSuggestions(suggestions || []);
+          setShowAutocompleteSuggestions(true);
+        } catch (error) {
+          console.error('Autocomplete error:', error);
+          setAutocompleteSuggestions([]);
+        } finally {
+          setIsAutocompleteLoading(false);
+        }
+      } else {
+        setAutocompleteSuggestions([]);
+        setShowAutocompleteSuggestions(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [currentLocationText, destination, autocompleteSessionToken]);
 
   const handleGoBack = () => {
     router.back();
@@ -390,17 +431,71 @@ const ManualFormScreen: React.FC = () => {
           <View style={styles.stepContent}>
             <View style={styles.locationSection}>
               <Text style={styles.locationLabel}>Nhập địa chỉ xuất phát</Text>
-              <TextInput
-                style={styles.locationInput}
-                placeholder="Ví dụ: Hà Nội, 123 Nguyễn Huệ, Quận 1, TP.HCM..."
-                placeholderTextColor={COLORS.textSecondary}
-                value={currentLocationText}
-                onChangeText={setCurrentLocationText}
-                multiline
-                numberOfLines={2}
-              />
+              <View style={styles.autocompleteContainer}>
+                <TextInput
+                  style={styles.locationInput}
+                  placeholder="Ví dụ: Hà Nội, 123 Nguyễn Huệ, Quận 1, TP.HCM..."
+                  placeholderTextColor={COLORS.textSecondary}
+                  value={currentLocationText}
+                  onChangeText={(text) => {
+                    setCurrentLocationText(text);
+                    if (text.trim().length < 2) {
+                      setShowAutocompleteSuggestions(false);
+                    }
+                  }}
+                  onFocus={() => {
+                    if (currentLocationText.trim().length >= 2) {
+                      setShowAutocompleteSuggestions(true);
+                    }
+                  }}
+                  multiline={false}
+                  numberOfLines={1}
+                  returnKeyType="done"
+                  autoCorrect={false}
+                  autoCapitalize="words"
+                />
+                {isAutocompleteLoading && (
+                  <View style={styles.autocompleteLoadingContainer}>
+                    <ActivityIndicator size="small" color={COLORS.primary} />
+                  </View>
+                )}
+                {showAutocompleteSuggestions && autocompleteSuggestions.length > 0 && (
+                  <View style={styles.autocompleteSuggestionsContainer}>
+                    <ScrollView 
+                      style={styles.autocompleteSuggestionsList}
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled={true}
+                    >
+                      {autocompleteSuggestions.map((suggestion, index) => (
+                        <TouchableOpacity
+                          key={suggestion.place_id || index}
+                          style={styles.autocompleteSuggestionItem}
+                          onPress={() => {
+                            setCurrentLocationText(suggestion.description);
+                            setShowAutocompleteSuggestions(false);
+                            setAutocompleteSuggestions([]);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <FontAwesome name="map-marker" size={16} color={COLORS.primary} />
+                          <View style={styles.autocompleteSuggestionTextContainer}>
+                            <Text style={styles.autocompleteSuggestionMainText}>
+                              {suggestion.structured_formatting?.main_text || suggestion.description}
+                            </Text>
+                            {suggestion.structured_formatting?.secondary_text && (
+                              <Text style={styles.autocompleteSuggestionSecondaryText}>
+                                {suggestion.structured_formatting.secondary_text}
+                              </Text>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
               <Text style={styles.locationHint}>
-                Nhập địa chỉ nơi bạn xuất phát
+                Nhập địa chỉ xuất phát (gợi ý giới hạn trong {destination})
               </Text>
             </View>
 
@@ -957,6 +1052,56 @@ const styles = StyleSheet.create({
   submitButtonDisabled: {
     backgroundColor: COLORS.disabled,
     opacity: 0.7,
+  },
+  autocompleteContainer: {
+    position: 'relative',
+  },
+  autocompleteLoadingContainer: {
+    position: 'absolute',
+    right: SPACING.md,
+    top: SPACING.md,
+  },
+  autocompleteSuggestionsContainer: {
+    position: 'absolute',
+    top: 62,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.bgMain,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
+    maxHeight: 250,
+    zIndex: 1000,
+  },
+  autocompleteSuggestionsList: {
+    maxHeight: 250,
+  },
+  autocompleteSuggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  autocompleteSuggestionTextContainer: {
+    flex: 1,
+    gap: SPACING.xs / 2,
+  },
+  autocompleteSuggestionMainText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  autocompleteSuggestionSecondaryText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
   },
 });
 
