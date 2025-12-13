@@ -2208,21 +2208,64 @@ def live_companion_node(state: TravelState) -> TravelState:
     try:
         # Classify companion question type - PRIORITY ORDER MATTERS!
         
-        # PRIORITY 1: EMERGENCY SERVICES (check first!)
-        if any(word in user_text for word in ["bệnh viện", "hospital", "pharmacy", "nhà thuốc", "hiệu thuốc", "atm", "ngân hàng", "bank", "khẩn cấp", "emergency", "cấp cứu", "công an", "cảnh sát", "police"]):
-            # EMERGENCY SERVICES
-            print("   🚨 Type: Emergency services")
+        # PRIORITY 1: EMERGENCY SERVICES & UTILITY SERVICES (check first!)
+        if any(word in user_text for word in [
+            # Y tế
+            "bệnh viện", "hospital", "pharmacy", "nhà thuốc", "hiệu thuốc",
+            # Tài chính
+            "atm", "ngân hàng", "bank", "rút tiền",
+            # An ninh
+            "khẩn cấp", "emergency", "cấp cứu", "công an", "cảnh sát", "police", "cứu hỏa", "fire",
+            # Tiện ích
+            "bãi đỗ xe", "parking", "đỗ xe", "chỗ đỗ", "bãi giữ xe",
+            "cửa hàng tiện lợi", "convenience store", "siêu thị", "supermarket",
+            "nhà vệ sinh", "toilet", "restroom", "wc",
+            "trạm xăng", "gas station", "xăng", "petrol",
+            "trạm xe buýt", "bus station", "xe buýt", "tàu điện", "subway", "metro",
+            "bưu điện", "post office"
+        ]):
+            # EMERGENCY & UTILITY SERVICES
+            print("   🚨 Type: Emergency/Utility services")
             
             service_type = "hospital"
+            
+            # Y tế
             if any(word in user_text for word in ["pharmacy", "nhà thuốc", "hiệu thuốc", "thuốc"]):
                 service_type = "pharmacy"
+            # Tài chính
             elif any(word in user_text for word in ["atm", "ngân hàng", "bank", "rút tiền"]):
                 service_type = "atm"
+            # An ninh
             elif any(word in user_text for word in ["police", "công an", "cảnh sát"]):
                 service_type = "police"
+            elif any(word in user_text for word in ["cứu hỏa", "fire"]):
+                service_type = "fire_station"
+            # Tiện ích
+            elif any(word in user_text for word in ["bãi đỗ xe", "parking", "đỗ xe", "chỗ đỗ", "bãi giữ xe"]):
+                service_type = "parking"
+            elif any(word in user_text for word in ["cửa hàng tiện lợi", "convenience", "tiện lợi"]):
+                service_type = "convenience_store"
+            elif any(word in user_text for word in ["siêu thị", "supermarket"]):
+                service_type = "supermarket"
+            elif any(word in user_text for word in ["nhà vệ sinh", "toilet", "restroom", "wc"]):
+                service_type = "restroom"
+            elif any(word in user_text for word in ["trạm xăng", "gas station", "xăng", "petrol"]):
+                service_type = "gas_station"
+            elif any(word in user_text for word in ["trạm xe buýt", "bus station", "xe buýt"]):
+                service_type = "bus_station"
+            elif any(word in user_text for word in ["tàu điện", "subway", "metro"]):
+                service_type = "subway_station"
+            elif any(word in user_text for word in ["bưu điện", "post office"]):
+                service_type = "post_office"
             
             if not current_location:
-                response_text = "🚨 Tôi cần biết vị trí của bạn để tìm dịch vụ gần nhất!\n\n💡 Vui lòng bật GPS."
+                response_text = "🚨 **Cần bật GPS để tìm dịch vụ khẩn cấp gần nhất!**\n\n"
+                response_text += "🔧 Vui lòng bật **Dịch vụ định vị** ngay!\n\n"
+                response_text += "📞 **Số điện thoại khẩn cấp:**\n"
+                response_text += "• Cấp cứu: **115**\n"
+                response_text += "• Công an: **113**\n"
+                response_text += "• Cứu hỏa: **114**\n"
+                response_text += "• Tổng đài du lịch: **1800-1008**"
             else:
                 try:
                     services = find_emergency_services.invoke({
@@ -2232,10 +2275,23 @@ def live_companion_node(state: TravelState) -> TravelState:
                     
                     if services and len(services) > 0:
                         service_label = {
+                            # Y tế
                             "hospital": "Bệnh viện/Phòng khám",
                             "pharmacy": "Nhà thuốc",
+                            # Tài chính
                             "atm": "ATM/Ngân hàng",
-                            "police": "Công an"
+                            # An ninh
+                            "police": "Công an",
+                            "fire_station": "Trạm cứu hỏa",
+                            # Tiện ích
+                            "parking": "Bãi đỗ xe",
+                            "convenience_store": "Cửa hàng tiện lợi",
+                            "supermarket": "Siêu thị",
+                            "restroom": "Nhà vệ sinh công cộng",
+                            "gas_station": "Trạm xăng",
+                            "bus_station": "Trạm xe buýt",
+                            "subway_station": "Trạm tàu điện",
+                            "post_office": "Bưu điện"
                         }.get(service_type, "Dịch vụ")
                         
                         response_text = f"🚨 **{service_label} gần nhất:**\n\n"
@@ -2248,10 +2304,23 @@ def live_companion_node(state: TravelState) -> TravelState:
                             response_text += "\n"
                     else:
                         service_label_vn = {
+                            # Y tế
                             "hospital": "bệnh viện",
                             "pharmacy": "nhà thuốc",
+                            # Tài chính
                             "atm": "ATM",
-                            "police": "đồn công an"
+                            # An ninh
+                            "police": "đồn công an",
+                            "fire_station": "trạm cứu hỏa",
+                            # Tiện ích
+                            "parking": "bãi đỗ xe",
+                            "convenience_store": "cửa hàng tiện lợi",
+                            "supermarket": "siêu thị",
+                            "restroom": "nhà vệ sinh công cộng",
+                            "gas_station": "trạm xăng",
+                            "bus_station": "trạm xe buýt",
+                            "subway_station": "trạm tàu điện",
+                            "post_office": "bưu điện"
                         }.get(service_type, "dịch vụ")
                         
                         response_text = f"😔 Xin lỗi, không tìm thấy {service_label_vn} trong cơ sở dữ liệu.\n\n"
@@ -2273,7 +2342,9 @@ def live_companion_node(state: TravelState) -> TravelState:
             print("   🔍 Type: Nearby search")
             
             if not current_location:
-                response_text = "📍 **Tôi cần biết vị trí của bạn để tìm địa điểm gần đây.**\n\n💡 Vui lòng:\n1. Bật GPS trên điện thoại\n2. Cho phép app truy cập vị trí\n3. Hoặc cho tôi biết bạn đang ở khu vực nào?"
+                response_text = "📍 **Cần truy cập vị trí GPS để tìm địa điểm gần bạn!**\n\n"
+                response_text += "🔐 App sẽ yêu cầu quyền truy cập vị trí. Vui lòng cho phép để tôi có thể tìm kiếm các địa điểm gần bạn nhất.\n\n"
+                response_text += "💡 Hoặc bạn có thể cho tôi biết bạn đang ở khu vực nào để tôi gợi ý!"
             else:
                 # Detect category from query
                 category = None
@@ -2304,16 +2375,40 @@ def live_companion_node(state: TravelState) -> TravelState:
                         'attraction': 'tham quan'
                     }.get(category, category or 'địa điểm')
                     
-                    response_text = f"📍 **Các {category_vn} gần bạn:**\n\n"
+                    # Check data source
+                    source = nearby_places[0].get('source', 'database')
+                    source_icon = "🌍" if source == 'google_places_api' else "💾"
+                    
+                    response_text = f"{source_icon} **Các {category_vn} gần bạn:**\n\n"
                     for i, place in enumerate(nearby_places, 1):
                         name = place.get('name', 'Unknown')
                         distance = place.get('distance_km', 0)
                         rating = place.get('rating', 'N/A')
                         response_text += f"{i}. **{name}** ({distance:.1f}km)\n"
-                        response_text += f"   ⭐ {rating} | {place.get('type', '')}\n"
+                        
+                        # Show rating if available
+                        if rating != 'N/A' and rating > 0:
+                            total_ratings = place.get('user_ratings_total', 0)
+                            response_text += f"   ⭐ {rating}"
+                            if total_ratings > 0:
+                                response_text += f" ({total_ratings} đánh giá)"
+                            response_text += "\n"
+                        
+                        # Show address
                         if place.get('address'):
                             response_text += f"   📍 {place.get('address')}\n"
+                        
+                        # Show opening status if available
+                        opening_hours = place.get('opening_hours')
+                        if opening_hours and opening_hours.get('open_now') is not None:
+                            status = "🟢 Đang mở cửa" if opening_hours.get('open_now') else "🔴 Đã đóng cửa"
+                            response_text += f"   {status}\n"
+                        
                         response_text += "\n"
+                    
+                    # Add note about data source
+                    if source == 'google_places_api':
+                        response_text += "\n_✨ Dữ liệu realtime từ Google Places_"
                 else:
                     # More helpful error message with suggestions
                     category_vn = {
@@ -2350,7 +2445,9 @@ def live_companion_node(state: TravelState) -> TravelState:
             print("   🍽️ Type: Food tips")
             
             if not current_location:
-                response_text = "🍽️ Tôi cần biết vị trí của bạn để gợi ý món ăn ngon gần đó!\n\n💡 Vui lòng bật GPS."
+                response_text = "🍽️ **Cần bật GPS để tìm quán ăn ngon gần bạn!**\n\n"
+                response_text += "🔧 Vui lòng bật **Dịch vụ định vị** trong Cài đặt.\n\n"
+                response_text += "💡 Hoặc cho tôi biết bạn đang ở đâu để tôi gợi ý món ăn!"
             else:
                 try:
                     # Find nearby restaurants
@@ -2362,17 +2459,48 @@ def live_companion_node(state: TravelState) -> TravelState:
                     })
                     
                     if nearby and len(nearby) > 0:
-                        response_text = "🍽️ **Nhà hàng gần bạn:**\n\n"
+                        # Check data source
+                        source = nearby[0].get('source', 'database')
+                        source_icon = "🌍" if source == 'google_places_api' else "💾"
+                        
+                        response_text = f"{source_icon} **Nhà hàng gần bạn:**\n\n"
                         for i, restaurant in enumerate(nearby, 1):
                             name = restaurant.get('name', 'Unknown')
                             distance = restaurant.get('distance_km', 0)
                             rating = restaurant.get('rating', 'N/A')
                             response_text += f"{i}. **{name}** ({distance:.1f}km)\n"
-                            response_text += f"   ⭐ {rating} | {restaurant.get('type', '')}\n"
+                            
+                            # Show rating if available
+                            if rating != 'N/A' and rating > 0:
+                                total_ratings = restaurant.get('user_ratings_total', 0)
+                                response_text += f"   ⭐ {rating}"
+                                if total_ratings > 0:
+                                    response_text += f" ({total_ratings} đánh giá)"
+                                response_text += "\n"
+                            
+                            # Show address
                             if restaurant.get('address'):
                                 response_text += f"   📍 {restaurant.get('address')}\n"
+                            
+                            # Show price level if available
+                            price_level = restaurant.get('price_level')
+                            if price_level:
+                                price_symbols = "💰" * price_level
+                                response_text += f"   {price_symbols}\n"
+                            
+                            # Show opening status
+                            opening_hours = restaurant.get('opening_hours')
+                            if opening_hours and opening_hours.get('open_now') is not None:
+                                status = "🟢 Đang mở cửa" if opening_hours.get('open_now') else "🔴 Đã đóng cửa"
+                                response_text += f"   {status}\n"
+                            
                             response_text += "\n"
+                        
                         response_text += "💡 **Tip:** Hỏi người địa phương về đặc sản nhé!"
+                        
+                        # Add note about data source
+                        if source == 'google_places_api':
+                            response_text += "\n\n_✨ Dữ liệu realtime từ Google Places_"
                     else:
                         response_text = "😔 Không tìm thấy nhà hàng nào trong bán kính 2km.\n\n"
                         response_text += "💡 **Gợi ý:**\n"

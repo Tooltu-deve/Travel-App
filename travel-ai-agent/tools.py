@@ -594,16 +594,165 @@ def search_nearby_places(
     limit: int = 10
 ) -> List[Dict]:
     """
-    Tìm các địa điểm gần vị trí hiện tại của user (LIVE COMPANION).
+    Tìm các địa điểm gần vị trí hiện tại của user (LIVE COMPANION) - sử dụng Google Places API.
     
     Args:
         current_location: Vị trí hiện tại {'lat': float, 'lng': float}
         radius_km: Bán kính tìm kiếm (km)
-        category: Loại địa điểm ('restaurant', 'cafe', 'attraction', 'shopping')
+        category: Loại địa điểm ('restaurant', 'cafe', 'attraction', 'shopping', 'hospital', 'atm')
         limit: Số lượng kết quả tối đa
         
     Returns:
-        List[Dict]: Danh sách địa điểm gần nhất, sorted theo khoảng cách
+        List[Dict]: Danh sách địa điểm gần nhất từ Google Places API
+    """
+    try:
+        import os
+        import requests
+        
+        lat = current_location.get('lat')
+        lng = current_location.get('lng')
+        
+        if not lat or not lng:
+            print("   ⚠️ Missing location coordinates")
+            return []
+        
+        # Get Google Places API key
+        api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+        if not api_key:
+            print("   ⚠️ GOOGLE_PLACES_API_KEY not found, falling back to database")
+            return _search_nearby_from_database(current_location, radius_km, category, limit)
+        
+        # Map categories to Google Places types (New API)
+        type_map = {
+            'restaurant': 'restaurant',
+            'cafe': 'cafe',
+            'attraction': 'tourist_attraction',
+            'shopping': 'shopping_mall',
+            'hospital': 'hospital',
+            'atm': 'atm',
+            'pharmacy': 'pharmacy',
+            'museum': 'museum',
+            'park': 'park'
+        }
+        
+        place_type = type_map.get(category.lower() if category else None, None)
+        
+        # Google Places API (New) - Nearby Search endpoint
+        url = "https://places.googleapis.com/v1/places:searchNearby"
+        
+        # Build request body for Places API (New)
+        request_body = {
+            "locationRestriction": {
+                "circle": {
+                    "center": {
+                        "latitude": lat,
+                        "longitude": lng
+                    },
+                    "radius": radius_km * 1000  # Convert km to meters
+                }
+            },
+            "maxResultCount": limit,
+            "languageCode": "vi"
+        }
+        
+        # Add type filter if specified
+        if place_type:
+            request_body["includedTypes"] = [place_type]
+        
+        # Headers for Places API (New)
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.types,places.photos,places.currentOpeningHours,places.priceLevel"
+        }
+        
+        print(f"   🌍 Calling Google Places API (New): radius={radius_km}km, type={place_type or 'all'}")
+        
+        response = requests.post(url, json=request_body, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"   ⚠️ Google Places API (New) error: {response.status_code}")
+            print(f"   Response: {response.text[:200]}")
+            return _search_nearby_from_database(current_location, radius_km, category, limit)
+        
+        data = response.json()
+        
+        # Check if we have places in the response
+        if not data.get('places'):
+            print(f"   ⚠️ No places found in response")
+            return _search_nearby_from_database(current_location, radius_km, category, limit)
+        
+        places = data.get('places', [])
+        
+        # Format results for Places API (New)
+        nearby_places = []
+        for place in places:
+            # Get location from new API format
+            location = place.get('location', {})
+            place_lat = location.get('latitude')
+            place_lng = location.get('longitude')
+            
+            if not place_lat or not place_lng:
+                continue
+            
+            # Calculate distance
+            import math
+            lat1, lon1 = lat, lng
+            lat2, lon2 = place_lat, place_lng
+            lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+            a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+            c = 2 * math.asin(math.sqrt(a))
+            distance = round(c * 6371, 2)  # Earth radius in km
+            
+            # Extract display name (new API format)
+            display_name = place.get('displayName', {})
+            name = display_name.get('text', 'Unknown') if isinstance(display_name, dict) else 'Unknown'
+            
+            # Extract opening hours
+            opening_hours = place.get('currentOpeningHours', {})
+            open_now = opening_hours.get('openNow') if opening_hours else None
+            
+            formatted_place = {
+                'name': name,
+                'place_id': place.get('id', '').replace('places/', ''),  # Remove 'places/' prefix
+                'address': place.get('formattedAddress', ''),
+                'rating': place.get('rating', 0),
+                'user_ratings_total': place.get('userRatingCount', 0),
+                'types': place.get('types', []),
+                'location': {
+                    'type': 'Point',
+                    'coordinates': [place_lng, place_lat]
+                },
+                'distance_km': distance,
+                'photo_reference': place.get('photos', [{}])[0].get('name') if place.get('photos') else None,
+                'opening_hours': {
+                    'open_now': open_now
+                } if open_now is not None else None,
+                'price_level': place.get('priceLevel'),
+                'source': 'google_places_api_new'
+            }
+            
+            nearby_places.append(formatted_place)
+        
+        print(f"   ✅ Found {len(nearby_places)} places from Google Places API (New)")
+        return nearby_places
+        
+    except Exception as e:
+        print(f"   ❌ Error calling Google Places API: {e}")
+        print(f"   🔄 Falling back to database search")
+        return _search_nearby_from_database(current_location, radius_km, category, limit)
+
+
+def _search_nearby_from_database(
+    current_location: Dict[str, float],
+    radius_km: float = 2.0,
+    category: Optional[str] = None,
+    limit: int = 10
+) -> List[Dict]:
+    """
+    Fallback: Tìm địa điểm từ database khi Google API không khả dụng.
     """
     try:
         lat = current_location.get('lat')
@@ -652,15 +801,17 @@ def search_nearby_places(
             
             if distance <= radius_km:
                 place['distance_km'] = distance
+                place['source'] = 'database'
                 nearby_places.append(place)
         
         # Sort by distance
         nearby_places.sort(key=lambda x: x['distance_km'])
         
+        print(f"   ✅ Found {len(nearby_places[:limit])} places from database (fallback)")
         return nearby_places[:limit]
         
     except Exception as e:
-        print(f"Error searching nearby places: {e}")
+        print(f"   ❌ Error searching database: {e}")
         return []
 
 @tool
@@ -812,50 +963,138 @@ def get_travel_tips(
 @tool
 def find_emergency_services(
     current_location: Dict[str, float],
-    service_type: str = "hospital"
+    service_type: str = "hospital",
+    radius_km: float = 5.0
 ) -> List[Dict]:
     """
-    Tìm dịch vụ khẩn cấp gần nhất (LIVE COMPANION).
-    User hỏi: "Tìm bệnh viện", "Pharmacy gần đây", "ATM ở đâu?"
+    Tìm dịch vụ tiện ích & khẩn cấp gần nhất (LIVE COMPANION) - sử dụng Google Places API (New).
+    User hỏi: "Tìm bệnh viện", "Pharmacy gần đây", "ATM ở đâu?", "Cửa hàng tiện lợi gần nhất", "Nhà vệ sinh công cộng"
     
     Args:
         current_location: Vị trí hiện tại {'lat': float, 'lng': float}
-        service_type: Loại dịch vụ ('hospital', 'pharmacy', 'atm', 'police')
+        service_type: Loại dịch vụ (xem service_type_map bên dưới)
+        radius_km: Bán kính tìm kiếm (km, default: 5.0)
         
     Returns:
-        List[Dict]: Danh sách dịch vụ khẩn cấp gần nhất
+        List[Dict]: Danh sách dịch vụ gần nhất (top 5)
     """
     try:
-        # Map service types to place types
-        service_map = {
-            'hospital': ['hospital', 'clinic'],
-            'pharmacy': ['pharmacy', 'drug_store'],
-            'atm': ['atm', 'bank'],
-            'police': ['police'],
-            'gas_station': ['gas_station']
-        }
+        import os
+        import requests
         
-        types = service_map.get(service_type.lower(), [service_type])
-        
-        # Search in database
         lat = current_location.get('lat')
         lng = current_location.get('lng')
         
         if not lat or not lng:
+            print("   ⚠️ Missing location coordinates")
             return []
         
-        # Get places matching service types
-        query = {'type': {'$in': types}}
-        places = list(places_collection.find(query, {"_id": 0}))
+        # Get Google Places API key
+        api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+        if not api_key:
+            print("   ⚠️ GOOGLE_PLACES_API_KEY not found, falling back to database")
+            return _find_emergency_from_database(current_location, service_type, radius_km)
         
-        # Calculate distance and sort
+        # Map service types to Google Places API (New) types
+        service_type_map = {
+            # Dịch vụ y tế
+            'hospital': 'hospital',
+            'clinic': 'hospital',
+            'pharmacy': 'pharmacy',
+            'drug_store': 'pharmacy',
+            
+            # Dịch vụ tài chính
+            'atm': 'atm',
+            'bank': 'bank',
+            
+            # Dịch vụ an ninh & khẩn cấp
+            'police': 'police',
+            'fire_station': 'fire_station',
+            
+            # Trạm xăng & giao thông
+            'gas_station': 'gas_station',
+            'petrol': 'gas_station',
+            'parking': 'parking',
+            'bus_station': 'bus_station',
+            'transit_station': 'transit_station',
+            'subway_station': 'subway_station',
+            'train_station': 'train_station',
+            
+            # Cửa hàng tiện lợi & siêu thị
+            'convenience_store': 'convenience_store',
+            'supermarket': 'supermarket',
+            'grocery_store': 'grocery_store',
+            
+            # Dịch vụ công cộng
+            'restroom': 'restroom',
+            'toilet': 'restroom',
+            'public_restroom': 'restroom',
+            'post_office': 'post_office',
+            
+            # Dịch vụ khác
+            'laundry': 'laundry',
+            'car_wash': 'car_wash',
+            'ev_charging': 'electric_vehicle_charging_station'
+        }
+        
+        place_type = service_type_map.get(service_type.lower(), service_type)
+        
+        # Google Places API (New) - Nearby Search endpoint
+        url = "https://places.googleapis.com/v1/places:searchNearby"
+        
+        # Build request body
+        request_body = {
+            "locationRestriction": {
+                "circle": {
+                    "center": {
+                        "latitude": lat,
+                        "longitude": lng
+                    },
+                    "radius": radius_km * 1000  # Convert km to meters
+                }
+            },
+            "includedTypes": [place_type],
+            "maxResultCount": 10,
+            "languageCode": "vi"
+        }
+        
+        # Headers for Places API (New)
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.types,places.currentOpeningHours"
+        }
+        
+        print(f"   🚨 Calling Google Places API (New) for {service_type}: radius={radius_km}km")
+        
+        response = requests.post(url, json=request_body, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"   ⚠️ Google Places API (New) error: {response.status_code}")
+            print(f"   Response: {response.text[:200]}")
+            return _find_emergency_from_database(current_location, service_type, radius_km)
+        
+        data = response.json()
+        
+        # Check if we have places in the response
+        if not data.get('places'):
+            print(f"   ⚠️ No emergency services found")
+            return _find_emergency_from_database(current_location, service_type, radius_km)
+        
+        places = data.get('places', [])
+        
+        # Format results for Places API (New)
         services = []
         for place in places:
-            if 'location' not in place or 'coordinates' not in place['location']:
+            # Get location from new API format
+            location = place.get('location', {})
+            place_lat = location.get('latitude')
+            place_lng = location.get('longitude')
+            
+            if not place_lat or not place_lng:
                 continue
             
-            place_lng, place_lat = place['location']['coordinates']
-            # Calculate distance directly (Haversine formula)
+            # Calculate distance
             import math
             lat1, lon1 = lat, lng
             lat2, lon2 = place_lat, place_lng
@@ -866,16 +1105,130 @@ def find_emergency_services(
             c = 2 * math.asin(math.sqrt(a))
             distance = round(c * 6371, 2)  # Earth radius in km
             
-            place['distance_km'] = distance
-            services.append(place)
+            # Extract display name (new API format)
+            display_name = place.get('displayName', {})
+            name = display_name.get('text', 'Unknown') if isinstance(display_name, dict) else 'Unknown'
+            
+            # Extract opening hours
+            opening_hours = place.get('currentOpeningHours', {})
+            open_now = opening_hours.get('openNow') if opening_hours else None
+            
+            formatted_service = {
+                'name': name,
+                'place_id': place.get('id', '').replace('places/', ''),
+                'address': place.get('formattedAddress', ''),
+                'rating': place.get('rating', 0),
+                'user_ratings_total': place.get('userRatingCount', 0),
+                'types': place.get('types', []),
+                'location': {
+                    'type': 'Point',
+                    'coordinates': [place_lng, place_lat]
+                },
+                'distance_km': distance,
+                'opening_hours': {
+                    'open_now': open_now
+                } if open_now is not None else None,
+                'service_type': service_type,
+                'source': 'google_places_api_new'
+            }
+            
+            services.append(formatted_service)
         
-        # Sort by distance and return top 5
+        # Sort by distance
         services.sort(key=lambda x: x['distance_km'])
         
+        print(f"   ✅ Found {len(services[:5])} emergency services from Google Places API (New)")
         return services[:5]
         
     except Exception as e:
-        print(f"Error finding emergency services: {e}")
+        print(f"   ❌ Error calling Google Places API: {e}")
+        print(f"   🔄 Falling back to database search")
+        return _find_emergency_from_database(current_location, service_type, radius_km)
+
+
+def _find_emergency_from_database(
+    current_location: Dict[str, float],
+    service_type: str = "hospital",
+    radius_km: float = 5.0
+) -> List[Dict]:
+    """
+    Fallback: Tìm dịch vụ tiện ích & khẩn cấp từ database khi Google Places API không khả dụng.
+    """
+    try:
+        # Map service types to database place types
+        service_map = {
+            # Dịch vụ y tế
+            'hospital': ['hospital', 'clinic'],
+            'pharmacy': ['pharmacy', 'drug_store'],
+            
+            # Dịch vụ tài chính
+            'atm': ['atm', 'bank'],
+            
+            # Dịch vụ an ninh
+            'police': ['police'],
+            'fire_station': ['fire_station'],
+            
+            # Trạm xăng & giao thông
+            'gas_station': ['gas_station'],
+            'parking': ['parking'],
+            'bus_station': ['bus_station', 'transit_station'],
+            'subway_station': ['subway_station'],
+            'train_station': ['train_station'],
+            
+            # Cửa hàng tiện lợi
+            'convenience_store': ['convenience_store', 'supermarket'],
+            'supermarket': ['supermarket'],
+            
+            # Dịch vụ công cộng
+            'public_restroom': ['restroom', 'toilet'],
+            'post_office': ['post_office']
+        }
+        
+        types = service_map.get(service_type.lower(), [service_type])
+        
+        lat = current_location.get('lat')
+        lng = current_location.get('lng')
+        
+        if not lat or not lng:
+            return []
+        
+        # Get places matching service types from database
+        query = {'type': {'$in': types}}
+        places = list(places_collection.find(query, {"_id": 0}))
+        
+        # Calculate distance and filter
+        services = []
+        for place in places:
+            if 'location' not in place or 'coordinates' not in place['location']:
+                continue
+            
+            place_lng, place_lat = place['location']['coordinates']
+            
+            # Calculate distance (Haversine formula)
+            import math
+            lat1, lon1 = lat, lng
+            lat2, lon2 = place_lat, place_lng
+            lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+            a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+            c = 2 * math.asin(math.sqrt(a))
+            distance = round(c * 6371, 2)  # Earth radius in km
+            
+            if distance <= radius_km:
+                place['distance_km'] = distance
+                place['service_type'] = service_type
+                place['source'] = 'database'
+                services.append(place)
+        
+        # Sort by distance
+        services.sort(key=lambda x: x['distance_km'])
+        
+        print(f"   ✅ Found {len(services[:5])} emergency services from database (fallback)")
+        return services[:5]
+        
+    except Exception as e:
+        print(f"   ❌ Error searching database: {e}")
         return []
 
 # Export all tools for LangGraph

@@ -17,6 +17,7 @@ export interface UseLocationReturn {
   error: string | null;
   requestLocation: () => Promise<LocationCoordinates | null>;
   hasPermission: boolean;
+  isInitialized: boolean; // Track if initial auto-request is complete
 }
 
 export const useLocation = (): UseLocationReturn => {
@@ -24,51 +25,38 @@ export const useLocation = (): UseLocationReturn => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasPermission, setHasPermission] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
-  // Check permission on mount
+  // Auto-request permission and get location on mount (silent check only)
   useEffect(() => {
-    checkPermission();
+    checkInitialPermission();
   }, []);
 
-  const checkPermission = async () => {
+  const checkInitialPermission = async () => {
     try {
+      // Only CHECK permission, don't request yet
       const { status } = await Location.getForegroundPermissionsAsync();
-      console.debug('[useLocation] Permission status:', status);
-      setHasPermission(status === 'granted');
+      console.debug('[useLocation] Initial permission status:', status);
+
+      if (status === 'granted') {
+        setHasPermission(true);
+        // If already granted, fetch location automatically
+        await fetchCurrentLocation();
+      } else {
+        setHasPermission(false);
+      }
     } catch (err: any) {
-      console.error('[useLocation] Permission check error:', err);
-      setError('Không thể kiểm tra quyền GPS');
+      console.error('[useLocation] Initial permission check error:', err);
+    } finally {
+      setIsInitialized(true);
     }
   };
 
-  const requestLocation = useCallback(async (): Promise<LocationCoordinates | null> => {
-    setLoading(true);
-    setError(null);
-
+  const fetchCurrentLocation = async (): Promise<LocationCoordinates | null> => {
     try {
-      // Request permission if not granted
-      let { status } = await Location.getForegroundPermissionsAsync();
-
-      if (status !== 'granted') {
-        const result = await Location.requestForegroundPermissionsAsync();
-        status = result.status;
-      }
-
-      if (status !== 'granted') {
-        const msg = 'Quyền truy cập GPS bị từ chối';
-        setError(msg);
-        setHasPermission(false);
-        console.warn('[useLocation]', msg);
-        return null;
-      }
-
-      setHasPermission(true);
-
-      // Get current location
-      console.debug('[useLocation] Requesting location with High accuracy...');
+      console.debug('[useLocation] Fetching current location...');
       const currentLocation = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
-        timeout: 15000,
         maximumAge: 0,
       });
 
@@ -90,6 +78,42 @@ export const useLocation = (): UseLocationReturn => {
       setLocation(coords);
       return coords;
     } catch (err: any) {
+      const errMsg = err?.message || 'Không thể lấy vị trí';
+      console.error('[useLocation] Fetch location error:', errMsg);
+      throw err;
+    }
+  };
+
+  const requestLocation = useCallback(async (): Promise<LocationCoordinates | null> => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Check current permission status
+      let { status } = await Location.getForegroundPermissionsAsync();
+      console.debug('[useLocation] Current permission status:', status);
+
+      // REQUEST permission if not granted (this will show the popup!)
+      if (status !== 'granted') {
+        console.debug('[useLocation] Requesting GPS permission...');
+        const result = await Location.requestForegroundPermissionsAsync();
+        status = result.status;
+        console.debug('[useLocation] Permission request result:', status);
+      }
+
+      if (status !== 'granted') {
+        const msg = 'Quyền truy cập GPS bị từ chối';
+        setError(msg);
+        setHasPermission(false);
+        console.warn('[useLocation]', msg);
+        return null;
+      }
+
+      setHasPermission(true);
+
+      // Fetch and return current location
+      return await fetchCurrentLocation();
+    } catch (err: any) {
       const errMsg = err?.message || 'Không thể lấy vị trí hiện tại';
       console.error('[useLocation] Error:', errMsg);
       setError(errMsg);
@@ -105,6 +129,7 @@ export const useLocation = (): UseLocationReturn => {
     error,
     requestLocation,
     hasPermission,
+    isInitialized,
   };
 };
 

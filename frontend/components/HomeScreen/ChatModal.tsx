@@ -228,6 +228,30 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
       return;
     }
 
+    // Check if message is asking for nearby places
+    const isLocationQuery =
+      message.toLowerCase().includes('gần') ||
+      message.toLowerCase().includes('nearby') ||
+      message.toLowerCase().includes('xung quanh') ||
+      message.toLowerCase().includes('quanh đây') ||
+      message.toLowerCase().includes('ở đây');
+
+    // If asking for nearby places but no location yet, request it now
+    let currentLocation = location;
+    if (isLocationQuery && !location) {
+      console.debug('[ChatModal] Location query detected, requesting GPS permission...');
+      try {
+        currentLocation = await requestLocation();
+        if (!currentLocation) {
+          // Permission denied or error - let backend handle it with the message
+          console.warn('[ChatModal] Could not get location, proceeding without it');
+        }
+      } catch (err) {
+        console.error('[ChatModal] Error requesting location:', err);
+        // Continue anyway, backend will prompt user
+      }
+    }
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -247,8 +271,16 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
         try {
           const requestBody: any = { message, sessionId };
 
-          // Start location is now handled through chat messages, not input field
-          // Agent will ask user for start location in conversation
+          // If user is asking location-based questions and we have GPS location, send it
+          if (currentLocation && isLocationQuery) {
+            requestBody.context = {
+              current_location: {
+                lat: currentLocation.latitude,
+                lng: currentLocation.longitude
+              }
+            };
+            console.debug('[ChatModal] Sending current_location:', requestBody.context.current_location);
+          }
 
           console.debug('Sending chat request', requestBody);
           const response = await fetch(`${API_BASE_URL}/api/v1/ai/chat`, {
