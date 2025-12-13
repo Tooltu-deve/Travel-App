@@ -580,11 +580,10 @@ export const likePlaceAPI = async (
 export const getLikedPlacesAPI = async (
   token: string,
 ): Promise<Array<{
-  id: string;
-  name: string;
-  address: string;
-  mood: string;
-  rating: number | null;
+  place_id: string;
+  type: string;
+  opening_hours: any;
+  is_stub: boolean;
 }>> => {
   return makeRequest<Array<{
     id: string;
