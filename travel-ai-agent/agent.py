@@ -653,8 +653,9 @@ def profile_collector_node(state: TravelState) -> TravelState:
     # Extract info from user message
     user_text = last_message.lower()
     
-    # Debug: Track destination preservation
+    # Debug: Track destination AND departure preservation
     print(f"   📍 STATE INPUT - destination: {preferences.destination}, start_location: {preferences.start_location}, departure: {preferences.departure_location}")
+    print(f"   📍 AFTER COPY - updated_preferences.departure_location: {updated_preferences.departure_location}")
     
     # CRITICAL: Detect confirmation responses (user answering "yes" to our question)
     # Only consider as confirmation if:
@@ -774,6 +775,10 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.group_type = "family"
     elif any(word in user_text for word in ["bạn bè", "nhóm", "đồng nghiệp"]):
         updated_preferences.group_type = "friends"
+    # Preserve existing group_type if already set and not detected in current message
+    elif preferences.group_type:
+        updated_preferences.group_type = preferences.group_type
+        print(f"   🔄 PRESERVED group_type from state: {preferences.group_type}")
         
     # Duration detection FIRST - support 1-7+ days with regex
     # Try regex pattern first for flexible number detection (e.g., "4 ngày", "5 ngày 4 đêm")
@@ -805,6 +810,10 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.duration = "6_days"
     elif any(word in user_text for word in ["bảy ngày", "tuần", "1 tuần"]):
         updated_preferences.duration = "7_days"
+    # Preserve existing duration if already set and not detected in current message
+    elif preferences.duration:
+        updated_preferences.duration = preferences.duration
+        print(f"   🔄 PRESERVED duration from state: {preferences.duration}")
     
     # NOW Budget detection AFTER duration is known
     # This way we can calculate per-day budget correctly
@@ -855,13 +864,66 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.budget_range = "budget"
     elif any(word in user_text for word in ["cao cấp", "sang", "luxury", "đắt tiền"]):
         updated_preferences.budget_range = "luxury"
+    # Preserve existing budget_range if already set and not detected in current message
+    elif preferences.budget_range:
+        updated_preferences.budget_range = preferences.budget_range
+        print(f"   🔄 PRESERVED budget_range from state: {preferences.budget_range}")
     
     # NOTE: Do NOT set default budget_range here - let it remain None
     # This ensures the assistant will ask the user to specify their budget
     
-    # Determine next stage
-    # Use destination field, fallback to start_location for backward compatibility
+    # DEPARTURE LOCATION DETECTION - Do this FIRST before any checks
+    # This allows capturing departure even when user provides all info at once
     has_destination = updated_preferences.destination or updated_preferences.start_location
+    if not updated_preferences.departure_location and has_destination:
+        # Look for departure location patterns in the message
+        # Patterns: "xuất phát từ X", "khởi hành từ X", "từ X", "ở X"
+        departure_patterns = [
+            r'xuất phát từ\s+([^,\.]+)',
+            r'khởi hành từ\s+([^,\.]+)',
+            r'bắt đầu từ\s+([^,\.]+)',
+            r'từ\s+([^,\.]+?)(?:\s*,|\s+đến|\s+đi)',  # "từ X, đi Y" or "từ X đi Y"
+        ]
+        
+        location_captured = False
+        for pattern in departure_patterns:
+            match = re.search(pattern, user_text, re.IGNORECASE)
+            if match:
+                potential_departure = match.group(1).strip()
+                
+                # Check if it's a known city
+                for dest_name, keywords in destination_keywords.items():
+                    if any(keyword in potential_departure.lower() for keyword in keywords):
+                        updated_preferences.departure_location = dest_name
+                        print(f"   ✅ CAPTURED departure from pattern '{pattern}': {dest_name}")
+                        location_captured = True
+                        break
+                
+                # If not a known city, treat as address
+                if not location_captured:
+                    updated_preferences.departure_location = potential_departure
+                    print(f"   ✅ CAPTURED departure address from pattern: '{potential_departure}'")
+                    
+                    # Try geocoding
+                    destination_context = updated_preferences.destination or updated_preferences.start_location
+                    if destination_context:
+                        geocoded = geocode_location(potential_departure, destination_context)
+                        if geocoded:
+                            updated_preferences.departure_coordinates = {"lat": geocoded['lat'], "lng": geocoded['lng']}
+                            print(f"   ✅ Geocoded to: ({geocoded['lat']}, {geocoded['lng']})")
+                    location_captured = True
+                break
+    
+    # DEBUG: Check all fields AFTER departure detection
+    print(f"   🔍 AFTER DEPARTURE DETECTION:")
+    print(f"      destination: {updated_preferences.destination}")
+    print(f"      departure_location: {updated_preferences.departure_location}")
+    print(f"      duration: {updated_preferences.duration}")
+    print(f"      group_type: {updated_preferences.group_type}")
+    print(f"      budget_range: {updated_preferences.budget_range}")
+    print(f"      user_mood: {updated_preferences.user_mood}")
+    
+    # NOW check if info is complete AFTER all detections
     is_info_complete = all([
         has_destination,  # MUST have destination!
         updated_preferences.departure_location,  # MUST have start location!
@@ -871,9 +933,9 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.user_mood  # MUST have mood! (affects ECS threshold)
     ])
     
-    # If user confirmed with complete info, go straight to planning
-    if is_confirmation and has_destination and is_info_complete:
-        print(f"   🚀 User confirmed with complete info → Going to planning")
+    # If all info is complete, go straight to planning
+    if is_info_complete:
+        print(f"   🚀 All info complete → Going to planning")
         
         return {
             **state,
@@ -892,22 +954,6 @@ def profile_collector_node(state: TravelState) -> TravelState:
         missing_fields.append("điểm đến (bạn muốn đi đâu?)")
     elif not updated_preferences.departure_location:
         missing_fields.append("điểm xuất phát (khởi hành từ đâu?)")
-        # CAPTURE LOGIC: Only capture if we have 2+ messages (meaning LLM already asked for departure)
-        # Don't capture on first exchange when we just asked for destination
-        if len(state["messages"]) > 1 and not preferences.departure_location:
-            # User is responding to "where are you starting from?" question
-            # Try to geocode and save their answer
-            destination_context = updated_preferences.destination or updated_preferences.start_location
-            if destination_context:  # Only geocode if we have destination context
-                geocoded = geocode_location(last_message, destination_context)
-                if geocoded:
-                    updated_preferences.departure_location = last_message.strip()
-                    updated_preferences.departure_coordinates = {"lat": geocoded['lat'], "lng": geocoded['lng']}
-                    print(f"   ✅ CAPTURED start location: '{last_message}' → ({geocoded['lat']}, {geocoded['lng']})")
-                else:
-                    # Geocoding failed but save anyway
-                    updated_preferences.departure_location = last_message.strip()
-                    print(f"   ⚠️  Geocoding failed, saved as: '{last_message}'")
     elif not updated_preferences.duration:
         missing_fields.append("thời gian (mấy ngày?)")
     elif not updated_preferences.group_type:
@@ -919,47 +965,61 @@ def profile_collector_node(state: TravelState) -> TravelState:
         missing_fields.append("tâm trạng/mood (yên tĩnh, náo nhiệt, lãng mạn...)")
     
     missing_info = ", ".join(missing_fields) if missing_fields else "Đã đủ"
+    print(f"   🔍 MISSING INFO STRING: '{missing_info}' (fields: {missing_fields})")
+    
+    # Build list of CONFIRMED fields (already have values)
+    confirmed_fields = []
+    if updated_preferences.destination or updated_preferences.start_location:
+        confirmed_fields.append(f"✅ Điểm đến: {updated_preferences.destination or updated_preferences.start_location}")
+    if updated_preferences.departure_location:
+        confirmed_fields.append(f"✅ Điểm xuất phát: {updated_preferences.departure_location}")
+    if updated_preferences.duration:
+        confirmed_fields.append(f"✅ Thời gian: {updated_preferences.duration}")
+    if updated_preferences.group_type:
+        confirmed_fields.append(f"✅ Nhóm đi: {updated_preferences.group_type}")
+    if updated_preferences.budget_range:
+        confirmed_fields.append(f"✅ Ngân sách: {updated_preferences.budget_range}")
+    if updated_preferences.user_mood:
+        confirmed_fields.append(f"✅ Tâm trạng: {updated_preferences.user_mood}")
+    
+    confirmed_str = "\n".join(confirmed_fields) if confirmed_fields else "Chưa có thông tin nào"
     
     # Create mood options string for system prompt
     mood_options_str = "\n".join([f"  - {mood}" for mood in AVAILABLE_MOODS])
     
     system_prompt = f"""
-    Bạn là một AI travel assistant thông minh. Nhiệm vụ của bạn là thu thập thông tin về sở thích du lịch của khách hàng một cách tự nhiên.
+    Bạn là một AI travel assistant thông minh. Nhiệm vụ của bạn là thu thập thông tin về sở thích du lịch của khách hàng. Hỏi thông tin một cách lịch sự rõ ràng từng thông tin.
     
-    Thông tin hiện tại về khách hàng:
-    - Điểm đến: {updated_preferences.destination or updated_preferences.start_location or "Chưa biết"}
-    - Điểm xuất phát/khởi hành: {updated_preferences.departure_location or "Chưa biết"} ⭐ (BẮT BUỘC - nơi khách bắt đầu chuyến đi)
-    - Nhóm đi: {updated_preferences.group_type or "Chưa biết"}  
-    - Ngân sách: {updated_preferences.budget_range or "Chưa biết"} ⭐ (CẦN THIẾT - ảnh hưởng đến lựa chọn địa điểm và quán ăn)
-    - Thời gian: {updated_preferences.duration or "Chưa biết"}
-    - Tâm trạng/Mood: {updated_preferences.user_mood or "Chưa biết"} ⭐ (ĐẶC BIỆT QUAN TRỌNG - ảnh hưởng đến chất lượng lộ trình)
+    ✅ THÔNG TIN ĐÃ CÓ (ĐỪNG HỎI LẠI), HỎI MỘT CÁCH LỊCH SỰ :
+{confirmed_str}
     
-    Các ngân sách có sẵn:
-    - "Tiết kiệm" (< 1 triệu VND/ngày): quán ăn bình dân, chỗ ở rẻ
-    - "Trung bình" (1-3 triệu VND/ngày): quán ăn 3-4 sao, khách sạn 2-3 sao
-    - "Cao cấp" (> 3 triệu VND/ngày): quán hàng đầu, khách sạn 4-5 sao
+    ❌ THÔNG TIN CÒN THIẾU (CẦN HỎI):
+    {missing_info}
     
-    Các mood có sẵn (hãy giúp khách chọn một):
+    📝 CÁC NGÂN SÁCH:
+    - Hỏi về số tiền để phân loại thành "tiết kiệm", "trung bình", "cao cấp"
+    - Ví dụ: "Ngân sách của bạn ở mức nào? khoảng bao nhiêu tiền"
+    
+    🎭 CÁC TÂM TRẠNG/MOOD:
 {mood_options_str}
     
     Tin nhắn mới nhất của khách: "{last_message}"
     
-    Thông tin còn thiếu: {missing_info}
+    ⚠️ QUY TẮC BẮT BUỘC:
+    1. TUYỆT ĐỐI KHÔNG hỏi lại các trường đã có dấu ✅ ở trên
+    2. CHỈ hỏi về trường đầu tiên trong "THÔNG TIN CÒN THIẾU"
+    3. Hỏi một cách tự nhiên, thân thiện
+    4. Nếu "THÔNG TIN CÒN THIẾU" = "Đã đủ" → Nói sẽ tạo lộ trình
     
-    HƯỚNG DẪN:
-    - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ tất cả thông tin → Nói sẽ tạo lộ trình
-    - Nếu còn thiếu thông tin → Hỏi những trường còn thiếu một cách tự nhiên
-    - ⭐ HỎI TUẦN TỰ - Chỉ hỏi MỘT trường còn thiếu duy nhất, không hỏi nhiều cái cùng lúc!
-    - ⭐ ĐIỂM XUẤT PHÁT là BẮT BUỘC - không được bỏ qua! Nếu khách chưa nói → hỏi cụ thể: "Chuyến đi này bạn sẽ khởi hành từ đâu? (ví dụ: Hà Nội, quận 1, nhà sân bay...)"
-    - ⭐ NGÂN SÁCH là BẮT BUỘC - không được bỏ qua! Nếu khách chưa nói → hỏi cụ thể: "Bạn có ngân sách bao nhiêu cho chuyến du lịch này?"
-    - ⭐ Tâm trạng/MOOD phải HỎI CUỐI CÙNG, sau khi tất cả các trường khác (điểm đến, điểm xuất phát, thời gian, nhóm đi, ngân sách) đã có!
-    - Tâm trạng/mood ảnh hưởng trực tiếp đến mức độ chất lượng của các địa điểm được chọn
-    - Hỏi tự nhiên, thân thiện, lồng ghép các câu hỏi
-    - Khi hỏi về tâm trạng/mood, giới thiệu ngắn gọn các lựa chọn
-    - Ví dụ: "Bạn muốn đi với tâm trạng nào - yên tĩnh & thư giãn, náo nhiệt & xã hội, hay mạo hiểm & thú vị?"
-    - Chỉ hỏi những trường CHƯA CÓ, không hỏi lại những trường đã có
+    💡 Ví dụ câu hỏi:
+    - Điểm đến: "Bạn muốn đi đâu?"
+    - Điểm xuất phát: "Chuyến đi này bạn sẽ khởi hành từ đâu?"
+    - Thời gian: "Bạn dự định đi mấy ngày?"
+    - Nhóm đi: "Bạn đi với ai? Một mình, cặp đôi, gia đình hay bạn bè?"
+    - Ngân sách: "Ngân sách của bạn ở mức nào? Tiết kiệm, trung bình hay cao cấp?"
+    - Tâm trạng: "Bạn muốn đi với tâm trạng nào? Yên tĩnh & thư giãn, náo nhiệt & xã hội, hay mạo hiểm & khám phá?"
     
-    Trả lời bằng tiếng Việt, thân thiện.
+    Trả lời ngắn gọn, tự nhiên bằng tiếng Việt.
     """
     
     response = llm.invoke([
