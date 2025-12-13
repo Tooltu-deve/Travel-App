@@ -6,5 +6,8 @@ export class AutocompleteRequestDto {
 
   @IsOptional()
   sessionToken?: string;
+
+  @IsOptional()
+  destination?: string;
 }
 

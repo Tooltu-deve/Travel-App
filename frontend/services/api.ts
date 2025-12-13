@@ -1064,6 +1064,7 @@ export const calculateRoutesAPI = async (
 export const autocompletePlacesAPI = async (
   input: string,
   sessionToken?: string,
+  destination?: string,
   token?: string
 ): Promise<any> => {
   try {
@@ -1081,6 +1082,7 @@ export const autocompletePlacesAPI = async (
       body: JSON.stringify({
         input,
         sessionToken,
+        destination,
       }),
     });
 
