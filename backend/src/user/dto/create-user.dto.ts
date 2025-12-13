@@ -27,4 +27,14 @@ export class CreateUserDto {
   @IsOptional()
   @IsString()
   facebookId?: string;
+
+  @IsOptional()
+  isVerified?: boolean;
+
+  @IsOptional()
+  @IsString()
+  verificationToken?: string;
+
+  @IsOptional()
+  verificationTokenExpiry?: Date;
 }

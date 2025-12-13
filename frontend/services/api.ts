@@ -22,11 +22,13 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Render Cloud URL
-
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
 // ============================================
 // TYPES
 // ============================================
+
+// Export API_BASE_URL để các component khác có thể dùng
+export { API_BASE_URL };
 interface LoginRequest {
   email: string;
   password: string;
@@ -109,7 +111,11 @@ export interface TravelRoute {
   destination?: string;
   duration_days?: number;
   start_datetime?: string | null;
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  start_location?: {
+    lat: number;
+    lng: number;
+  };
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   route_data_json: any;
   id: string;
 }
@@ -117,6 +123,29 @@ export interface TravelRoute {
 interface GenerateRouteResponse {
   message: string;
   route: TravelRoute;
+}
+
+// Notification types
+export type NotificationType = 'favorite' | 'itinerary' | 'account' | 'system';
+export type EntityType = 'place' | 'itinerary' | 'system' | null;
+
+export interface Notification {
+  _id: string;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  message?: string;
+  entity_type?: EntityType;
+  entity_id?: string | null;
+  route_id?: string | null;
+  is_read: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface GetNotificationsParams {
+  isRead?: boolean;
+  type?: NotificationType;
 }
 
 // ============================================
@@ -148,18 +177,30 @@ const makeRequest = async <T>(
     const text = await response.text();
     console.log('📄 Response Text:', text.substring(0, 200));
 
-    if (!response.ok) {
-      console.error('❌ HTTP Error:', response.status, response.statusText);
+    // Handle 204 No Content - no response body to parse
+    if (response.status === 204) {
+      console.log('✅ API Response: 204 No Content');
+      return undefined as T;
     }
 
+    // Parse JSON response
+    let data: any;
     try {
-      const data = JSON.parse(text);
+      data = JSON.parse(text);
       console.log('✅ API Response:', data);
-      return data as T;
     } catch (e) {
       console.error('❌ JSON Parse Error. Response was:', text);
       throw new Error('Server returned non-JSON response. Backend might not be running or endpoint is wrong.');
     }
+
+    // Check if response is not ok - throw error with message from server
+    if (!response.ok) {
+      console.error('❌ HTTP Error:', response.status, response.statusText);
+      const errorMessage = data?.message || data?.error?.message || data?.error || `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(errorMessage);
+    }
+
+    return data as T;
   } catch (error) {
     console.error('❌ API Error:', error);
     throw error;
@@ -211,6 +252,21 @@ export const registerAPI = async (
   return makeRequest<RegisterResponse>('/api/v1/auth/register', {
     method: 'POST',
     body: JSON.stringify({ fullName, email, password }),
+  });
+};
+
+/**
+ * resendVerificationAPI: Gửi lại email xác thực
+ * 
+ * @param email - Email cần gửi lại verification
+ * @returns Success message
+ */
+export const resendVerificationAPI = async (
+  email: string
+): Promise<{ success: boolean; message: string }> => {
+  return makeRequest<{ success: boolean; message: string }>('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
   });
 };
 
@@ -303,7 +359,7 @@ export const generateRouteAPI = async (
  * 
  * @param token - JWT token
  * @param routeId - ID của lộ trình
- * @param status - Trạng thái mới: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED'
+ * @param status - Trạng thái mới: 'DRAFT' | 'CONFIRMED' | 'MAIN'
  * @returns Response với thông tin lộ trình đã cập nhật
  * 
  * Endpoint: PATCH /api/v1/routes/:routeId/status
@@ -312,7 +368,7 @@ export const generateRouteAPI = async (
  * Response: { message, route }
  */
 interface UpdateRouteStatusPayload {
-  status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
   title?: string;
 }
 
@@ -359,11 +415,59 @@ export const deleteRouteAPI = async (
  */
 export const getRoutesAPI = async (
   token: string,
-  status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
 ): Promise<{ message: string; routes: TravelRoute[]; total: number }> => {
   const query = status ? `?status=${status}` : '';
   return makeRequest<{ message: string; routes: TravelRoute[]; total: number }>(
     `/api/v1/itineraries${query}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
+ * getRouteByIdAPI: Lấy chi tiết đầy đủ một lộ trình
+ *
+ * @param token JWT token
+ * @param routeId ID của lộ trình
+ * @returns Chi tiết đầy đủ lộ trình
+ */
+export const getRouteByIdAPI = async (
+  token: string,
+  routeId: string,
+): Promise<{ route: TravelRoute }> => {
+  return makeRequest<{ route: TravelRoute }>(
+    `/api/v1/itineraries/${routeId}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+};
+
+/**
+ * getItineraryAPI: Lấy chi tiết một itinerary cụ thể
+ *
+ * @param token JWT token
+ * @param itineraryId ID của itinerary
+ * @returns Chi tiết itinerary bao gồm status
+ *
+ * Endpoint: GET /api/v1/itineraries/:id
+ * Headers: Authorization: Bearer <token>
+ * Response: { message, status, ... }
+ */
+export const getItineraryAPI = async (
+  token: string,
+  itineraryId: string,
+): Promise<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';[key: string]: any }> => {
+  return makeRequest<{ message?: string; status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED';[key: string]: any }>(
+    `/api/v1/itineraries/${itineraryId}`,
     {
       method: 'GET',
       headers: {
@@ -500,6 +604,105 @@ export const getLikedPlacesAPI = async (
 };
 
 /**
+ * getProfileAPI: Lấy thông tin profile của user hiện tại
+ * 
+ * @param token - JWT token
+ * @returns Profile với email, full_name, preferenced_tags
+ * 
+ * Endpoint: GET /users/profile
+ * Headers: Authorization: Bearer <token>
+ * Response: { email, full_name, preferenced_tags }
+ */
+export const getProfileAPI = async (
+  token: string,
+): Promise<{
+  email: string;
+  full_name: string;
+  preferenced_tags: string[];
+}> => {
+  return makeRequest<{
+    email: string;
+    full_name: string;
+    preferenced_tags: string[];
+  }>('/api/v1/users/profile', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * updateProfileAPI: Cập nhật emotional tags của user
+ * 
+ * @param token - JWT token
+ * @param preferencedTags - Array các emotional tags
+ * @returns Profile đã cập nhật
+ * 
+ * Endpoint: PATCH /users/profile
+ * Headers: Authorization: Bearer <token>
+ * Request: { preferencedTags: string[] }
+ * Response: { email, full_name, preferenced_tags }
+ */
+export const updateProfileAPI = async (
+  token: string,
+  preferencedTags: string[],
+): Promise<{
+  email: string;
+  full_name: string;
+  preferenced_tags: string[];
+}> => {
+  return makeRequest<{
+    email: string;
+    full_name: string;
+    preferenced_tags: string[];
+  }>('/api/v1/users/profile', {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ preferencedTags }),
+  });
+};
+
+/**
+ * changePasswordAPI: Đổi mật khẩu cho user đang đăng nhập
+ * 
+ * @param token - JWT token
+ * @param data - Object chứa currentPassword và newPassword
+ * @returns Message từ backend
+ * 
+ * Endpoint: POST /api/v1/auth/change-password
+ * Headers: Authorization: Bearer <token>
+ * Request: { currentPassword, newPassword }
+ * Response: { message }
+ */
+export const changePasswordAPI = async (
+  token: string,
+  data: { currentPassword: string; newPassword: string },
+): Promise<{ message: string }> => {
+  const url = `${API_BASE_URL}/api/v1/auth/change-password`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    // Throw error với message từ backend
+    throw new Error(result.message || 'Lỗi đổi mật khẩu');
+  }
+
+  return result;
+};
+
+/**
  * getPlaceByIdAPI: Lấy chi tiết place theo internal DB id (`placeId` / `_id`)
  * Public endpoint: GET /api/v1/places/:id
  */
@@ -512,6 +715,33 @@ export const getPlaceByIdAPI = async (
 };
 
 /**
+ * enrichPlaceAPI: Enrich POI với thông tin chi tiết từ Google Places API
+ * Protected endpoint: POST /api/v1/places/enrich
+ * Requires: Bearer token
+ * 
+ * @param token - JWT token
+ * @param googlePlaceId - Google Place ID của địa điểm
+ * @param forceRefresh - Force refresh dữ liệu (optional, default: false)
+ * @returns Enriched POI data
+ */
+export const enrichPlaceAPI = async (
+  token: string,
+  googlePlaceId: string,
+  forceRefresh: boolean = false
+): Promise<any> => {
+  return makeRequest<any>('/api/v1/places/enrich', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      googlePlaceId,
+      forceRefresh,
+    }),
+  });
+};
+
+/**
  * getPlacesAPI: Lấy danh sách địa điểm từ server
  * Public endpoint: GET /api/v1/places
  */
@@ -519,6 +749,425 @@ export const getPlacesAPI = async (): Promise<any[]> => {
   return makeRequest<any[]>('/api/v1/places', {
     method: 'GET',
   });
+};
+
+/**
+ * getNotificationsAPI: Lấy danh sách thông báo của user
+ * 
+ * @param token JWT token
+ * @param params Filter parameters (isRead, type)
+ * @returns Array of notifications
+ * 
+ * Endpoint: GET /api/v1/notifications
+ * Headers: Authorization: Bearer <token>
+ * Query: ?isRead=true&type=favorite
+ * Response: Notification[]
+ */
+export const getNotificationsAPI = async (
+  token: string,
+  params?: GetNotificationsParams,
+): Promise<Notification[]> => {
+  const queryParams = new URLSearchParams();
+  if (params?.isRead !== undefined) {
+    queryParams.append('isRead', params.isRead.toString());
+  }
+  if (params?.type) {
+    queryParams.append('type', params.type);
+  }
+  const query = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+  return makeRequest<Notification[]>(`/api/v1/notifications${query}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * getUnreadCountAPI: Lấy số lượng thông báo chưa đọc
+ * 
+ * @param token JWT token
+ * @returns Count of unread notifications
+ * 
+ * Endpoint: GET /api/v1/notifications/unread-count
+ * Headers: Authorization: Bearer <token>
+ * Response: { count: number }
+ */
+export const getUnreadCountAPI = async (
+  token: string,
+): Promise<{ count: number }> => {
+  return makeRequest<{ count: number }>('/api/v1/notifications/unread-count', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * markNotificationAsReadAPI: Đánh dấu một thông báo là đã đọc
+ * 
+ * @param token JWT token
+ * @param notificationId ID của thông báo
+ * 
+ * Endpoint: PATCH /api/v1/notifications/:id/read
+ * Headers: Authorization: Bearer <token>
+ * Response: 204 No Content
+ */
+export const markNotificationAsReadAPI = async (
+  token: string,
+  notificationId: string,
+): Promise<void> => {
+  return makeRequest<void>(`/api/v1/notifications/${notificationId}/read`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * markAllNotificationsAsReadAPI: Đánh dấu tất cả thông báo là đã đọc
+ * 
+ * @param token JWT token
+ * 
+ * Endpoint: PATCH /api/v1/notifications/read-all
+ * Headers: Authorization: Bearer <token>
+ * Response: 204 No Content
+ */
+export const markAllNotificationsAsReadAPI = async (
+  token: string,
+): Promise<void> => {
+  return makeRequest<void>('/api/v1/notifications/read-all', {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * deleteNotificationAPI: Xóa một thông báo
+ * 
+ * @param token JWT token
+ * @param notificationId ID của thông báo
+ * 
+ * Endpoint: DELETE /api/v1/notifications/:id
+ * Headers: Authorization: Bearer <token>
+ * Response: 204 No Content
+ */
+export const deleteNotificationAPI = async (
+  token: string,
+  notificationId: string,
+): Promise<void> => {
+  return makeRequest<void>(`/api/v1/notifications/${notificationId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * deleteAllNotificationsAPI: Xóa tất cả thông báo
+ * 
+ * @param token JWT token
+ * 
+ * Endpoint: DELETE /api/v1/notifications
+ * Headers: Authorization: Bearer <token>
+ * Response: 204 No Content
+ */
+export const deleteAllNotificationsAPI = async (
+  token: string,
+): Promise<void> => {
+  return makeRequest<void>('/api/v1/notifications', {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
+
+/**
+ * chatWithAIAPI: Gửi tin nhắn tới AI Travel Agent
+ * 
+ * @param token JWT token
+ * @param message Tin nhắn gửi tới AI
+ * @param sessionId Session ID (nếu có)
+ * @param context Ngữ cảnh bổ sung (vị trí hiện tại, v.v.)
+ * 
+ * Endpoint: POST /api/v1/ai/chat
+ * Headers: Authorization: Bearer <token>
+ * Response: { response, sessionId, itineraryId, metadata, ... }
+ */
+export const chatWithAIAPI = async (
+  token: string,
+  message: string,
+  sessionId?: string | null,
+  context?: any,
+): Promise<any> => {
+  const requestBody: any = { message };
+  if (sessionId) {
+    requestBody.sessionId = sessionId;
+  }
+  if (context) {
+    requestBody.context = context;
+  }
+
+  return makeRequest<any>('/api/v1/ai/chat', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+};
+
+/**
+ * resetConversationAPI: Reset cuộc trò chuyện với AI
+ * 
+ * @param token JWT token
+ * @param userId User ID
+ * @param sessionId Session ID (nếu có)
+ * 
+ * Endpoint: POST /api/v1/ai/reset
+ * Headers: Authorization: Bearer <token>
+ * Response: { message, ... }
+ */
+export const resetConversationAPI = async (
+  token: string,
+  userId: string,
+  sessionId?: string | null,
+): Promise<any> => {
+  const requestBody: any = { userId };
+  if (sessionId) {
+    requestBody.sessionId = sessionId;
+  }
+
+  return makeRequest<any>('/api/v1/ai/reset', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+};
+
+/**
+ * getPlacePhotoAPI: Lấy ảnh của địa điểm từ Google Places API
+ * 
+ * @param photoName Photo name từ Google Places API (format: places/{place_id}/photos/{photo_reference})
+ * @param maxWidthPx Chiều rộng tối đa của ảnh (mặc định 1600)
+ * 
+ * Endpoint: GET /api/v1/places/photo?name=...&maxWidthPx=...
+ * Response: Image data
+ */
+export const getPlacePhotoAPI = (
+  photoName: string,
+  maxWidthPx: number = 1600,
+): string => {
+  const encodedPhotoName = encodeURIComponent(photoName);
+  return `${API_BASE_URL}/api/v1/places/photo?name=${encodedPhotoName}&maxWidthPx=${maxWidthPx}`;
+};
+
+// ============================================
+// CUSTOM ITINERARY API
+// ============================================
+
+/**
+ * Kiểm tra thời tiết cho chuyến đi
+ */
+export const checkWeatherAPI = async (
+  departureDate: string,
+  returnDate: string,
+  destination: string,
+  token: string
+): Promise<any> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/weather-check`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        departureDate,
+        returnDate,
+        destination,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to check weather');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Check weather error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Tính toán routes và lưu custom itinerary
+ */
+export const calculateRoutesAPI = async (
+  payload: {
+    destination: string;
+    days: Array<{
+      dayNumber: number;
+      travelMode: string;
+      startLocation: string;
+      places: Array<{
+        placeId: string;
+        name: string;
+        address: string;
+      }>;
+    }>;
+    optimize?: boolean;
+    start_date?: string;
+    end_date?: string;
+  },
+  token: string
+): Promise<any> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/calculate-routes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to calculate routes');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Calculate routes error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Autocomplete địa điểm (Google Places)
+ */
+export const autocompletePlacesAPI = async (
+  input: string,
+  sessionToken?: string,
+  destination?: string,
+  token?: string
+): Promise<any> => {
+  try {
+    const headers: any = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/autocomplete`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        input,
+        sessionToken,
+        destination,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to autocomplete places');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Autocomplete places error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Cập nhật status của custom itinerary
+ */
+export const updateCustomItineraryStatusAPI = async (
+  routeId: string,
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN',
+  title?: string,
+  token?: string
+): Promise<any> => {
+  try {
+    const headers: any = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/status/${routeId}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        status,
+        title,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update status');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Update custom itinerary status error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Lấy danh sách custom itineraries
+ */
+export const getCustomItinerariesAPI = async (
+  token: string,
+  status?: 'DRAFT' | 'CONFIRMED' | 'MAIN'
+): Promise<any> => {
+  try {
+    const queryParams = status ? `?status=${status}` : '';
+    
+    const response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/routes${queryParams}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to get custom itineraries');
+    }
+
+    return data;
+  } catch (error: any) {
+    console.error('Get custom itineraries error:', error);
+    throw error;
+  }
 };
 
 // ============================================
@@ -538,4 +1187,23 @@ export default {
   getFavoritesByMoodAPI,
   likePlaceAPI,
   getLikedPlacesAPI,
+  getNotificationsAPI,
+  getUnreadCountAPI,
+  markNotificationAsReadAPI,
+  markAllNotificationsAsReadAPI,
+  deleteNotificationAPI,
+  deleteAllNotificationsAPI,
+  getProfileAPI,
+  updateProfileAPI,
+  changePasswordAPI,
+  getPlaceByIdAPI,
+  enrichPlaceAPI,
+  getPlacesAPI,
+  chatWithAIAPI,
+  resetConversationAPI,
+  checkWeatherAPI,
+  calculateRoutesAPI,
+  autocompletePlacesAPI,
+  updateCustomItineraryStatusAPI,
+  getCustomItinerariesAPI,
 };

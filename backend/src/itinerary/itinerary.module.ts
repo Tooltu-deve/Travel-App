@@ -5,6 +5,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ItineraryController } from './itinerary.controller';
 import { ItineraryService } from './itinerary.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { PlaceModule } from '../place/place.module';
 import { Place, PlaceSchema } from '../place/schemas/place.schema';
 import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
 
@@ -17,6 +18,7 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     ]),
     HttpModule,
     NotificationsModule,
+    PlaceModule,
   ],
   controllers: [ItineraryController],
   providers: [ItineraryService],

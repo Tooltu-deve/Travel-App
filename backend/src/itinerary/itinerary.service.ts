@@ -8,8 +8,10 @@ import { ConfigService } from '@nestjs/config';
 import { Place, PlaceDocument } from '../place/schemas/place.schema';
 import { Itinerary, ItineraryDocument } from './schemas/itinerary.schema';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PlaceService } from '../place/place.service';
 import { GenerateRouteDto } from './dto/generate-route.dto';
 import { CreateItineraryDto } from './dto/create-itinerary.dto';
+import { RouteDto, DayDto, ActivityDto } from './dto/custom-route.dto';
 
 type WeatherAlertSeverity = 'info' | 'warning' | 'danger';
 
@@ -28,6 +30,58 @@ export class ItineraryService {
   private readonly aiOptimizerServiceUrl: string;
   private readonly googleDirectionsApiKey: string;
   private readonly openWeatherApiKey: string;
+  private readonly googleRoutesApiKey: string;
+
+  private readonly VIETNAM_PORTS = [
+    // TP. Hồ Chí Minh
+    { name: 'Cảng Cát Lái', lat: 10.7608, lng: 106.7958 },
+    { name: 'Cảng Tân Cảng Hiệp Phước', lat: 10.6286, lng: 106.7633 },
+    { name: 'Cảng Container Quốc tế Việt Nam (VICT)', lat: 10.7736, lng: 106.7283 },
+    { name: 'Cảng Bến Nghé', lat: 10.7700, lng: 106.7300 },
+    { name: 'Bến phà Cần Giờ - Vũng Tàu (Bến Tắc Suất)', lat: 10.3983, lng: 106.9750 },
+
+    // Đà Nẵng
+    { name: 'Bến cảng Tiên Sa', lat: 16.1233, lng: 108.2167 },
+    { name: 'Bến cảng Sông Hàn', lat: 16.0778, lng: 108.2250 },
+    { name: 'Bến cảng Nại Hiên', lat: 16.0900, lng: 108.2300 },
+    { name: 'Bến cảng Sơn Trà', lat: 16.1167, lng: 108.2333 },
+    { name: 'Bến cảng Nhà máy xi măng Hải Vân', lat: 16.1333, lng: 108.1333 },
+
+    // Hải Phòng
+    { name: 'Cảng Nam Hải Đình Vũ', lat: 20.8333, lng: 106.7667 },
+    { name: 'Cảng container Vip Greenport', lat: 20.8400, lng: 106.7600 },
+    { name: 'Bến cảng Việt Nhật', lat: 20.8500, lng: 106.7500 },
+    { name: 'Bến phà Đồng Bài', lat: 20.8167, lng: 106.9167 },
+    { name: 'Bến phà Gia Luận', lat: 20.8333, lng: 106.9833 },
+
+    // Nha Trang
+    { name: 'Cảng Cầu Đá Nha Trang', lat: 12.2167, lng: 109.2167 },
+    { name: 'Cảng Nha Trang', lat: 12.2167, lng: 109.2167 },
+    { name: 'Cảng Vân Phong', lat: 12.6000, lng: 109.3000 },
+    { name: 'Cáp Treo Vinpearl Harbour Nha Trang', lat: 12.1859399, lng: 109.184602},
+
+    // Vũng Tàu
+    { name: 'Bến phà Vũng Tàu', lat: 10.3333, lng: 107.0667 },
+    { name: 'Cảng Công vụ', lat: 10.3400, lng: 107.0700 },
+
+    // Hạ Long
+    { name: 'Cảng Du thuyền Quốc tế Hạ Long (Cảng Sun)', lat: 20.9500, lng: 107.0500 },
+    { name: 'Cảng Du thuyền Tuần Châu Hạ Long', lat: 20.9333, lng: 106.9833 },
+    { name: 'Bến tàu khách quốc tế Vinashin Hòn Gai', lat: 20.9500, lng: 107.0833 },
+    { name: 'Cảng tổng hợp Cái Lân', lat: 20.9667, lng: 107.0333 },
+    { name: 'Bến cảng khách Hòn Gai', lat: 20.9500, lng: 107.0833 },
+
+    // Hội An
+    { name: 'Cảng Cửa Đại Cù Lao Chàm', lat: 15.8833, lng: 108.3833 },
+    { name: 'Bến Cảng Giao Thoa Nam Hội An', lat: 15.8500, lng: 108.4000 },
+
+    // Phú Quốc
+    { name: 'Bến phà Bãi Vòng', lat: 10.1500, lng: 104.0500 },
+    { name: 'Cảng An Thới', lat: 10.0167, lng: 104.0167 },
+
+    // Phan Thiết
+    { name: 'Cảng Phan Thiết', lat: 10.9333, lng: 108.1000 },
+  ];
 
   constructor(
     @InjectModel(Place.name) private placeModel: Model<PlaceDocument>,
@@ -35,6 +89,7 @@ export class ItineraryService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => NotificationsService)) private notificationsService: NotificationsService,
+    private readonly placeService: PlaceService,
   ) {
     this.aiOptimizerServiceUrl =
       this.configService.get<string>('AI_OPTIMIZER_SERVICE_URL') ||
@@ -46,6 +101,11 @@ export class ItineraryService {
       this.configService.get<string>('GOOGLE_DISTANCE_MATRIX_API_KEY') ||
       process.env.GOOGLE_DIRECTIONS_API_KEY ||
       process.env.GOOGLE_DISTANCE_MATRIX_API_KEY ||
+      '';
+
+    this.googleRoutesApiKey = 
+      this.configService.get<string>('GOOGLE_ROUTES_API_KEY') ||
+      process.env.GOOGLE_ROUTES_API_KEY ||
       '';
 
     this.openWeatherApiKey =
@@ -71,13 +131,122 @@ export class ItineraryService {
     return await itinerary.save();
   }
 
+  /**
+   * Populate POI names từ Place collection đã được enrich
+   * Cập nhật tên POI trong route_data_json với tên tiếng Việt từ Place collection
+   */
+  private async populatePoiNamesFromPlace(route: ItineraryDocument): Promise<ItineraryDocument> {
+    if (!route.route_data_json) {
+      return route;
+    }
+
+    const routeData = route.route_data_json;
+    const placeIdsToFetch = new Set<string>();
+
+    // Thu thập tất cả google_place_id từ optimized_route
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      routeData.optimized_route.forEach((day: any) => {
+        if (day.activities && Array.isArray(day.activities)) {
+          day.activities.forEach((activity: any) => {
+            const placeId = activity.google_place_id;
+            if (placeId) {
+              // Normalize placeId (có thể có hoặc không có prefix "places/")
+              const normalizedId = placeId.replace(/^places\//, '');
+              placeIdsToFetch.add(normalizedId);
+              placeIdsToFetch.add(`places/${normalizedId}`);
+            }
+          });
+        }
+      });
+    }
+
+    // Thu thập từ days (custom itinerary)
+    if (routeData.days && Array.isArray(routeData.days)) {
+      routeData.days.forEach((day: any) => {
+        if (day.places && Array.isArray(day.places)) {
+          day.places.forEach((place: any) => {
+            const placeId = place.google_place_id || place.placeId;
+            if (placeId) {
+              const normalizedId = placeId.replace(/^places\//, '');
+              placeIdsToFetch.add(normalizedId);
+              placeIdsToFetch.add(`places/${normalizedId}`);
+            }
+          });
+        }
+      });
+    }
+
+    if (placeIdsToFetch.size === 0) {
+      return route;
+    }
+
+    // Fetch tất cả places một lần
+    const places = await this.placeModel
+      .find({ googlePlaceId: { $in: Array.from(placeIdsToFetch) } })
+      .exec();
+
+    // Tạo map để lookup nhanh
+    const placeMap = new Map<string, PlaceDocument>();
+    places.forEach((place) => {
+      // Thêm cả với và không có prefix "places/"
+      const id1 = place.googlePlaceId.replace(/^places\//, '');
+      const id2 = `places/${id1}`;
+      placeMap.set(id1, place);
+      placeMap.set(id2, place);
+    });
+
+    // Cập nhật tên trong optimized_route
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      routeData.optimized_route.forEach((day: any) => {
+        if (day.activities && Array.isArray(day.activities)) {
+          day.activities.forEach((activity: any) => {
+            const placeId = activity.google_place_id;
+            if (placeId) {
+              const place = placeMap.get(placeId) || placeMap.get(placeId.replace(/^places\//, ''));
+              if (place && place.name) {
+                activity.name = place.name;
+                if (activity.place) {
+                  activity.place.name = place.name;
+                }
+              }
+            }
+          });
+        }
+      });
+    }
+
+    // Cập nhật tên trong days (custom itinerary)
+    if (routeData.days && Array.isArray(routeData.days)) {
+      routeData.days.forEach((day: any) => {
+        if (day.places && Array.isArray(day.places)) {
+          day.places.forEach((place: any) => {
+            const placeId = place.google_place_id || place.placeId;
+            if (placeId) {
+              const enrichedPlace = placeMap.get(placeId) || placeMap.get(placeId.replace(/^places\//, ''));
+              if (enrichedPlace && enrichedPlace.name) {
+                place.name = enrichedPlace.name;
+              }
+            }
+          });
+        }
+      });
+    }
+
+    return route;
+  }
+
   async findByRouteId(routeId: string): Promise<ItineraryDocument | null> {
-    return this.itineraryModel.findOne({ route_id: routeId }).exec();
+    const route = await this.itineraryModel.findOne({ route_id: routeId }).exec();
+    if (!route) {
+      return null;
+    }
+    // Populate POI names từ Place collection đã được enrich
+    return await this.populatePoiNamesFromPlace(route);
   }
 
   async findByUserId(
     userId: string,
-    status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+    status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
   ): Promise<ItineraryDocument[]> {
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
@@ -88,21 +257,50 @@ export class ItineraryService {
       query.status = status;
     }
 
-    return this.itineraryModel
+    const routes = await this.itineraryModel
       .find(query)
       .sort({ created_at: -1 })
       .exec();
+
+    // Populate POI names từ Place collection cho tất cả routes
+    const populatedRoutes = await Promise.all(
+      routes.map((route) => this.populatePoiNamesFromPlace(route)),
+    );
+
+    return populatedRoutes;
   }
 
   async updateStatus(
     routeId: string,
     userId: string,
-    status: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+    status: 'DRAFT' | 'CONFIRMED' | 'MAIN',
     extra?: { title?: string },
   ): Promise<ItineraryDocument | null> {
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
       : userId;
+
+    // Nếu đang set status thành MAIN, cần chuyển MAIN cũ về CONFIRMED
+    if (status === 'MAIN') {
+      const existingMain = await this.itineraryModel
+        .findOne({
+          user_id: userObjectId,
+          status: 'MAIN',
+          route_id: { $ne: routeId }, // Không phải lộ trình hiện tại
+        })
+        .exec();
+
+      if (existingMain) {
+        // Chuyển MAIN cũ về CONFIRMED
+        await this.itineraryModel
+          .findOneAndUpdate(
+            { _id: existingMain._id },
+            { status: 'CONFIRMED' },
+            { new: true },
+          )
+          .exec();
+      }
+    }
 
     const updatePayload: any = { status };
     if (extra?.title !== undefined) {
@@ -134,6 +332,24 @@ export class ItineraryService {
         console.error('Lỗi khi tạo notification CONFIRMED:', err);
       }
     }
+
+    // Gửi notification khi set lộ trình thành MAIN
+    if (status === 'MAIN' && updated) {
+      try {
+        await this.notificationsService.createNotification({
+          userId: userObjectId,
+          type: 'itinerary',
+          title: 'Lộ trình đã được đặt làm lộ trình chính',
+          message: extra?.title || updated.title || 'Lộ trình đã được đặt làm lộ trình chính',
+          entityType: 'itinerary',
+          entityId: updated._id,
+          routeId: updated.route_id,
+        });
+      } catch (err) {
+        console.error('Lỗi khi tạo notification MAIN:', err);
+      }
+    }
+
     return updated;
   }
 
@@ -141,6 +357,76 @@ export class ItineraryService {
     return `route_${randomUUID()}`;
   }
 
+
+  /**
+   * Mapping các tên thành phố và các biến thể phổ biến
+   */
+  private getCityVariants(destination: string): string[] {
+    const destLower = destination.toLowerCase().trim();
+    const variants = new Set<string>([destLower]);
+
+    // Xử lý dấu tiếng Việt
+    const removeVietnameseTones = (str: string): string => {
+      return str.replace(/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/g, (match) => {
+        const map: Record<string, string> = {
+          'à': 'a', 'á': 'a', 'ạ': 'a', 'ả': 'a', 'ã': 'a',
+          'â': 'a', 'ầ': 'a', 'ấ': 'a', 'ậ': 'a', 'ẩ': 'a', 'ẫ': 'a',
+          'ă': 'a', 'ằ': 'a', 'ắ': 'a', 'ặ': 'a', 'ẳ': 'a', 'ẵ': 'a',
+          'è': 'e', 'é': 'e', 'ẹ': 'e', 'ẻ': 'e', 'ẽ': 'e',
+          'ê': 'e', 'ề': 'e', 'ế': 'e', 'ệ': 'e', 'ể': 'e', 'ễ': 'e',
+          'ì': 'i', 'í': 'i', 'ị': 'i', 'ỉ': 'i', 'ĩ': 'i',
+          'ò': 'o', 'ó': 'o', 'ọ': 'o', 'ỏ': 'o', 'õ': 'o',
+          'ô': 'o', 'ồ': 'o', 'ố': 'o', 'ộ': 'o', 'ổ': 'o', 'ỗ': 'o',
+          'ơ': 'o', 'ờ': 'o', 'ớ': 'o', 'ợ': 'o', 'ở': 'o', 'ỡ': 'o',
+          'ù': 'u', 'ú': 'u', 'ụ': 'u', 'ủ': 'u', 'ũ': 'u',
+          'ư': 'u', 'ừ': 'u', 'ứ': 'u', 'ự': 'u', 'ử': 'u', 'ữ': 'u',
+          'ỳ': 'y', 'ý': 'y', 'ỵ': 'y', 'ỷ': 'y', 'ỹ': 'y',
+          'đ': 'd'
+        };
+        return map[match] || match;
+      });
+    };
+
+    // Thêm version không dấu
+    variants.add(removeVietnameseTones(destLower));
+
+    // Mapping các tên thành phố phổ biến
+    const cityMappings: Record<string, string[]> = {
+      'thành phố hồ chí minh': ['ho chi minh', 'hcm', 'saigon', 'sài gòn', 'tp.hcm', 'tp hcm', 'ho chi minh city', 'thanh pho ho chi minh'],
+      'hồ chí minh': ['ho chi minh', 'hcm', 'saigon', 'sài gòn', 'tp.hcm', 'tp hcm', 'ho chi minh city'],
+      'hà nội': ['ha noi', 'hanoi', 'thủ đô'],
+      'đà nẵng': ['da nang', 'danang'],
+      'hải phòng': ['hai phong', 'haiphong'],
+      'cần thơ': ['can tho', 'cantho'],
+      'nha trang': ['nha trang'],
+      'huế': ['hue', 'thừa thiên huế', 'thua thien hue'],
+      'vũng tàu': ['vung tau', 'vungtau'],
+      'hạ long': ['ha long', 'halong'],
+      'đà lạt': ['da lat', 'dalat'],
+      'sa pa': ['sapa', 'sa pa'],
+      'hội an': ['hoi an', 'hoian'],
+      'phú quốc': ['phu quoc', 'phuquoc'],
+      'phan thiết': ['phan thiet', 'phantheit'],
+      'ninh bình': ['ninh binh', 'ninhbinh'],
+    };
+
+    // Tìm mapping nếu có
+    const normalizedDest = destLower.replace(/thành phố\s+/i, ''); // Loại bỏ "thành phố" prefix
+    const mappingKey = Object.keys(cityMappings).find(key => 
+      key === destLower || key === normalizedDest || destLower.includes(key) || key.includes(normalizedDest)
+    );
+
+    if (mappingKey) {
+      cityMappings[mappingKey].forEach(v => variants.add(v));
+    } else if (destLower.includes('hồ chí minh') || destLower.includes('ho chi minh')) {
+      // Xử lý riêng cho HCM
+      ['ho chi minh', 'hcm', 'saigon', 'sài gòn', 'tp.hcm', 'tp hcm', 'ho chi minh city'].forEach(v => variants.add(v));
+    } else if (destLower.includes('huế') || destLower.includes('hue')) {
+      ['hue', 'thừa thiên huế', 'thua thien hue'].forEach(v => variants.add(v));
+    }
+
+    return Array.from(variants);
+  }
 
   /**
    * Lọc POI theo thành phố (destination)
@@ -154,36 +440,62 @@ export class ItineraryService {
       return pois;
     }
 
-    const destinationLower = destination.toLowerCase().trim();
-    const destinationWords = destinationLower.split(/\s+/); // Tách thành các từ
+    const searchVariants = this.getCityVariants(destination);
 
-    return pois.filter((poi) => {
+    const filteredPois: PlaceDocument[] = [];
+    const excludedPois: PlaceDocument[] = [];
+
+    for (const poi of pois) {
+      let matched = false;
+      
       // Kiểm tra trong address (ưu tiên)
       const address = (poi.address || '').toLowerCase();
       
-      // Tìm kiếm chính xác hoặc một phần của tên thành phố
-      // Ví dụ: "Hồ Chí Minh" hoặc "TP.HCM" hoặc "Ho Chi Minh City"
-      if (address.includes(destinationLower)) {
-        return true;
+      // 1. Tìm kiếm trong address (ưu tiên) - kiểm tra tất cả các biến thể
+      for (const variant of searchVariants) {
+        // Tìm kiếm variant trong address (bỏ qua ký tự đặc biệt và khoảng trắng)
+        const normalizedAddress = address.replace(/[.,;:]/g, ' ').replace(/\s+/g, ' ');
+        if (normalizedAddress.includes(variant)) {
+          matched = true;
+          break;
+        }
+      }
+      
+      if (matched) {
+        filteredPois.push(poi);
+        continue;
       }
 
-      // Tìm kiếm từng từ trong destination (cho trường hợp viết tắt)
-      // Ví dụ: "HCM" sẽ match "Ho Chi Minh"
-      const allWordsMatch = destinationWords.every(word => 
-        word.length > 2 && address.includes(word)
-      );
-      if (allWordsMatch && destinationWords.length > 0) {
-        return true;
-      }
-
-      // Kiểm tra trong name (nếu có)
+      // 2. Kiểm tra trong name (nếu address không match)
       const name = (poi.name || '').toLowerCase();
-      if (name.includes(destinationLower)) {
-        return true;
+      for (const variant of searchVariants) {
+        if (name.includes(variant)) {
+          matched = true;
+          break;
+        }
+      }
+      
+      if (matched) {
+        filteredPois.push(poi);
+        continue;
       }
 
-      return false;
-    });
+      // POI không match
+      excludedPois.push(poi);
+    }
+
+    // Log các POI bị loại bỏ để debug
+    if (excludedPois.length > 0 && excludedPois.length <= 10) {
+      console.log(`⚠️  Các POI bị loại bỏ khi lọc theo "${destination}":`);
+      excludedPois.slice(0, 10).forEach((poi, idx) => {
+        console.log(`   ${idx + 1}. ${poi.name} - Address: ${poi.address || 'N/A'}`);
+      });
+      if (excludedPois.length > 10) {
+        console.log(`   ... và ${excludedPois.length - 10} POI khác`);
+      }
+    }
+
+    return filteredPois;
   }
 
   /**
@@ -425,11 +737,14 @@ export class ItineraryService {
     const tripEndDate = new Date(tripStartDate);
     tripEndDate.setDate(tripEndDate.getDate() + durationDays - 1);
     const tripEndMs = this.normalizeDate(tripEndDate);
+    // Ngày hiện tại (bắt đầu ngày) để loại trừ ngày quá khứ
+    const todayMs = this.normalizeDate(new Date());
 
     const isWithinTripRange = (timestampMs: number): boolean => {
       const normalized = this.normalizeDate(new Date(timestampMs));
+      // Chỉ kiểm tra các ngày TRONG khoảng thời gian du lịch và không phải ngày quá khứ
       return (
-        normalized >= tripStartMs - DAY_MS && normalized <= tripEndMs + DAY_MS
+        normalized >= Math.max(tripStartMs, todayMs) && normalized <= tripEndMs
       );
     };
 
@@ -540,6 +855,91 @@ export class ItineraryService {
     return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
   }
 
+  /**
+   * Dịch các từ khóa thời tiết từ tiếng Anh sang tiếng Việt
+   */
+  private translateWeatherDescription(description: string): string {
+    if (!description) return description;
+
+    const descLower = description.toLowerCase();
+    const weatherTranslations: Record<string, string> = {
+      // Rain
+      'clear sky': 'trời quang đãng',
+      'few clouds': 'ít mây',
+      'scattered clouds': 'mây rải rác',
+      'broken clouds': 'mây rải rác',
+      'overcast clouds': 'trời nhiều mây',
+      'mist': 'sương mù nhẹ',
+      'fog': 'sương mù',
+      'haze': 'sương mù nhẹ',
+      'smoke': 'khói',
+      'dust': 'bụi',
+      'sand': 'cát',
+      'light rain': 'mưa nhẹ',
+      'moderate rain': 'mưa vừa',
+      'heavy rain': 'mưa lớn',
+      'very heavy rain': 'mưa rất lớn',
+      'extreme rain': 'mưa cực lớn',
+      'freezing rain': 'mưa đông',
+      'light intensity shower rain': 'mưa rào nhẹ',
+      'shower rain': 'mưa rào',
+      'heavy intensity shower rain': 'mưa rào lớn',
+      'ragged shower rain': 'mưa rào rải rác',
+      'light intensity drizzle': 'mưa phùn nhẹ',
+      'drizzle': 'mưa phùn',
+      'heavy intensity drizzle': 'mưa phùn lớn',
+      'light intensity drizzle rain': 'mưa phùn nhẹ',
+      'drizzle rain': 'mưa phùn',
+      'heavy intensity drizzle rain': 'mưa phùn lớn',
+      'shower drizzle': 'mưa phùn rải rác',
+      'thunderstorm with light rain': 'dông kèm mưa nhẹ',
+      'thunderstorm with rain': 'dông kèm mưa',
+      'thunderstorm with heavy rain': 'dông kèm mưa lớn',
+      'light thunderstorm': 'dông nhẹ',
+      'thunderstorm': 'dông',
+      'heavy thunderstorm': 'dông lớn',
+      'ragged thunderstorm': 'dông rải rác',
+      'thunderstorm with light drizzle': 'dông kèm mưa phùn nhẹ',
+      'thunderstorm with drizzle': 'dông kèm mưa phùn',
+      'thunderstorm with heavy drizzle': 'dông kèm mưa phùn lớn',
+      // Snow
+      'light snow': 'tuyết nhẹ',
+      'snow': 'tuyết',
+      'heavy snow': 'tuyết lớn',
+      'sleet': 'tuyết mưa',
+      'light shower sleet': 'tuyết mưa nhẹ',
+      'shower sleet': 'tuyết mưa',
+      'light rain and snow': 'mưa tuyết nhẹ',
+      'rain and snow': 'mưa tuyết',
+      'light shower snow': 'mưa tuyết nhẹ',
+      'shower snow': 'mưa tuyết',
+      'heavy shower snow': 'mưa tuyết lớn',
+      // Other
+      'squalls': 'gió giật mạnh',
+      'tornado': 'lốc xoáy',
+      'volcanic ash': 'tro núi lửa',
+    };
+
+    // Tìm kiếm exact match trước
+    if (weatherTranslations[descLower]) {
+      return weatherTranslations[descLower];
+    }
+
+    // Tìm kiếm từng từ khóa (từ dài đến ngắn để ưu tiên match chính xác hơn)
+    const sortedKeys = Object.keys(weatherTranslations).sort((a, b) => b.length - a.length);
+    for (const key of sortedKeys) {
+      if (descLower.includes(key)) {
+        // Thay thế từ khóa bằng bản dịch
+        const translated = descLower.replace(key, weatherTranslations[key]);
+        // Capitalize chữ cái đầu
+        return translated.charAt(0).toUpperCase() + translated.slice(1);
+      }
+    }
+
+    // Nếu không tìm thấy, trả về nguyên bản (có thể đã là tiếng Việt hoặc từ khóa không có trong map)
+    return description;
+  }
+
   private isSevereWeatherCondition(
     weatherMain: string,
     weatherDescription: string,
@@ -581,11 +981,14 @@ export class ItineraryService {
     const tripEndDate = new Date(tripStartDate);
     tripEndDate.setDate(tripEndDate.getDate() + durationDays - 1);
     const tripEndMs = this.normalizeDate(tripEndDate);
+    // Ngày hiện tại (bắt đầu ngày) để loại trừ ngày quá khứ
+    const todayMs = this.normalizeDate(new Date());
 
     const isWithinTripRange = (timestampMs: number): boolean => {
       const normalized = this.normalizeDate(new Date(timestampMs));
+      // Chỉ kiểm tra các ngày TRONG khoảng thời gian du lịch và không phải ngày quá khứ
       return (
-        normalized >= tripStartMs - DAY_MS && normalized <= tripEndMs + DAY_MS
+        normalized >= Math.max(tripStartMs, todayMs) && normalized <= tripEndMs
       );
     };
 
@@ -639,12 +1042,13 @@ export class ItineraryService {
         description.includes('heavy') || description.includes('storm')
           ? 'danger'
           : 'warning';
+      const translatedDescription = this.translateWeatherDescription(description);
       addAlert({
         type: 'rain',
         title: `Dự báo mưa (${dateLabel})`,
         message: `Ngày ${entryDate.toLocaleDateString(
           'vi-VN',
-        )} dự báo ${description}. Hãy chuẩn bị ô/áo mưa hoặc cân nhắc điều chỉnh lịch trình cho phù hợp.`,
+        )} dự báo ${translatedDescription}. Hãy chuẩn bị ô/áo mưa hoặc cân nhắc điều chỉnh lịch trình cho phù hợp.`,
         severity,
       });
     };
@@ -979,55 +1383,249 @@ export class ItineraryService {
     };
   }
 
-  private async fetchDirectionsInfo(
-    origin: { lat: number; lng: number },
-    destination: { lat: number; lng: number },
-  ): Promise<{ encoded_polyline: string | null; travel_duration_minutes: number | null }> {
-    if (!this.googleDirectionsApiKey) {
-      return { encoded_polyline: null, travel_duration_minutes: null };
+  private findNearestPort(location: { lat: number; lng: number }): { name: string; lat: number; lng: number; distance: number } | null {
+    if (!location || !location.lat || !location.lng) return null;
+
+    let nearestPort: { name: string; lat: number; lng: number; distance: number } | null = null;
+    let minDistance = Infinity;
+
+    for (const port of this.VIETNAM_PORTS) {
+      const distance = this.calculateHaversineDistance(
+        location.lat,
+        location.lng,
+        port.lat,
+        port.lng,
+      );
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestPort = { ...port, distance };
+      }
     }
 
-    const originStr = `${origin.lat},${origin.lng}`;
-    const destStr = `${destination.lat},${destination.lng}`;
-    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=driving&key=${this.googleDirectionsApiKey}`;
+    // Chỉ lấy cảng trong bán kính 100km
+    if (minDistance > 100) {
+        return null;
+    }
+
+    return nearestPort;
+  }
+
+  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371; // Radius of the earth in km
+    const dLat = this.deg2rad(lat2 - lat1);
+    const dLon = this.deg2rad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const d = R * c; // Distance in km
+    return d;
+  }
+
+  private deg2rad(deg: number): number {
+    return deg * (Math.PI / 180);
+  }
+
+  private async getPlaceIdFromTextSearch(query: string): Promise<string | null> {
+    if (!this.googleRoutesApiKey) return null; // Reuse Routes API Key for Places API if possible, or check config
+
+    // Note: Google Places API (New) uses the same project/key usually.
+    // URL: https://places.googleapis.com/v1/places:searchText
+    const url = 'https://places.googleapis.com/v1/places:searchText';
+    
+    const body = {
+      textQuery: query,
+      maxResultCount: 1
+    };
 
     try {
       const response = await firstValueFrom(
-        this.httpService.get(url, { timeout: 30000 }),
+        this.httpService.post(url, body, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': this.googleRoutesApiKey, // Assuming same key works
+            'X-Goog-FieldMask': 'places.id,places.displayName',
+          },
+          timeout: 10000,
+        }),
       );
-      const data = response.data;
 
-      if (data.status === 'OK' && data.routes && data.routes.length > 0) {
-        const route = data.routes[0];
-        const leg = route.legs[0];
-        const overviewPolyline = route.overview_polyline;
-        const encodedPolyline = overviewPolyline?.points || null;
-        const durationSeconds = leg?.duration?.value || 0;
-        const travelDurationMinutes =
-          durationSeconds > 0 ? durationSeconds / 60.0 : null;
-
-        return {
-          encoded_polyline: encodedPolyline,
-          travel_duration_minutes: travelDurationMinutes,
-        };
+      const places = response.data.places;
+      if (places && places.length > 0) {
+        return places[0].id;
       }
-
-      return { encoded_polyline: null, travel_duration_minutes: null };
     } catch (error) {
-      console.error('Directions API error:', error);
+      console.error(`❌ Error searching place ID for "${query}":`, error?.message || error);
+    }
+    return null;
+  }
+
+  public async fetchDirectionsInfo(
+    origin: { lat: number; lng: number },
+    destination: { lat: number; lng: number },
+    mode: string = 'driving',
+  ): Promise<{ 
+    encoded_polyline: string | null; 
+    travel_duration_minutes: number | null;
+    origin_port?: { name: string; place_id: string };
+    destination_port?: { name: string; place_id: string };
+    steps?: any[];
+  }> {
+    if (!this.googleRoutesApiKey) {
       return { encoded_polyline: null, travel_duration_minutes: null };
     }
+
+    const travelModesToRetry = ['driving', 'walking', 'bicycling'];
+
+    // Map travel mode từ format cũ sang format Routes API v2
+    const mapTravelMode = (mode: string): string => {
+      const modeMap: { [key: string]: string } = {
+        'driving': 'DRIVE',
+        'walking': 'WALK',
+        'bicycling': 'BICYCLE',
+        'transit': 'TRANSIT',
+      };
+      return modeMap[mode.toLowerCase()] || 'DRIVE';
+    };
+
+    const fetchRoute = async (travelMode: string, useTraffic: boolean = true) => {
+      const url = `https://routes.googleapis.com/directions/v2:computeRoutes`;
+      const mappedMode = mapTravelMode(travelMode);
+      const body: any = {
+        origin: {
+          location: {
+            latLng: {
+              latitude: origin.lat,
+              longitude: origin.lng,
+            },
+          },
+        },
+        destination: {
+          location: {
+            latLng: {
+              latitude: destination.lat,
+              longitude: destination.lng,
+            },
+          },
+        },
+        travelMode: mappedMode,
+      };
+
+      // Chỉ thêm routingPreference cho DRIVE mode nếu useTraffic = true
+      if (mappedMode === 'DRIVE' && useTraffic) {
+        body.routingPreference = 'TRAFFIC_AWARE';
+      }
+
+      try {
+        const response = await firstValueFrom(
+          this.httpService.post(url, body, {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': this.googleRoutesApiKey,
+              'X-Goog-FieldMask': 'routes.duration,routes.polyline.encodedPolyline,routes.legs.steps.travelMode,routes.legs.steps.polyline.encodedPolyline,routes.legs.steps.navigationInstruction',
+            },
+            timeout: 30000,
+          }),
+        );
+        const data = response.data;
+
+        if (data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const polyline = route.polyline?.encodedPolyline || null;
+          const durationSeconds = route.duration ? parseFloat(route.duration.replace('s', '')) : 0;
+          const travelDurationMinutes =
+            durationSeconds > 0 ? durationSeconds / 60.0 : null;
+
+          // Xử lý multimodal steps (ví dụ: walk -> ferry -> walk)
+          let steps: any[] = [];
+          if (route.legs && route.legs.length > 0) {
+             route.legs.forEach((leg: any) => {
+                if (leg.steps && Array.isArray(leg.steps)) {
+                   steps = steps.concat(leg.steps.map((step: any) => ({
+                      travel_mode: step.travelMode,
+                      encoded_polyline: step.polyline?.encodedPolyline,
+                      instruction: step.navigationInstruction?.instructions
+                   })));
+                }
+             });
+          }
+
+          return {
+            encoded_polyline: polyline,
+            travel_duration_minutes: travelDurationMinutes,
+            steps: steps.length > 0 ? steps : undefined
+          };
+        }
+      } catch (error) {
+        if (error?.response?.data) {
+          console.error(`Route API error for mode ${travelMode} (traffic: ${useTraffic}):`, JSON.stringify(error.response.data));
+        } else {
+          console.error(`Route API error for mode ${travelMode} (traffic: ${useTraffic}):`, error?.message || error);
+        }
+      }
+      return { encoded_polyline: null, travel_duration_minutes: null };
+    };
+
+    // Gọi API với mode ban đầu
+    let result: any = await fetchRoute(mode, true);
+
+    // Nếu mode là 'driving' và thất bại, thử lại không dùng routingPreference (đôi khi gây lỗi hoặc không tìm thấy đường)
+    if (mode === 'driving' && (!result.encoded_polyline || !result.travel_duration_minutes)) {
+      console.log(`⚠️  No result for mode "driving" with traffic. Retrying without traffic preference...`);
+      result = await fetchRoute(mode, false);
+    }
+
+    // Nếu thất bại, kiểm tra xem có phải là tuyến đường biển/đảo không (dựa vào việc tìm thấy cảng gần đó)
+    if (!result.encoded_polyline || !result.travel_duration_minutes) {
+      const originPort = this.findNearestPort(origin);
+      const destPort = this.findNearestPort(destination);
+
+      // Chỉ khi tìm thấy cảng ở cả 2 đầu (nghi ngờ là đường ra đảo), mới thử fallback sang walking
+      if (originPort && destPort) {
+        console.log(`⚠️  No result for mode "${mode}". Potential sea route detected (Ports: ${originPort.name} -> ${destPort.name}).`);
+        
+        // Thử lại với walking
+        console.log(`   Retrying with "walking"...`);
+        result = await fetchRoute('walking');
+
+        // Nếu walking vẫn thất bại, trả về thông tin cảng để gợi ý
+        if (!result.encoded_polyline || !result.travel_duration_minutes) {
+          console.log(`⚠️  Walking also failed. Returning port info.`);
+          
+          const [originPortId, destPortId] = await Promise.all([
+            this.getPlaceIdFromTextSearch(originPort.name),
+            this.getPlaceIdFromTextSearch(destPort.name)
+          ]);
+
+          if (originPortId) {
+            result.origin_port = { name: originPort.name, place_id: originPortId };
+          }
+          if (destPortId) {
+            result.destination_port = { name: destPort.name, place_id: destPortId };
+          }
+        }
+      } else {
+        console.log(`⚠️  No result for mode "${mode}" and no ports detected nearby. Returning failure.`);
+      }
+    }
+
+    return result;
   }
 
   private async enrichRouteWithDirections(
     optimizedRoute: any,
     currentLocation: { lat: number; lng: number },
+    travelMode?: string,
   ): Promise<any> {
     const enrichedRoute: any[] = [];
 
     for (const dayData of optimizedRoute.optimized_route || []) {
       const enrichedActivities: any[] = [];
       let previousLocation = currentLocation;
+      const dayTravelMode =
+        dayData.travel_mode || travelMode || optimizedRoute.travel_mode || 'driving';
 
       for (const poi of dayData.activities || []) {
         const poiLocation = poi.location;
@@ -1039,12 +1637,16 @@ export class ItineraryService {
         const directionsInfo = await this.fetchDirectionsInfo(
           previousLocation,
           { lat: poiLocation.lat, lng: poiLocation.lng },
+          dayTravelMode,
         );
 
         const enrichedPoi = {
           ...poi,
           encoded_polyline: directionsInfo.encoded_polyline,
           travel_duration_minutes: directionsInfo.travel_duration_minutes,
+          origin_port: directionsInfo.origin_port,
+          steps: directionsInfo.steps,
+          destination_port: directionsInfo.destination_port,
         };
 
         enrichedActivities.push(enrichedPoi);
@@ -1063,6 +1665,7 @@ export class ItineraryService {
   private async callAiOptimizer(
     poiList: any[],
     generateDto: GenerateRouteDto,
+    currentLocation: { lat: number; lng: number },
   ): Promise<any> {
     try {
       const response = await firstValueFrom(
@@ -1072,9 +1675,11 @@ export class ItineraryService {
             poi_list: poiList,
             user_mood: generateDto.user_mood,
             duration_days: generateDto.duration_days,
-            current_location: generateDto.current_location,
+            current_location: currentLocation,
             start_datetime: generateDto.start_datetime,
-            ecs_score_threshold: generateDto.ecs_score_threshold || 0.0,
+            ecs_score_threshold: generateDto.ecs_score_threshold || 0.15,
+            travel_mode: generateDto.travel_mode || 'driving',
+            poi_per_day: generateDto.poi_per_day || 3,
           },
           {
             timeout: 120000,
@@ -1103,10 +1708,47 @@ export class ItineraryService {
     }
   }
 
+  /**
+   * Geocode địa chỉ string thành tọa độ lat/lng
+   */
+  async geocodeAddress(address: string): Promise<{ lat: number; lng: number }> {
+    try {
+      const url = 'https://maps.googleapis.com/maps/api/geocode/json';
+      const params = {
+        address: address,
+        key: this.googleDirectionsApiKey,
+      };
+      const response = await firstValueFrom(
+        this.httpService.get(url, { params }),
+      );
+
+      if (response.data.status !== 'OK' || !response.data.results.length) {
+        throw new HttpException(
+          `Không tìm thấy tọa độ cho địa điểm: ${address}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      const location = response.data.results[0].geometry.location;
+      return { lat: location.lat, lng: location.lng };
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        `Lỗi khi geocode địa điểm: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   async generateAndSaveRoute(
     userId: string,
     generateDto: GenerateRouteDto,
   ): Promise<ItineraryDocument> {
+    // Geocode start_location từ string sang coordinates
+    const currentLocation = await this.geocodeAddress(generateDto.start_location);
+
     let places = await this.filterPoisByBudgetAndDestination(
       generateDto.budget,
       generateDto.destination,
@@ -1115,7 +1757,7 @@ export class ItineraryService {
     // Lọc theo thời tiết sau khi lọc budget
     const weatherFilterResult = await this.filterByWeather(
       places,
-      generateDto.current_location,
+      currentLocation,
       generateDto.start_datetime,
       generateDto.duration_days,
     );
@@ -1142,10 +1784,11 @@ export class ItineraryService {
       this.convertPlaceToOptimizerFormat(place as any),
     );
 
-    const optimizedRoute = await this.callAiOptimizer(poiList, generateDto);
+    const optimizedRoute = await this.callAiOptimizer(poiList, generateDto, currentLocation);
     const enrichedRoute = await this.enrichRouteWithDirections(
       optimizedRoute,
-      generateDto.current_location,
+      currentLocation,
+      generateDto.travel_mode,
     );
 
     const routeId = this.generateRouteId();
@@ -1190,26 +1833,11 @@ export class ItineraryService {
       start_datetime: metadata.start_datetime
         ? new Date(metadata.start_datetime)
         : null,
+      start_location: currentLocation,
       alerts: weatherAlerts,
     });
 
     const savedItinerary = await itinerary.save();
-
-    // Tạo notification cho user: chỉ nhắc nhở xác nhận để hoàn tất tạo lộ trình
-    try {
-      await this.notificationsService.createNotification({
-        userId: userObjectId,
-        type: 'itinerary',
-        title: 'Lưu nháp lộ trình',
-        message: 'Bạn đã lưu nháp lộ trình, vui lòng bấm xác nhận để hoàn tất tạo lộ trình.',
-        entityType: 'itinerary',
-        entityId: savedItinerary._id,
-        routeId: savedItinerary.route_id,
-      });
-    } catch (err) {
-      // Không throw lỗi nếu tạo noti thất bại
-      console.error('Lỗi khi tạo notification:', err);
-    }
 
     return savedItinerary;
   }
@@ -1223,6 +1851,9 @@ export class ItineraryService {
     const userObjectId = Types.ObjectId.isValid(userId)
       ? new Types.ObjectId(userId)
       : userId;
+
+    // Geocode start_location để lưu vào schema
+    const currentLocation = await this.geocodeAddress(generateDto.start_location);
 
     const metadata = {
       title: generateDto.destination
@@ -1255,6 +1886,7 @@ export class ItineraryService {
       start_datetime: metadata.start_datetime
         ? new Date(metadata.start_datetime)
         : null,
+      start_location: currentLocation,
       alerts,
     });
 
@@ -1275,5 +1907,542 @@ export class ItineraryService {
       .exec();
 
     return result.deletedCount > 0;
+  }
+
+  /**
+   * Xử lý custom route từ AI optimizer
+   * B1: Nhận JSON từ AI optimizer
+   * B2: Enrich tất cả POI mới (chưa có trong DB)
+   * B3: Call Directions API cho TẤT CẢ POI → Lấy polyline & duration
+   * B4: Trả về JSON hoàn chỉnh
+   */
+  async processCustomRoute(
+    userId: string,
+    routeDto: RouteDto,
+  ): Promise<any> {
+    try {
+      const { route_id, route_data_json, start_location } = routeDto;
+      const optimizedRoute = route_data_json.optimized_route;
+
+      console.log(`🔧 Processing custom route for user: ${userId}`);
+      console.log(`   - Route ID: ${route_id || 'NEW'}`);
+      console.log(`   - Days: ${optimizedRoute.length}`);
+
+      // B2: Enrich tất cả POI mới
+      await this.enrichAllNewPOIs(optimizedRoute);
+
+      // B3: Lấy route cũ từ DB để so sánh (nếu có route_id)
+      let existingRoute: any = null;
+      if (route_id) {
+        existingRoute = await this.itineraryModel.findOne({ route_id }).exec();
+      }
+
+      // B4: Chỉ tính lại Routes API cho các ngày có POI thay đổi
+      const updatedRoute = await this.calculateDirectionsForChangedDays(
+        optimizedRoute,
+        existingRoute?.route_data_json?.optimized_route || null,
+        (routeDto as any).start_location || (route_data_json as any)?.start_location || null,
+      );
+
+      // B5: Lưu vào DB và trả về
+      const savedRoute = await this.saveOrUpdateRoute({
+          route_id,
+          user_id: userId,
+          route_data_json: {
+            ...route_data_json,
+            optimized_route: updatedRoute,
+          },
+          title: routeDto.title,
+          destination: routeDto.destination,
+          duration_days: routeDto.duration_days,
+          start_datetime: routeDto.start_datetime,
+          start_location: start_location || (route_data_json as any)?.start_location || null,
+          status: routeDto.status || 'DRAFT',
+          alerts: routeDto.alerts,
+      });
+
+      console.log(`✅ Custom route processed: ${savedRoute.route_id}`);
+      return savedRoute;
+    } catch (error) {
+      console.error(`❌ Error processing custom route:`, error);
+      throw new HttpException(
+        `Error processing custom route: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * B2: Enrich tất cả POI mới (chưa có trong DB)
+   */
+  private async enrichAllNewPOIs(days: DayDto[]): Promise<void> {
+    const allActivities: ActivityDto[] = [];
+
+    // Thu thập tất cả activities
+    for (const day of days) {
+      if (day.activities && Array.isArray(day.activities)) {
+        allActivities.push(...day.activities);
+      }
+    }
+
+    console.log(`📋 Checking ${allActivities.length} POIs...`);
+
+    // Enrich từng POI
+    for (const activity of allActivities) {
+      await this.ensurePOIExists(activity);
+    }
+  }
+
+  /**
+   * B3: Chỉ gọi Routes API cho các ngày có POI thay đổi
+   */
+  private async calculateDirectionsForChangedDays(
+    newDays: DayDto[],
+    oldDays: DayDto[] | null,
+    startLocation?: { lat: number; lng: number } | null,
+  ): Promise<any[]> {
+    const result: any[] = [];
+
+    // Nếu không có route cũ, tính lại tất cả
+    if (!oldDays) {
+      console.log(`📍 No existing route, calculating all days...`);
+      return this.calculateDirectionsForAllDays(newDays, startLocation);
+    }
+
+    // So sánh từng ngày để tìm những ngày có POI thay đổi
+    for (const newDay of newDays) {
+      const oldDay = oldDays.find((d) => d.day === newDay.day);
+      
+      // Kiểm tra xem ngày này có POI thay đổi không
+      const hasChanges = this.hasDayChanges(newDay, oldDay);
+
+      if (hasChanges || !oldDay) {
+        // Có thay đổi -> tính lại Routes API cho ngày này
+        console.log(`🔄 Day ${newDay.day} has changes, recalculating routes...`);
+        if (!newDay.travel_mode) {
+          throw new Error(`travel_mode is required for day ${newDay.day}`);
+        }
+        const updatedActivities = await this.calculateDirectionsForDay(
+          newDay.activities,
+          newDay.travel_mode,
+          startLocation,
+        );
+        result.push({
+          day: newDay.day,
+          activities: updatedActivities,
+          day_start_time: newDay.day_start_time,
+          travel_mode: newDay.travel_mode,
+        });
+      } else {
+        // Không có thay đổi -> giữ nguyên từ route cũ
+        console.log(`✅ Day ${newDay.day} unchanged, keeping cached routes`);
+        result.push(oldDay);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Kiểm tra xem một ngày có POI nào thay đổi không
+   */
+  private hasDayChanges(newDay: DayDto, oldDay?: DayDto): boolean {
+    if (!oldDay) return true;
+
+    const newActivities = newDay.activities || [];
+    const oldActivities = oldDay.activities || [];
+
+    // Nếu số lượng POI khác nhau -> có thay đổi
+    if (newActivities.length !== oldActivities.length) {
+      console.log(`   📊 POI count changed: ${oldActivities.length} -> ${newActivities.length}`);
+      return true;
+    }
+
+    // So sánh từng POI
+    for (let i = 0; i < newActivities.length; i++) {
+      const newPOI = newActivities[i];
+      const oldPOI = oldActivities[i];
+
+      const newPlaceId = (newPOI.google_place_id || '').replace(/^places\//, '');
+      const oldPlaceId = (oldPOI.google_place_id || '').replace(/^places\//, '');
+
+      // Nếu google_place_id khác nhau -> có thay đổi
+      if (newPlaceId !== oldPlaceId) {
+        console.log(`   🔄 POI ${i} changed: ${oldPOI.name} -> ${newPOI.name}`);
+        return true;
+      }
+
+      // Kiểm tra vị trí có thay đổi đáng kể không (> 10m)
+      if (this.isLocationDifferent(newPOI.location, oldPOI.location)) {
+        console.log(`   📍 POI ${i} location changed: ${oldPOI.name}`);
+        return true;
+      }
+    }
+
+    // Kiểm tra travel_mode có thay đổi không
+    if (newDay.travel_mode !== oldDay.travel_mode) {
+      console.log(`   🚗 Travel mode changed: ${oldDay.travel_mode} -> ${newDay.travel_mode}`);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Kiểm tra xem 2 vị trí có khác nhau đáng kể không (> 10m)
+   */
+  private isLocationDifferent(
+    loc1?: { lat: number; lng: number },
+    loc2?: { lat: number; lng: number },
+  ): boolean {
+    if (!loc1 || !loc2) return true;
+    
+    // Khoảng cách xấp xỉ: ~0.0001 độ ≈ ~11m
+    const latDiff = Math.abs(loc1.lat - loc2.lat);
+    const lngDiff = Math.abs(loc1.lng - loc2.lng);
+    
+    return latDiff > 0.0001 || lngDiff > 0.0001;
+  }
+
+  /**
+   * B3 (legacy): Call Directions API cho TẤT CẢ các ngày - dùng cho route mới
+   */
+  private async calculateDirectionsForAllDays(
+    days: DayDto[],
+    startLocation?: { lat: number; lng: number } | null,
+  ): Promise<any[]> {
+    const result: any[] = [];
+
+    for (const day of days) {
+      console.log(`🗺️  Calculating directions for Day ${day.day}...`);
+      if (!day.travel_mode) {
+        throw new Error(`travel_mode is required for day ${day.day}`);
+      }
+      const updatedActivities = await this.calculateDirectionsForDay(
+        day.activities,
+        day.travel_mode,
+        startLocation,
+      );
+      result.push({
+        day: day.day,
+        activities: updatedActivities,
+        day_start_time: day.day_start_time,
+        travel_mode: day.travel_mode,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Kiểm tra và tạo POI mới nếu chưa có trong DB
+   */
+  private async ensurePOIExists(activity: ActivityDto): Promise<void> {
+    const { google_place_id, name, location } = activity;
+
+    if (!google_place_id || !name || !location) {
+      throw new HttpException(
+        'Each activity must have google_place_id, name, and location',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Kiểm tra POI đã có trong DB chưa
+    const existingPlace = await this.placeModel
+      .findOne({ googlePlaceId: google_place_id })
+      .exec();
+
+    if (!existingPlace) {
+      console.log(`🆕 Creating new POI: ${name} (${google_place_id})`);
+      await this.createAndEnrichPOI(google_place_id, name, location);
+    } else {
+      console.log(`✅ POI exists: ${name} (${google_place_id})`);
+    }
+  }
+
+  /**
+   * Tạo và enrich POI mới - sử dụng PlaceService để tái sử dụng code
+   */
+  private async createAndEnrichPOI(
+    googlePlaceId: string,
+    name: string,
+    location: { lat: number; lng: number },
+  ): Promise<void> {
+    // Sử dụng PlaceService.upsertPlace để tạo hoặc cập nhật POI
+    await this.placeService.upsertPlace({
+      placeID: googlePlaceId,
+      name,
+      formatted_address: 'Đang cập nhật...',
+      location: { lat: location.lat, lng: location.lng },
+      emotional_tags: new Map<string, number>(),
+      type: 'other',
+      latitude: location.lat,
+      longitude: location.lng,
+    });
+    console.log(`💾 Saved new POI to DB: ${name}`);
+
+    // Enrich với Google Places API sử dụng PlaceService
+    try {
+      await this.placeService.enrichPlaceDetails({
+        googlePlaceId,
+        forceRefresh: true,
+      });
+      console.log(`✨ Enriched POI: ${name}`);
+    } catch (error) {
+      console.error(`❌ Error enriching POI ${googlePlaceId}:`, error.message);
+    }
+  }
+
+  /**
+   * Tính toán Directions cho các POI trong một ngày
+   */
+  private async calculateDirectionsForDay(
+    activities: ActivityDto[],
+    travelMode: string,
+    startLocation?: { lat: number; lng: number } | null,
+  ): Promise<any[]> {
+    const result: any[] = [];
+
+    for (let i = 0; i < activities.length; i++) {
+      const current = activities[i];
+      const activityData: any = {
+        google_place_id: current.google_place_id,
+        name: current.name,
+        location: current.location,
+        emotional_tags: current.emotional_tags || {},
+        opening_hours: current.opening_hours || null,
+        visit_duration_minutes: current.visit_duration_minutes || 90,
+        ecs_score: current.ecs_score,
+        estimated_arrival: current.estimated_arrival,
+        estimated_departure: current.estimated_departure,
+      };
+
+      // Nếu có startLocation và đây là activity đầu tiên, tính polyline từ start đến activity đầu tiên
+      if (i === 0 && startLocation?.lat !== undefined && startLocation?.lng !== undefined) {
+        const directionsFromStart = await this.getDirections(
+          `${startLocation.lat},${startLocation.lng}`,
+          `${current.location.lat},${current.location.lng}`,
+          travelMode,
+        );
+        
+        if (directionsFromStart.status === 'OK' && directionsFromStart.routes.length > 0) {
+          const startRoute = directionsFromStart.routes[0];
+          const startLeg = startRoute.legs[0];
+          activityData.start_encoded_polyline = startRoute.overview_polyline.points;
+          activityData.start_travel_duration_minutes = Math.round(
+            startLeg.duration.value / 60,
+          );
+          activityData.start_steps = startLeg.steps; // Thêm steps cho đoạn đường từ start
+        } else {
+          console.warn(`⚠️ No route from start to first POI`);
+          activityData.start_encoded_polyline = null;
+          activityData.start_travel_duration_minutes = null;
+          if (directionsFromStart.origin_port) activityData.start_origin_port = directionsFromStart.origin_port;
+          if (directionsFromStart.destination_port) activityData.start_destination_port = directionsFromStart.destination_port;
+        }
+      }
+
+      // Tính Directions từ POI trước đó đến POI hiện tại (để gán travel_duration_minutes đúng)
+      // travel_duration_minutes của POI hiện tại = thời gian đi từ POI trước đó đến POI hiện tại
+      if (i > 0) {
+        const prev = activities[i - 1];
+        const directions = await this.getDirections(
+          `${prev.location.lat},${prev.location.lng}`,
+          `${current.location.lat},${current.location.lng}`,
+          travelMode,
+        );
+
+        if (directions.status === 'OK' && directions.routes.length > 0) {
+          const route = directions.routes[0];
+          const leg = route.legs[0];
+
+          activityData.encoded_polyline = route.overview_polyline.points;
+          activityData.travel_duration_minutes = Math.round(
+            leg.duration.value / 60,
+          );
+          activityData.steps = leg.steps;
+        } else {
+          console.warn(`⚠️ No route between ${prev.name} and ${current.name}`);
+          activityData.encoded_polyline = null;
+          activityData.travel_duration_minutes = null;
+          if (directions.origin_port) activityData.origin_port = directions.origin_port;
+          if (directions.destination_port) activityData.destination_port = directions.destination_port;
+        }
+      } else {
+        // POI đầu tiên không có travel_duration_minutes (đã có start_travel_duration_minutes)
+        activityData.encoded_polyline = null;
+        activityData.travel_duration_minutes = null;
+      }
+
+      result.push(activityData);
+    }
+
+    return result;
+  }
+
+  /**
+   * Gọi Google Routes API (thay thế Directions API)
+   */
+  private async getDirections(
+    origin: string,
+    destination: string,
+    mode: string,
+  ): Promise<any> {
+    try {
+      console.log(`🔍 getDirections called with:`, { origin, destination, mode });
+      
+      // Parse origin và destination (có thể là "lat,lng" hoặc place_id)
+      const parseLocation = (location: string) => {
+        if (location.includes(',')) {
+          const [lat, lng] = location.split(',').map(Number);
+          return { lat, lng };
+        }
+        return null;
+      };
+
+      const originCoords = parseLocation(origin);
+      const destCoords = parseLocation(destination);
+
+      console.log(`📍 Parsed coordinates:`, { originCoords, destCoords });
+
+      if (!originCoords || !destCoords) {
+        throw new HttpException(
+          'Invalid origin or destination format',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      // Sử dụng fetchDirectionsInfo đã có sẵn
+      console.log(`🚀 Calling fetchDirectionsInfo...`);
+      const result = await this.fetchDirectionsInfo(
+        originCoords,
+        destCoords,
+        mode || 'driving',
+      );
+
+      console.log(`📥 fetchDirectionsInfo result:`, { 
+        hasPolyline: !!result.encoded_polyline, 
+        hasDuration: !!result.travel_duration_minutes,
+        duration: result.travel_duration_minutes
+      });
+
+      if (!result.encoded_polyline || !result.travel_duration_minutes) {
+        console.warn(`⚠️ No route found for ${origin} -> ${destination} with mode ${mode}`);
+        // Không throw error ngay, trả về response với route rỗng
+        return {
+          status: 'ZERO_RESULTS',
+          routes: [],
+          origin_port: result.origin_port,
+          destination_port: result.destination_port,
+        };
+      }
+
+      // Format lại giống Directions API response để tương thích với code cũ
+      const response = {
+        status: 'OK',
+        routes: [
+          {
+            overview_polyline: {
+              points: result.encoded_polyline,
+            },
+            legs: [
+              {
+                duration: {
+                  value: result.travel_duration_minutes * 60,
+                  text: `${Math.round(result.travel_duration_minutes)} phút`,
+                },
+                steps: result.steps, // Thêm steps vào response
+              },
+            ],
+          },
+        ],
+        origin_port: result.origin_port,
+        destination_port: result.destination_port,
+      };
+      
+      console.log(`✅ getDirections success`);
+      return response;
+    } catch (error) {
+      console.error('❌ getDirections error:', error?.message || error);
+      throw new HttpException(
+        `Cannot get directions: ${error?.message || 'Unknown error'}`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
+  /**
+   * B5: Lưu hoặc cập nhật route vào DB
+   */
+  private async saveOrUpdateRoute(data: {
+    route_id?: string;
+    user_id: string;
+    route_data_json: any;
+    title?: string;
+    destination?: string;
+    duration_days?: number;
+    start_datetime?: string;
+    start_location?: { lat: number; lng: number } | null;
+    status?: string;
+    alerts?: any[];
+  }): Promise<ItineraryDocument> {
+    const {
+      route_id,
+      user_id,
+      route_data_json,
+      title,
+      destination,
+      duration_days,
+      start_datetime,
+      start_location,
+      status,
+      alerts,
+    } = data;
+
+    // Nếu có route_id → cập nhật
+    if (route_id) {
+      console.log(`🔍 Looking for route: ${route_id} by user: ${user_id}`);
+      
+      // Tìm route chỉ bằng route_id trước (không cần user_id)
+      const existing = await this.itineraryModel
+        .findOne({ route_id })
+        .exec();
+
+      if (existing) {
+        console.log(`✅ Found existing route: ${route_id}, updating...`);
+        existing.route_data_json = route_data_json;
+        if (title) existing.title = title;
+        if (destination) existing.destination = destination;
+        if (duration_days) existing.duration_days = duration_days;
+        if (start_datetime)
+          existing.start_datetime = new Date(start_datetime);
+        if (start_location) existing.start_location = start_location as any;
+        if (status) existing.status = status as any;
+        if (alerts) (existing as any).alerts = alerts;
+
+        return existing.save();
+      } else {
+        console.log(`⚠️ Route not found: ${route_id}, creating new...`);
+      }
+    }
+
+    // Không có route_id hoặc không tìm thấy → tạo mới
+    const newRouteId = route_id || `route_${randomUUID()}`;
+    console.log(`🆕 Creating new route with ID: ${newRouteId}`);
+    const newRoute = new this.itineraryModel({
+      route_id: newRouteId,
+      user_id,
+      created_at: new Date(),
+      route_data_json,
+      title: title || null,
+      destination: destination || null,
+      duration_days: duration_days || null,
+      start_datetime: start_datetime ? new Date(start_datetime) : null,
+      start_location: start_location || null,
+      status: status || 'DRAFT',
+      alerts: alerts || [],
+    });
+
+    return newRoute.save();
   }
 }

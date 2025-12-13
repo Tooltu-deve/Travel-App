@@ -58,19 +58,19 @@ const TabIcon: React.FC<{
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  
+
   return (
     <>
-      {/* Shadow gradient overlay above tab bar - positioned ABOVE the border */}
+      {/* Shadow gradient overlay above tab bar */}
       <LinearGradient
         colors={[COLORS.primaryTransparent, COLORS.primaryLight, COLORS.primaryMedium]}
         style={[styles.shadowGradient, { bottom: 70 + insets.bottom + 2 }]}
         pointerEvents="none"
       />
-      
-      {/* Blue border line with shadow on top of tab bar */}
+
+      {/* Border line on top of tab bar */}
       <View style={[styles.topBorderLine, { bottom: 70 + insets.bottom }]} pointerEvents="none" />
-      
+
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -90,6 +90,7 @@ export default function TabLayout() {
             fontSize: 11,
             fontWeight: '600',
             marginTop: 4,
+            color: COLORS.textMain,
           },
           tabBarIconStyle: {
             marginTop: 0,
@@ -154,7 +155,7 @@ export default function TabLayout() {
         />
       </Tabs>
       
-      <View style={[styles.safeAreaBottom, { height: insets.bottom, backgroundColor: COLORS.bgMain }]} />
+      <View style={[styles.safeAreaBottom, { height: insets.bottom }]} />
     </>
   );
 }
@@ -185,6 +186,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+    backgroundColor: COLORS.bgMain,
   },
   iconContainer: {
     alignItems: 'center',

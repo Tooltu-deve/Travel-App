@@ -18,6 +18,7 @@ import { ItineraryService } from './itinerary.service';
 import { GenerateRouteDto } from './dto/generate-route.dto';
 import { UpdateItineraryStatusDto } from './dto/update-itinerary-status.dto';
 import { ItineraryResponseDto } from './dto/itinerary-response.dto';
+import { CustomRouteDto } from './dto/custom-route.dto';
 
 @Controller('itineraries')
 export class ItineraryController {
@@ -39,10 +40,18 @@ export class ItineraryController {
       generateDto,
     );
 
+    // Geocode start_location để trả về tọa độ
+    const startLocation = await this.itineraryService.geocodeAddress(
+      generateDto.start_location,
+    );
+
+    const routeResponse = this.mapToResponse(savedRoute);
+    routeResponse.start_location = startLocation;
+
     return {
       message:
         'Lộ trình đã được tạo và lưu với trạng thái DRAFT. Vui lòng xác nhận để lưu chính thức.',
-      route: this.mapToResponse(savedRoute),
+      route: routeResponse,
     };
   }
 
@@ -82,7 +91,7 @@ export class ItineraryController {
   @HttpCode(HttpStatus.OK)
   async getUserRoutes(
     @Request() req,
-    @Query('status') status?: 'DRAFT' | 'CONFIRMED' | 'ARCHIVED',
+    @Query('status') status?: 'DRAFT' | 'CONFIRMED' | 'MAIN',
   ): Promise<{
     message: string;
     routes: ItineraryResponseDto[];
@@ -150,6 +159,28 @@ export class ItineraryController {
     };
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post('custom-route')
+  @HttpCode(HttpStatus.OK)
+  async processCustomRoute(
+    @Request() req,
+    @Body() dto: CustomRouteDto,
+  ): Promise<{
+    message: string;
+    route: ItineraryResponseDto;
+  }> {
+    const userId = req.user.userId;
+    const savedRoute = await this.itineraryService.processCustomRoute(
+      userId,
+      dto.route,
+    );
+
+    return {
+      message: dto.message || 'Lộ trình đã được xử lý thành công.',
+      route: this.mapToResponse(savedRoute),
+    };
+  }
+
   private mapToResponse(route: any): ItineraryResponseDto {
     const routeObject = route?.toObject ? route.toObject() : { ...route };
     return {
@@ -160,6 +191,7 @@ export class ItineraryController {
       destination: routeObject.destination,
       duration_days: routeObject.duration_days,
       start_datetime: routeObject.start_datetime || null,
+      start_location: routeObject.start_location || null,
       status: routeObject.status,
       route_data_json: routeObject.route_data_json,
       alerts: routeObject.alerts || [],

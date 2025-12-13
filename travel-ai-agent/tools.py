@@ -29,7 +29,7 @@ db = client[DB_NAME]
 places_collection = db["places"]
 
 # Load embedding model for similarity search
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+# embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Commented out to save RAM
 
 @tool
 def search_places(query: str, location_filter: Optional[str] = None, category_filter: Optional[str] = None, limit: int = 10) -> List[Dict]:
@@ -64,22 +64,22 @@ def search_places(query: str, location_filter: Optional[str] = None, category_fi
         if not places:
             return []
             
-        # If query is provided, use semantic search
+        # If query is provided, use keyword-based search (semantic search disabled to save RAM)
         if query.strip():
-            # Create embeddings for search
-            query_embedding = embedding_model.encode(query)
+            # Use keyword matching instead of embeddings
+            query_lower = query.lower()
+            query_keywords = set(query_lower.split())
             
-            # Calculate similarity for each place
+            # Calculate similarity for each place based on keyword matching
             scored_places = []
             for place in places:
                 # Create text representation of place
-                place_text = f"{place.get('name', '')} {place.get('description', '')} {place.get('type', '')}"
-                place_embedding = embedding_model.encode(place_text)
+                place_text = f"{place.get('name', '')} {place.get('description', '')} {place.get('type', '')}".lower()
+                place_keywords = set(place_text.split())
                 
-                # Calculate cosine similarity
-                similarity = np.dot(query_embedding, place_embedding) / (
-                    np.linalg.norm(query_embedding) * np.linalg.norm(place_embedding)
-                )
+                # Calculate keyword overlap similarity
+                common_keywords = query_keywords & place_keywords
+                similarity = len(common_keywords) / len(query_keywords) if query_keywords else 0
                 
                 place['similarity_score'] = float(similarity)
                 scored_places.append(place)
@@ -258,14 +258,23 @@ def optimize_route_with_ecs(
             # Format opening hours
             opening_hours = place.get('openingHours') or place.get('regularOpeningHours') or {}
             
-            poi = {
+            # Keep all original fields from place
+            poi = place.copy()
+            
+            # Convert any datetime objects to ISO strings (for JSON serialization)
+            for key, value in poi.items():
+                if hasattr(value, 'isoformat'):
+                    poi[key] = value.isoformat()
+            
+            # Update/override specific fields for AI Optimizer
+            poi.update({
                 'google_place_id': place.get('googlePlaceId') or str(place.get('_id')),
                 'name': place.get('name', 'Unknown'),
                 'emotional_tags': emotional_tags,
                 'location': {'lat': lat, 'lng': lng},
                 'opening_hours': opening_hours,
                 'visit_duration_minutes': place.get('visit_duration_minutes', 90)
-            }
+            })
             poi_list.append(poi)
         
         if not poi_list:
@@ -273,12 +282,17 @@ def optimize_route_with_ecs(
             return {'optimized_route': []}
         
         # Prepare request payload
+        # Convert datetime to ISO string if it's not already a string
+        start_datetime_str = start_datetime
+        if hasattr(start_datetime, 'isoformat'):
+            start_datetime_str = start_datetime.isoformat()
+        
         payload = {
             'poi_list': poi_list,
             'user_mood': user_mood,
             'duration_days': duration_days,
             'current_location': current_location,
-            'start_datetime': start_datetime,
+            'start_datetime': start_datetime_str,
             'ecs_score_threshold': ecs_score_threshold
         }
         
@@ -287,9 +301,9 @@ def optimize_route_with_ecs(
         print(f"   → Duration: {duration_days} days")
         print(f"   → ECS threshold: {ecs_score_threshold}")
         
-        # Call AI Optimizer Service
+        # Call AI Optimizer Service (chatbot endpoint - fast round-robin)
         response = requests.post(
-            f"{AI_OPTIMIZER_URL}/optimize-route",
+            f"{AI_OPTIMIZER_URL}/optimize",
             json=payload,
             timeout=60  # 60 seconds timeout
         )
@@ -568,6 +582,302 @@ def calculate_budget_estimate(places: List[Dict], person_count: int = 1) -> Dict
             'currency': 'VND'
         }
 
+# =====================================
+# LIVE TRAVEL COMPANION TOOLS
+# =====================================
+
+@tool
+def search_nearby_places(
+    current_location: Dict[str, float],
+    radius_km: float = 2.0,
+    category: Optional[str] = None,
+    limit: int = 10
+) -> List[Dict]:
+    """
+    Tìm các địa điểm gần vị trí hiện tại của user (LIVE COMPANION).
+    
+    Args:
+        current_location: Vị trí hiện tại {'lat': float, 'lng': float}
+        radius_km: Bán kính tìm kiếm (km)
+        category: Loại địa điểm ('restaurant', 'cafe', 'attraction', 'shopping')
+        limit: Số lượng kết quả tối đa
+        
+    Returns:
+        List[Dict]: Danh sách địa điểm gần nhất, sorted theo khoảng cách
+    """
+    try:
+        lat = current_location.get('lat')
+        lng = current_location.get('lng')
+        
+        if not lat or not lng:
+            return []
+        
+        # Get all places from database
+        query_filter = {}
+        if category:
+            # Map common categories to database types
+            category_map = {
+                'restaurant': ['restaurant', 'food'],
+                'cafe': ['cafe', 'coffee_shop'],
+                'attraction': ['tourist_attraction', 'museum', 'park'],
+                'shopping': ['shopping_mall', 'store', 'market'],
+                'hospital': ['hospital', 'pharmacy'],
+                'atm': ['atm', 'bank']
+            }
+            types = category_map.get(category.lower(), [category])
+            query_filter['type'] = {'$in': types}
+        
+        places = list(places_collection.find(query_filter, {"_id": 0}))
+        
+        if not places:
+            return []
+        
+        # Calculate distance for each place
+        nearby_places = []
+        for place in places:
+            if 'location' not in place or 'coordinates' not in place['location']:
+                continue
+            
+            place_lng, place_lat = place['location']['coordinates']
+            # Calculate distance directly (Haversine formula)
+            import math
+            lat1, lon1 = lat, lng
+            lat2, lon2 = place_lat, place_lng
+            lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+            a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+            c = 2 * math.asin(math.sqrt(a))
+            distance = round(c * 6371, 2)  # Earth radius in km
+            
+            if distance <= radius_km:
+                place['distance_km'] = distance
+                nearby_places.append(place)
+        
+        # Sort by distance
+        nearby_places.sort(key=lambda x: x['distance_km'])
+        
+        return nearby_places[:limit]
+        
+    except Exception as e:
+        print(f"Error searching nearby places: {e}")
+        return []
+
+@tool
+def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
+    """
+    Lấy thông tin chi tiết về một địa điểm (LIVE COMPANION).
+    User hỏi: "Địa điểm này có gì?", "Chỗ này ăn gì ngon?"
+    
+    Args:
+        place_id: Google Place ID hoặc MongoDB _id
+        place_name: Tên địa điểm (nếu không có place_id)
+        
+    Returns:
+        Dict: Thông tin chi tiết về địa điểm
+    """
+    try:
+        query = {}
+        
+        if place_id:
+            # Try both googlePlaceId and _id
+            from bson import ObjectId
+            try:
+                query = {'$or': [
+                    {'googlePlaceId': place_id},
+                    {'_id': ObjectId(place_id)}
+                ]}
+            except:
+                query = {'googlePlaceId': place_id}
+        elif place_name:
+            query = {'name': {'$regex': place_name, '$options': 'i'}}
+        else:
+            return {}
+        
+        place = places_collection.find_one(query, {"_id": 0})
+        
+        if not place:
+            return {}
+        
+        # Format detailed info
+        details = {
+            'name': place.get('name', 'Unknown'),
+            'description': place.get('description', ''),
+            'address': place.get('formatted_address') or place.get('address', ''),
+            'type': place.get('type', ''),
+            'rating': place.get('rating'),
+            'user_ratings_total': place.get('user_ratings_total'),
+            'price_level': place.get('priceLevel'),
+            'budget_range': place.get('budgetRange', 'mid-range'),
+            'opening_hours': place.get('openingHours', {}),
+            'phone': place.get('phone', ''),
+            'website': place.get('website', ''),
+            'photos': place.get('photos', []),
+            'emotional_tags': place.get('emotionalTags', {}),
+            'visit_duration_minutes': place.get('visit_duration_minutes', 90),
+        }
+        
+        return details
+        
+    except Exception as e:
+        print(f"Error getting place details: {e}")
+        return {}
+
+@tool
+def get_travel_tips(
+    place: Dict,
+    tip_type: str = "food"
+) -> Dict:
+    """
+    Lấy travel tips cho một địa điểm (LIVE COMPANION).
+    User hỏi: "Ăn gì ngon?", "Chỗ check-in đẹp?", "Nên làm gì?"
+    
+    Args:
+        place: Dict thông tin địa điểm
+        tip_type: Loại tips ('food', 'photo', 'activity', 'warning')
+        
+    Returns:
+        Dict: Travel tips và suggestions
+    """
+    try:
+        place_name = place.get('name', 'Unknown')
+        place_type = place.get('type', '')
+        emotional_tags = place.get('emotionalTags', {})
+        
+        tips = {
+            'place_name': place_name,
+            'tip_type': tip_type,
+            'suggestions': [],
+            'best_time': '',
+            'warnings': []
+        }
+        
+        # Generate tips based on type
+        if tip_type == 'food':
+            # Food recommendations based on place type
+            if 'restaurant' in place_type or 'food' in place_type:
+                tips['suggestions'].append(f"Đặc sản tại {place_name}")
+                tips['suggestions'].append("Món ăn được đánh giá cao nhất")
+            else:
+                # Find nearby restaurants
+                if 'location' in place and 'coordinates' in place['location']:
+                    lng, lat = place['location']['coordinates']
+                    nearby = search_nearby_places.invoke({
+                        'current_location': {'lat': lat, 'lng': lng},
+                        'category': 'restaurant',
+                        'radius_km': 1.0,
+                        'limit': 3
+                    })
+                    for restaurant in nearby[:3]:
+                        tips['suggestions'].append(
+                            f"{restaurant.get('name')} ({restaurant.get('distance_km', 0):.1f}km)"
+                        )
+        
+        elif tip_type == 'photo':
+            # Photo spot recommendations
+            tips['suggestions'].append(f"Góc check-in đẹp nhất tại {place_name}")
+            if 'Lãng mạn' in emotional_tags or 'Cảnh quan thiên nhiên' in emotional_tags:
+                tips['best_time'] = "Hoàng hôn (5:00 PM - 6:30 PM)"
+            else:
+                tips['best_time'] = "Sáng sớm (7:00 AM - 9:00 AM) hoặc chiều muộn"
+            tips['suggestions'].append("Nên chụp từ góc nào?")
+            tips['suggestions'].append("Best lighting time")
+        
+        elif tip_type == 'activity':
+            # Activity recommendations
+            if 'museum' in place_type:
+                tips['suggestions'].append("Tham quan triển lãm chính")
+                tips['suggestions'].append("Nghe audio guide")
+            elif 'park' in place_type:
+                tips['suggestions'].append("Đi bộ thư giãn")
+                tips['suggestions'].append("Ngồi thư giãn bên hồ")
+            elif 'temple' in place_type or 'church' in place_type:
+                tips['suggestions'].append("Cầu nguyện/thắp hương")
+                tips['suggestions'].append("Tìm hiểu lịch sử")
+                tips['warnings'].append("⚠️ Ăn mặc lịch sự khi vào điện thờ")
+        
+        elif tip_type == 'warning':
+            # Safety warnings
+            if 'busy' in emotional_tags or 'Náo nhiệt' in emotional_tags:
+                tips['warnings'].append("⚠️ Đông người, cẩn thận túi xách")
+            if 'expensive' in place.get('budgetRange', ''):
+                tips['warnings'].append("💰 Giá cao, nên kiểm tra menu trước")
+        
+        return tips
+        
+    except Exception as e:
+        print(f"Error getting travel tips: {e}")
+        return {'place_name': '', 'tip_type': tip_type, 'suggestions': [], 'best_time': '', 'warnings': []}
+
+@tool
+def find_emergency_services(
+    current_location: Dict[str, float],
+    service_type: str = "hospital"
+) -> List[Dict]:
+    """
+    Tìm dịch vụ khẩn cấp gần nhất (LIVE COMPANION).
+    User hỏi: "Tìm bệnh viện", "Pharmacy gần đây", "ATM ở đâu?"
+    
+    Args:
+        current_location: Vị trí hiện tại {'lat': float, 'lng': float}
+        service_type: Loại dịch vụ ('hospital', 'pharmacy', 'atm', 'police')
+        
+    Returns:
+        List[Dict]: Danh sách dịch vụ khẩn cấp gần nhất
+    """
+    try:
+        # Map service types to place types
+        service_map = {
+            'hospital': ['hospital', 'clinic'],
+            'pharmacy': ['pharmacy', 'drug_store'],
+            'atm': ['atm', 'bank'],
+            'police': ['police'],
+            'gas_station': ['gas_station']
+        }
+        
+        types = service_map.get(service_type.lower(), [service_type])
+        
+        # Search in database
+        lat = current_location.get('lat')
+        lng = current_location.get('lng')
+        
+        if not lat or not lng:
+            return []
+        
+        # Get places matching service types
+        query = {'type': {'$in': types}}
+        places = list(places_collection.find(query, {"_id": 0}))
+        
+        # Calculate distance and sort
+        services = []
+        for place in places:
+            if 'location' not in place or 'coordinates' not in place['location']:
+                continue
+            
+            place_lng, place_lat = place['location']['coordinates']
+            # Calculate distance directly (Haversine formula)
+            import math
+            lat1, lon1 = lat, lng
+            lat2, lon2 = place_lat, place_lng
+            lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+            a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+            c = 2 * math.asin(math.sqrt(a))
+            distance = round(c * 6371, 2)  # Earth radius in km
+            
+            place['distance_km'] = distance
+            services.append(place)
+        
+        # Sort by distance and return top 5
+        services.sort(key=lambda x: x['distance_km'])
+        
+        return services[:5]
+        
+    except Exception as e:
+        print(f"Error finding emergency services: {e}")
+        return []
+
 # Export all tools for LangGraph
 TOOLS = [
     search_places,
@@ -576,7 +886,12 @@ TOOLS = [
     optimize_route_with_ecs,  # NEW: AI Optimizer Service integration
     check_opening_status,
     check_weather,
-    calculate_budget_estimate
+    calculate_budget_estimate,
+    # Live Travel Companion tools
+    search_nearby_places,
+    get_place_details,
+    get_travel_tips,
+    find_emergency_services,
 ]
 
 if __name__ == "__main__":

@@ -1,48 +1,102 @@
 // HomeScreen - Trang chủ với các điểm đến nổi bật, danh mục và đánh giá
-import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Animated, TouchableOpacity, NativeSyntheticEvent, NativeScrollEvent, Dimensions } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useEffect, useRef, useState } from 'react';
+import { Dimensions, Image, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ChatButton } from '../../components/HomeScreen/ChatButton';
+import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
+import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
-import { featuredDestinations, reviews } from '../mockData';
-import { DestinationCard } from '../../components/HomeScreen/DestinationCard';
-import { CategorySection } from '../../components/HomeScreen/CategorySection';
-import { ReviewCard } from '../../components/HomeScreen/ReviewCard';
-import { SearchBar } from '../../components/HomeScreen/SearchBar';
-import { ChatButton } from '../../components/HomeScreen/ChatButton';
+import { useAuth } from '../../contexts/AuthContext';
+import { getPlacesAPI, API_BASE_URL } from '../../services/api';
+import { translatePlaceType } from '../../constants/placeTypes';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
-const SNAP_INTERVAL = CARD_WIDTH; // Snap theo full width
+const CARD_WIDTH = SCREEN_WIDTH;
+const SNAP_INTERVAL = CARD_WIDTH;
 const INITIAL_REVIEWS_COUNT = 2;
 
 const HomeScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
-  const [isCategoryExpanded, setIsCategoryExpanded] = useState(false);
+  const { userData } = useAuth();
   const [showAllReviews, setShowAllReviews] = useState(false);
-  const [showChatButton, setShowChatButton] = useState(false);
+  const [showChatButton, setShowChatButton] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
-  const [isCarouselScrolling, setIsCarouselScrolling] = useState(false);
-  const [welcomeOpacity] = useState(new Animated.Value(1));
+  const [featuredDestinations, setFeaturedDestinations] = useState<any[]>([]);
+  const [isLoadingDestinations, setIsLoadingDestinations] = useState(true);
   const scrollViewRef = useRef<ScrollView>(null);
   const carouselRef = useRef<ScrollView>(null);
   const autoScrollTimeout = useRef<number | null>(null);
-  const hideTimeout = useRef<number | null>(null);
   const lastScrollY = useRef(0);
 
-  const displayedReviews = showAllReviews ? reviews : reviews.slice(0, INITIAL_REVIEWS_COUNT);
-
+  // Fetch top 5 destinations with highest rating
   useEffect(() => {
-    Animated.timing(welcomeOpacity, {
-      toValue: isSearchExpanded ? 0 : 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [isSearchExpanded]);
+    let mounted = true;
+    (async () => {
+      setIsLoadingDestinations(true);
+      try {
+        const allPlaces = await getPlacesAPI();
+        if (!mounted) return;
+        
+        if (Array.isArray(allPlaces) && allPlaces.length) {
+          // Filter places with photos and rating, then get top 5
+          const topPlaces = allPlaces
+            .filter((p: any) => {
+              const hasPhoto = p.photos && Array.isArray(p.photos) && p.photos.length > 0;
+              const hasRating = typeof p.rating === 'number' && p.rating > 0;
+              return hasPhoto && hasRating;
+            })
+            .sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0))
+            .slice(0, 5)
+            .map((p: any, index: number) => {
+              // Map to DestinationCard format
+              const photoName = p.photos[0]?.name || '';
+              const imageUri = photoName 
+                ? `${API_BASE_URL}/api/v1/places/photo?name=${encodeURIComponent(photoName)}&maxWidthPx=800`
+                : '';
+              
+              // Extract location/region from address
+              const addressParts = (p.address || '').split(',').map((s: string) => s.trim());
+              const location = addressParts[addressParts.length - 2] || addressParts[0] || 'Vietnam';
+              const region = addressParts[addressParts.length - 1] || 'VIETNAM';
+              
+              // Get type label
+              const typeLabel = translatePlaceType(p.type || 'other');
+              
+              // Only show type as amenity
+              const amenities: string[] = [typeLabel];
+              
+              return {
+                id: p._id?.toString() || p.googlePlaceId || String(index),
+                name: p.name || 'Địa điểm',
+                location: location,
+                region: region.toUpperCase(),
+                size: typeLabel, // Use type as size
+                distance: p.address ? addressParts[0] : '',
+                guests: p.reviews?.length || 0,
+                duration: p.budgetRange || 'Miễn phí',
+                amenities: amenities,
+                price: '', // Removed price display
+                reviews: `${p.reviews?.length || 0} đánh giá`,
+                rating: p.rating || 0,
+                image: { uri: imageUri },
+                googlePlaceId: p.googlePlaceId,
+              };
+            });
+          
+          setFeaturedDestinations(topPlaces);
+        }
+      } catch (error) {
+        console.error('Error fetching featured destinations:', error);
+      } finally {
+        setIsLoadingDestinations(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   useEffect(() => {
     if (!isAutoScrollEnabled) return;
@@ -62,7 +116,6 @@ const HomeScreen: React.FC = () => {
 
   const handleUserTouch = () => {
     setIsAutoScrollEnabled(false);
-    setIsCarouselScrolling(true);
     if (autoScrollTimeout.current) {
       clearTimeout(autoScrollTimeout.current);
     }
@@ -72,7 +125,6 @@ const HomeScreen: React.FC = () => {
     const contentOffsetX = event.nativeEvent.contentOffset.x;
     const index = Math.round(contentOffsetX / SNAP_INTERVAL);
     setCurrentIndex(index);
-    setIsCarouselScrolling(false);
     setTimeout(() => {
       setIsAutoScrollEnabled(true);
     }, 5000);
@@ -80,22 +132,6 @@ const HomeScreen: React.FC = () => {
 
   const handleMainScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const currentScrollY = event.nativeEvent.contentOffset.y;
-    const scrollDirection = currentScrollY > lastScrollY.current ? 'down' : 'up';
-    if (scrollDirection === 'up') {
-      setShowChatButton(false);
-      if (hideTimeout.current) {
-        clearTimeout(hideTimeout.current);
-        hideTimeout.current = null;
-      }
-    } else if (scrollDirection === 'down' && currentScrollY > 100) {
-      setShowChatButton(true);
-      if (hideTimeout.current) {
-        clearTimeout(hideTimeout.current);
-      }
-      hideTimeout.current = setTimeout(() => {
-        setShowChatButton(false);
-      }, 3000);
-    }
     lastScrollY.current = currentScrollY;
   };
 
@@ -109,82 +145,38 @@ const HomeScreen: React.FC = () => {
 
   return (
     <LinearGradient
-      colors={[COLORS.gradientStart, COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.gradientBlue3]}
-      locations={[0, 0.3, 0.6, 1]}
+      colors={['#e6f6ff', '#ccecff']}
+      locations={[0, 1]}
       style={homeStyles.gradientContainer}
     >
       <ScrollView 
         ref={scrollViewRef}
-        style={homeStyles.container} 
+        style={{flex:1}}
         showsVerticalScrollIndicator={false}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
-        scrollEnabled={!isCarouselScrolling}
       >
-        <View style={[homeStyles.headerContainer, { paddingTop: insets.top + SPACING.md }]}>
-          <Animated.View 
-            style={[
-              homeStyles.headerTextContainer,
-              { opacity: welcomeOpacity }
-            ]}
-            pointerEvents={isSearchExpanded ? 'none' : 'auto'}
-          >
+        <View style={[homeStyles.headerContainer, { paddingTop: insets.top }]}>
+          <View style={homeStyles.headerTextContainer}>
             <Text style={homeStyles.welcomeText}>Welcome !</Text>
-            <Text style={homeStyles.subtitleText}>Trần Minh Thanh</Text>
-          </Animated.View>
-          <View style={[homeStyles.headerButtonsContainer, { top: insets.top + SPACING.md }]}>
-            <SearchBar onExpandChange={setIsSearchExpanded} />
-            <TouchableOpacity style={homeStyles.headerButton}>
-              <FontAwesome name="cog" size={22} color={COLORS.primary} />
-            </TouchableOpacity>
+            <Text style={homeStyles.subtitleText}>{userData?.fullName || 'User'}</Text>
+          </View>
+          <View style={homeStyles.logoWrapper}>
+            <LinearGradient
+              colors={['rgba(48, 131, 255, 0.2)', 'rgba(48, 131, 255, 0.1)', 'rgba(48, 131, 255, 0.02)', 'rgba(48, 131, 255, 0)']}
+              style={homeStyles.glowContainer}
+              start={{ x: 0.5, y: 0.5 }}
+              end={{ x: 0, y: 0 }}
+            />
+            <Image
+              source={require('@/assets/images/logo.png')}
+              style={homeStyles.logo}
+              resizeMode="contain"
+            />
           </View>
         </View>
 
-        <View style={homeStyles.featuredSection}>
-          <Text style={homeStyles.featuredTitle}>Điểm đến nổi bật</Text>
-        </View>
-
-        <View style={homeStyles.carouselWrapper}>
-          <ScrollView
-            ref={carouselRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            pagingEnabled={false}
-            scrollEventThrottle={16}
-            decelerationRate="fast"
-            snapToInterval={SNAP_INTERVAL}
-            snapToAlignment="start"
-            directionalLockEnabled={true}
-            alwaysBounceVertical={false}
-            bounces={false}
-            onScroll={handleScroll}
-            onScrollBeginDrag={handleUserTouch}
-            onMomentumScrollEnd={handleMomentumScrollEnd}
-            contentContainerStyle={homeStyles.carouselContent}
-          >
-            {featuredDestinations.map((destination) => (
-              <DestinationCard 
-                key={destination.id} 
-                destination={destination}
-                onInteraction={handleUserTouch}
-              />
-            ))}
-          </ScrollView>
-
-          <View style={homeStyles.cardDotsContainer} pointerEvents="none">
-            {featuredDestinations.map((_, j) => (
-              <View
-                key={j}
-                style={[
-                  homeStyles.dot,
-                  currentIndex === j ? homeStyles.dotActive : homeStyles.dotInactive,
-                ]}
-              />
-            ))}
-          </View>
-        </View>
-
-        {/* Divider before categories */}
+        {/* Divider after header */}
         <LinearGradient
           colors={[COLORS.primaryTransparent, COLORS.primaryStrong, COLORS.primaryTransparent]}
           start={{ x: 0, y: 0 }}
@@ -192,10 +184,63 @@ const HomeScreen: React.FC = () => {
           style={homeStyles.sectionDivider}
         />
 
-        <CategorySection
-          isExpanded={isCategoryExpanded}
-          onToggleExpanded={() => setIsCategoryExpanded(!isCategoryExpanded)}
-        />
+        <View style={homeStyles.featuredSection}>
+          <Text style={homeStyles.featuredTitle}>Điểm đến nổi bật</Text>
+        </View>
+
+        <View style={homeStyles.carouselWrapper}>
+          {isLoadingDestinations ? (
+            <View style={homeStyles.loadingContainer}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
+              <Text style={homeStyles.loadingText}>Đang tải điểm đến...</Text>
+            </View>
+          ) : featuredDestinations.length > 0 ? (
+            <>
+              <ScrollView
+                ref={carouselRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                pagingEnabled={false}
+                scrollEventThrottle={16}
+                decelerationRate="fast"
+                snapToInterval={SNAP_INTERVAL}
+                snapToAlignment="start"
+                directionalLockEnabled={true}
+                alwaysBounceVertical={false}
+                bounces={false}
+                onScroll={handleScroll}
+                onScrollBeginDrag={handleUserTouch}
+                onMomentumScrollEnd={handleMomentumScrollEnd}
+                contentContainerStyle={homeStyles.carouselContent}
+              >
+                {featuredDestinations.map((destination) => (
+                  <DestinationCard 
+                    key={destination.id} 
+                    destination={destination}
+                    onInteraction={handleUserTouch}
+                  />
+                ))}
+              </ScrollView>
+
+              <View style={homeStyles.cardDotsContainer} pointerEvents="none">
+                {featuredDestinations.map((_, j) => (
+                  <View
+                    key={j}
+                    style={[
+                      homeStyles.dot,
+                      currentIndex === j ? homeStyles.dotActive : homeStyles.dotInactive,
+                    ]}
+                  />
+                ))}
+              </View>
+            </>
+          ) : (
+            <View style={homeStyles.emptyContainer}>
+              <FontAwesome name="map-marker" size={48} color={COLORS.textSecondary} />
+              <Text style={homeStyles.emptyText}>Chưa có điểm đến nào</Text>
+            </View>
+          )}
+        </View>
 
         {/* Divider before reviews */}
         <LinearGradient
@@ -206,11 +251,8 @@ const HomeScreen: React.FC = () => {
         />
 
         <View style={homeStyles.reviewsSection}>
-          <Text style={homeStyles.reviewsTitle}>Đánh giá</Text>
-          {/* Show a single ReviewCard section (places preview) */}
+          <Text style={homeStyles.reviewsTitle}>Có thể bạn sẽ thích</Text>
           <ReviewCard />
-          
-          {/* Reviews header only — ReviewCard handles its own "load more" now */}
         </View>
 
         <View style={{ height: SPACING.xl }} />
@@ -245,25 +287,43 @@ const homeStyles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1000,
   },
+  logoWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 100,
+    width: 100,
+  },
+  glowContainer: {
+    position: 'absolute',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    zIndex: 0,
+  },
+  logo: {
+    width: 100,
+    height: 100,
+    zIndex: 1,
+  },
   headerButton: {
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: COLORS.bgMain,
+    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: COLORS.bgLight,
-    shadowColor: '#000',
+    borderColor: COLORS.borderLight,
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
   },
   welcomeText: {
     fontSize: 32,
     fontWeight: '800',
-    color: COLORS.textDark,
+    color: '#1F2937',
     marginBottom: SPACING.xs / 2,
     letterSpacing: 0.5,
     textShadowColor: 'rgba(0, 163, 255, 0.15)',
@@ -283,7 +343,7 @@ const homeStyles = StyleSheet.create({
   sectionDivider: {
     height: 1.5,
     marginHorizontal: SPACING.xl,
-    marginVertical: SPACING.lg,
+    marginVertical: SPACING.sm,
     borderRadius: 1,
   },
   featuredSection: {
@@ -294,7 +354,7 @@ const homeStyles = StyleSheet.create({
   featuredTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: COLORS.textDark,
+    color: '#222',
     paddingHorizontal: SPACING.xs,
     letterSpacing: 0.5,
     textShadowColor: 'rgba(0, 163, 255, 0.25)',
@@ -306,11 +366,11 @@ const homeStyles = StyleSheet.create({
     paddingVertical: 0,
     paddingTop: SPACING.md,
     marginHorizontal: 0,
-    marginTop: 0,
+    marginTop: SPACING.lg,
     position: 'relative',
   },
   carouselContent: { 
-    paddingHorizontal: 0, // Bỏ padding để card full width
+    paddingHorizontal: 0,
   },
   cardDotsContainer: {
     flexDirection: 'row',
@@ -364,6 +424,29 @@ const homeStyles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.primary,
+  },
+  loadingContainer: {
+    height: 300,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
+  emptyContainer: {
+    height: 300,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+    marginTop: SPACING.sm,
   },
 });
 

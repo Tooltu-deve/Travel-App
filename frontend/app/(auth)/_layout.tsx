@@ -6,26 +6,32 @@ import { Stack } from 'expo-router';
 * Quản lý các màn hình liên quan đến authentication (Login, Register)
 */
 export default function AuthLayout() {
-return (
-<Stack
-screenOptions={{
-headerShown: false, // Không hiển thị header
-}}
->
-<Stack.Screen
-name="login"
-options={{
-title: 'Đăng nhập',
-}}
-/>
-<Stack.Screen
-name="register"
-options={{
-title: 'Đăng ký',
-}}
-/>
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false, // Không hiển thị header
+      }}
+    >
       <Stack.Screen
-        name="mood"
+        name="login/index"
+        options={{
+          title: 'Đăng nhập',
+        }}
+      />
+      <Stack.Screen
+        name="register/index"
+        options={{
+          title: 'Đăng ký',
+        }}
+      />
+      <Stack.Screen
+        name="verify-email/index"
+        options={{
+          title: 'Xác thực email',
+        }}
+      />
+      <Stack.Screen
+        name="mood/index"
         options={{
           title: 'Chọn tâm trạng',
         }}
