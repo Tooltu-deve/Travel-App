@@ -598,7 +598,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         const token = await AsyncStorage.getItem('userToken');
         if (!token) return;
 
-        const response = await autocompletePlacesAPI(searchQuery.trim(), undefined, token);
+        const response = await autocompletePlacesAPI(searchQuery.trim(), undefined, destination, token);
         const predictionsRaw = Array.isArray(response)
           ? response
           : response.predictions || response.suggestions || [];
