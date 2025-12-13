@@ -521,25 +521,19 @@ const ItineraryScreen: React.FC = () => {
   };
 
   const getRouteTitle = (route: TravelRoute, index: number) => {
-    const fallbackTitle =
-      route.route_data_json?.summary?.title ||
-      route.route_data_json?.metadata?.title ||
-      route.route_data_json?.destination;
-
-    const baseTitle =
-      route.title?.trim() ||
-      (typeof fallbackTitle === 'string' && fallbackTitle.trim()) ||
-      `Lộ trình ${route.route_id?.slice(-6) || index + 1}`;
-
-    // Get helper function to extract title from a route
-    const extractTitle = (r: TravelRoute, fallbackIndex: number) => {
-      return (
+    // Helper function to extract base title (without suffix numbers)
+    const extractBaseTitle = (r: TravelRoute, fallbackIndex: number) => {
+      const fullTitle =
         r.title?.trim() ||
         (typeof (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination) === 'string'
           ? (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination).trim()
-          : `Lộ trình ${r.route_id?.slice(-6) || fallbackIndex}`)
-      );
+          : `Lộ trình ${r.route_id?.slice(-6) || fallbackIndex}`);
+      
+      // Remove suffix like (2), (3) etc.
+      return fullTitle.replace(/\s*\(\d+\)$/, '');
     };
+
+    const baseTitle = extractBaseTitle(route, index);
 
     // Combine mainRoute and confirmedRoutes for duplicate checking
     const allRoutes: TravelRoute[] = [];
@@ -550,14 +544,27 @@ const ItineraryScreen: React.FC = () => {
 
     // Find all routes with the same base title
     const sameNameRoutes = allRoutes.filter(r => {
-      const otherTitle = extractTitle(r, allRoutes.indexOf(r) + 1);
-      return otherTitle === baseTitle;
+      const otherBaseTitle = extractBaseTitle(r, allRoutes.indexOf(r) + 1);
+      return otherBaseTitle === baseTitle;
     });
 
     // If only one route with this name, no suffix needed
     if (sameNameRoutes.length === 1) {
       return baseTitle;
     }
+
+    // Priority sorting: Main route first, then by route_id (creation time)
+    sameNameRoutes.sort((a, b) => {
+      const aIsMain = mainRoute?.route_id === a.route_id;
+      const bIsMain = mainRoute?.route_id === b.route_id;
+      
+      // Main route always comes first
+      if (aIsMain && !bIsMain) return -1;
+      if (!aIsMain && bIsMain) return 1;
+      
+      // For non-main routes, sort by route_id (creation time)
+      return a.route_id.localeCompare(b.route_id);
+    });
 
     // Find position of current route in the same-name group (1-indexed)
     const positionInGroup = sameNameRoutes.findIndex(r => r.route_id === route.route_id) + 1;
