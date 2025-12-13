@@ -1931,13 +1931,20 @@ export class ItineraryService {
       // B2: Enrich tất cả POI mới
       await this.enrichAllNewPOIs(optimizedRoute);
 
-      // B3: Call Directions API cho TẤT CẢ POI, truyền travel_mode từng day
-      const updatedRoute = await this.calculateDirectionsForAllDays(
+      // B3: Lấy route cũ từ DB để so sánh (nếu có route_id)
+      let existingRoute: any = null;
+      if (route_id) {
+        existingRoute = await this.itineraryModel.findOne({ route_id }).exec();
+      }
+
+      // B4: Chỉ tính lại Routes API cho các ngày có POI thay đổi
+      const updatedRoute = await this.calculateDirectionsForChangedDays(
         optimizedRoute,
+        existingRoute?.route_data_json?.optimized_route || null,
         (routeDto as any).start_location || (route_data_json as any)?.start_location || null,
       );
 
-      // B4: Lưu vào DB và trả về
+      // B5: Lưu vào DB và trả về
       const savedRoute = await this.saveOrUpdateRoute({
           route_id,
           user_id: userId,
@@ -1987,7 +1994,118 @@ export class ItineraryService {
   }
 
   /**
-   * B3: Call Directions API cho TẤT CẢ các ngày
+   * B3: Chỉ gọi Routes API cho các ngày có POI thay đổi
+   */
+  private async calculateDirectionsForChangedDays(
+    newDays: DayDto[],
+    oldDays: DayDto[] | null,
+    startLocation?: { lat: number; lng: number } | null,
+  ): Promise<any[]> {
+    const result: any[] = [];
+
+    // Nếu không có route cũ, tính lại tất cả
+    if (!oldDays) {
+      console.log(`📍 No existing route, calculating all days...`);
+      return this.calculateDirectionsForAllDays(newDays, startLocation);
+    }
+
+    // So sánh từng ngày để tìm những ngày có POI thay đổi
+    for (const newDay of newDays) {
+      const oldDay = oldDays.find((d) => d.day === newDay.day);
+      
+      // Kiểm tra xem ngày này có POI thay đổi không
+      const hasChanges = this.hasDayChanges(newDay, oldDay);
+
+      if (hasChanges || !oldDay) {
+        // Có thay đổi -> tính lại Routes API cho ngày này
+        console.log(`🔄 Day ${newDay.day} has changes, recalculating routes...`);
+        if (!newDay.travel_mode) {
+          throw new Error(`travel_mode is required for day ${newDay.day}`);
+        }
+        const updatedActivities = await this.calculateDirectionsForDay(
+          newDay.activities,
+          newDay.travel_mode,
+          startLocation,
+        );
+        result.push({
+          day: newDay.day,
+          activities: updatedActivities,
+          day_start_time: newDay.day_start_time,
+          travel_mode: newDay.travel_mode,
+        });
+      } else {
+        // Không có thay đổi -> giữ nguyên từ route cũ
+        console.log(`✅ Day ${newDay.day} unchanged, keeping cached routes`);
+        result.push(oldDay);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Kiểm tra xem một ngày có POI nào thay đổi không
+   */
+  private hasDayChanges(newDay: DayDto, oldDay?: DayDto): boolean {
+    if (!oldDay) return true;
+
+    const newActivities = newDay.activities || [];
+    const oldActivities = oldDay.activities || [];
+
+    // Nếu số lượng POI khác nhau -> có thay đổi
+    if (newActivities.length !== oldActivities.length) {
+      console.log(`   📊 POI count changed: ${oldActivities.length} -> ${newActivities.length}`);
+      return true;
+    }
+
+    // So sánh từng POI
+    for (let i = 0; i < newActivities.length; i++) {
+      const newPOI = newActivities[i];
+      const oldPOI = oldActivities[i];
+
+      const newPlaceId = (newPOI.google_place_id || '').replace(/^places\//, '');
+      const oldPlaceId = (oldPOI.google_place_id || '').replace(/^places\//, '');
+
+      // Nếu google_place_id khác nhau -> có thay đổi
+      if (newPlaceId !== oldPlaceId) {
+        console.log(`   🔄 POI ${i} changed: ${oldPOI.name} -> ${newPOI.name}`);
+        return true;
+      }
+
+      // Kiểm tra vị trí có thay đổi đáng kể không (> 10m)
+      if (this.isLocationDifferent(newPOI.location, oldPOI.location)) {
+        console.log(`   📍 POI ${i} location changed: ${oldPOI.name}`);
+        return true;
+      }
+    }
+
+    // Kiểm tra travel_mode có thay đổi không
+    if (newDay.travel_mode !== oldDay.travel_mode) {
+      console.log(`   🚗 Travel mode changed: ${oldDay.travel_mode} -> ${newDay.travel_mode}`);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Kiểm tra xem 2 vị trí có khác nhau đáng kể không (> 10m)
+   */
+  private isLocationDifferent(
+    loc1?: { lat: number; lng: number },
+    loc2?: { lat: number; lng: number },
+  ): boolean {
+    if (!loc1 || !loc2) return true;
+    
+    // Khoảng cách xấp xỉ: ~0.0001 độ ≈ ~11m
+    const latDiff = Math.abs(loc1.lat - loc2.lat);
+    const lngDiff = Math.abs(loc1.lng - loc2.lng);
+    
+    return latDiff > 0.0001 || lngDiff > 0.0001;
+  }
+
+  /**
+   * B3 (legacy): Call Directions API cho TẤT CẢ các ngày - dùng cho route mới
    */
   private async calculateDirectionsForAllDays(
     days: DayDto[],
@@ -2124,12 +2242,13 @@ export class ItineraryService {
         }
       }
 
-      // Tính Directions đến POI tiếp theo
-      if (i < activities.length - 1) {
-        const next = activities[i + 1];
+      // Tính Directions từ POI trước đó đến POI hiện tại (để gán travel_duration_minutes đúng)
+      // travel_duration_minutes của POI hiện tại = thời gian đi từ POI trước đó đến POI hiện tại
+      if (i > 0) {
+        const prev = activities[i - 1];
         const directions = await this.getDirections(
+          `${prev.location.lat},${prev.location.lng}`,
           `${current.location.lat},${current.location.lng}`,
-          `${next.location.lat},${next.location.lng}`,
           travelMode,
         );
 
@@ -2141,15 +2260,16 @@ export class ItineraryService {
           activityData.travel_duration_minutes = Math.round(
             leg.duration.value / 60,
           );
-          activityData.steps = leg.steps; // Thêm steps vào activityData
+          activityData.steps = leg.steps;
         } else {
-          console.warn(`⚠️ No route between ${current.name} and ${next.name}`);
+          console.warn(`⚠️ No route between ${prev.name} and ${current.name}`);
           activityData.encoded_polyline = null;
           activityData.travel_duration_minutes = null;
           if (directions.origin_port) activityData.origin_port = directions.origin_port;
           if (directions.destination_port) activityData.destination_port = directions.destination_port;
         }
       } else {
+        // POI đầu tiên không có travel_duration_minutes (đã có start_travel_duration_minutes)
         activityData.encoded_polyline = null;
         activityData.travel_duration_minutes = null;
       }
@@ -2281,11 +2401,15 @@ export class ItineraryService {
 
     // Nếu có route_id → cập nhật
     if (route_id) {
+      console.log(`🔍 Looking for route: ${route_id} by user: ${user_id}`);
+      
+      // Tìm route chỉ bằng route_id trước (không cần user_id)
       const existing = await this.itineraryModel
-        .findOne({ route_id, user_id })
+        .findOne({ route_id })
         .exec();
 
       if (existing) {
+        console.log(`✅ Found existing route: ${route_id}, updating...`);
         existing.route_data_json = route_data_json;
         if (title) existing.title = title;
         if (destination) existing.destination = destination;
@@ -2297,11 +2421,14 @@ export class ItineraryService {
         if (alerts) (existing as any).alerts = alerts;
 
         return existing.save();
+      } else {
+        console.log(`⚠️ Route not found: ${route_id}, creating new...`);
       }
     }
 
     // Không có route_id hoặc không tìm thấy → tạo mới
-    const newRouteId = `route_${randomUUID()}`;
+    const newRouteId = route_id || `route_${randomUUID()}`;
+    console.log(`🆕 Creating new route with ID: ${newRouteId}`);
     const newRoute = new this.itineraryModel({
       route_id: newRouteId,
       user_id,
