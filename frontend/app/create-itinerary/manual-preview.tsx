@@ -365,7 +365,7 @@ export default function ManualPreviewScreen() {
       const token = await AsyncStorage.getItem('userToken');
       
       // Use backend autocomplete API with token
-      const data = await autocompletePlacesAPI(query, sessionToken, token || undefined);
+      const data = await autocompletePlacesAPI(query, sessionToken, undefined, token || undefined);
 
       // Backend returns array directly, not wrapped in predictions
       if (data && Array.isArray(data)) {

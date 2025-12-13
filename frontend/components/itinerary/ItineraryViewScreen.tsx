@@ -19,7 +19,7 @@ import { MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING } from '../../constants';
-import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI, autocompletePlacesAPI } from '../../services/api';
+import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI, autocompletePlacesAPI, getLikedPlacesAPI, getPlaceByIdAPI } from '../../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { POIDetailBottomSheet } from '../place/POIDetailBottomSheet';
 
@@ -148,6 +148,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   const [autocompleteResults, setAutocompleteResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isUpdatingRoute, setIsUpdatingRoute] = useState(false);
+  
+  // Favorites state
+  const [favoritesPlaces, setFavoritesPlaces] = useState<any[]>([]);
+  const [isLoadingFavorites, setIsLoadingFavorites] = useState(false);
+  const [isUsingFavorites, setIsUsingFavorites] = useState(false);
 
   // Visited activities state for MAIN routes
   const [visitedActivities, setVisitedActivities] = useState<Set<string>>(new Set());
@@ -683,8 +688,31 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
   // Debounced search for autocomplete
   useEffect(() => {
-    if (!isReplacePOIModalVisible || !searchQuery.trim()) {
-      // Chỉ set state nếu autocompleteResults không rỗng (tránh vòng lặp vô hạn)
+    if (!isReplacePOIModalVisible) {
+      setAutocompleteResults((prev) => prev.length > 0 ? [] : prev);
+      return;
+    }
+
+    // If favorites mode is on
+    if (isUsingFavorites) {
+      if (!searchQuery.trim()) {
+        // Show all favorites when input is empty
+        setAutocompleteResults(favoritesPlaces);
+        return;
+      } else {
+        // Filter favorites based on search text
+        const filteredFavorites = favoritesPlaces.filter(fav =>
+          fav.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          fav.structuredFormat?.mainText?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          fav.structuredFormat?.secondaryText?.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+        setAutocompleteResults(filteredFavorites);
+        return;
+      }
+    }
+
+    // Normal autocomplete mode
+    if (!searchQuery.trim()) {
       setAutocompleteResults((prev) => prev.length > 0 ? [] : prev);
       return;
     }
@@ -731,7 +759,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     }, 300); // 300ms debounce
 
     return () => clearTimeout(timeoutId);
-  }, [searchQuery, isReplacePOIModalVisible]);
+  }, [searchQuery, isReplacePOIModalVisible, isUsingFavorites, favoritesPlaces]);
 
   // Handle replace POI button press
   const handleReplacePOI = (activity: Activity, event: any) => {
@@ -739,7 +767,85 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     setReplacingPOI(activity);
     setSearchQuery('');
     setAutocompleteResults([]);
+    setIsUsingFavorites(false);
     setIsReplacePOIModalVisible(true);
+  };
+
+  // Toggle favorites mode for autocomplete
+  const toggleFavoritesMode = async () => {
+    if (isUsingFavorites) {
+      // Turn off favorites mode
+      setIsUsingFavorites(false);
+      setAutocompleteResults([]);
+      setSearchQuery('');
+    } else {
+      // Turn on favorites mode
+      if (favoritesPlaces.length === 0) {
+        // Load favorites if not loaded yet
+        try {
+          setIsLoadingFavorites(true);
+          const token = await AsyncStorage.getItem('userToken');
+          if (!token) {
+            Alert.alert('Lỗi', 'Bạn cần đăng nhập để tải địa điểm yêu thích.');
+            return;
+          }
+
+          const favorites = await getLikedPlacesAPI(token);
+          if (favorites && Array.isArray(favorites)) {
+            // Transform favorites to match autocomplete format
+            const enrichedFavorites = await Promise.all(
+              favorites.map(async (fav, index) => {
+                try {
+                  const placeDetails = await getPlaceByIdAPI(fav.place_id);
+                  return {
+                    placeId: `fav-${fav.place_id}-${index}`,
+                    text: placeDetails.name + (placeDetails.address ? `, ${placeDetails.address}` : ''),
+                    structuredFormat: {
+                      mainText: placeDetails.name,
+                      secondaryText: placeDetails.address || '',
+                    },
+                    isFavorite: true,
+                    rating: placeDetails.rating,
+                    location: placeDetails.location,
+                    originalData: fav,
+                    googlePlaceId: placeDetails.googlePlaceId,
+                  };
+                } catch (error) {
+                  console.warn('Failed to enrich favorite place:', fav.place_id, error);
+                  return {
+                    placeId: `fav-${fav.place_id}-${index}`,
+                    text: `Địa điểm ${fav.place_id}`,
+                    structuredFormat: {
+                      mainText: `Địa điểm ${fav.place_id}`,
+                      secondaryText: '',
+                    },
+                    isFavorite: true,
+                    rating: null,
+                    originalData: fav,
+                  };
+                }
+              })
+            );
+
+            setFavoritesPlaces(enrichedFavorites);
+            setAutocompleteResults(enrichedFavorites);
+            setIsUsingFavorites(true);
+            setSearchQuery('');
+          }
+        } catch (error) {
+          console.error('Load favorites error:', error);
+          Alert.alert('Lỗi', 'Không thể tải địa điểm yêu thích.');
+          return;
+        } finally {
+          setIsLoadingFavorites(false);
+        }
+      } else {
+        // Use already loaded favorites
+        setIsUsingFavorites(true);
+        setAutocompleteResults(favoritesPlaces);
+        setSearchQuery('');
+      }
+    }
   };
 
   // Handle select new POI from autocomplete
@@ -756,7 +862,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         return;
       }
 
-      const placeId = suggestion.placeId || suggestion.place_id;
+      // For favorites, use googlePlaceId; for regular autocomplete, use placeId
+      const placeId = suggestion.isFavorite 
+        ? suggestion.googlePlaceId 
+        : (suggestion.placeId || suggestion.place_id);
       if (!placeId) {
         Alert.alert('Lỗi', 'Không tìm thấy Place ID.');
         return;
@@ -1319,9 +1428,30 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             )}
 
             <View style={styles.searchInputContainer}>
+              {/* Favorites Toggle Button */}
+              <TouchableOpacity
+                style={[
+                  styles.favoritesToggleButton,
+                  isUsingFavorites && styles.favoritesToggleButtonActive
+                ]}
+                onPress={toggleFavoritesMode}
+                disabled={isLoadingFavorites}
+                activeOpacity={0.7}
+              >
+                {isLoadingFavorites ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                  <FontAwesome 
+                    name={isUsingFavorites ? "heart" : "heart-o"} 
+                    size={18} 
+                    color={isUsingFavorites ? COLORS.textWhite : COLORS.primary} 
+                  />
+                )}
+              </TouchableOpacity>
+
               <TextInput
                 style={styles.searchInput}
-                placeholder="Tìm kiếm địa điểm thay thế..."
+                placeholder={isUsingFavorites ? "Tìm trong danh sách yêu thích..." : "Tìm kiếm địa điểm thay thế..."}
                 placeholderTextColor={COLORS.textSecondary}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -1331,6 +1461,16 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 <ActivityIndicator size="small" color={COLORS.primary} style={{ marginLeft: SPACING.sm }} />
               )}
             </View>
+
+            {/* Status hint */}
+            {isUsingFavorites && (
+              <View style={styles.searchHintContainer}>
+                <FontAwesome name="info-circle" size={14} color={COLORS.primary} />
+                <Text style={styles.searchHintText}>
+                  Đang tìm kiếm trong {favoritesPlaces.length} địa điểm yêu thích
+                </Text>
+              </View>
+            )}
 
             <FlatList
               data={autocompleteResults}
@@ -1342,7 +1482,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   disabled={isUpdatingRoute}
                 >
                   <View style={styles.autocompleteItemIcon}>
-                    <FontAwesome name="map-marker" size={16} color={COLORS.primary} />
+                    {item.isFavorite ? (
+                      <FontAwesome name="heart" size={16} color="#E53E3E" />
+                    ) : (
+                      <FontAwesome name="map-marker" size={16} color={COLORS.primary} />
+                    )}
                   </View>
                   <View style={styles.autocompleteItemContent}>
                     <Text style={styles.autocompleteItemName} numberOfLines={1}>
@@ -1353,12 +1497,24 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                         {item.structuredFormat.secondaryText}
                       </Text>
                     )}
+                    {item.rating && (
+                      <View style={styles.ratingContainer}>
+                        <FontAwesome name="star" size={12} color="#F59E0B" />
+                        <Text style={styles.ratingText}>{item.rating}</Text>
+                      </View>
+                    )}
                   </View>
                 </TouchableOpacity>
               )}
               ListEmptyComponent={
-                searchQuery.trim() && !isSearching ? (
-                  <Text style={styles.noResultsText}>Không tìm thấy kết quả</Text>
+                !isSearching && (isUsingFavorites || searchQuery.trim()) ? (
+                  <View style={styles.noResultsContainer}>
+                    <Text style={styles.noResultsText}>
+                      {isUsingFavorites 
+                        ? 'Không tìm thấy địa điểm yêu thích phù hợp'
+                        : 'Không tìm thấy kết quả'}
+                    </Text>
+                  </View>
                 ) : null
               }
               style={styles.autocompleteContainer}
@@ -1907,11 +2063,56 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textSecondary,
   },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    marginTop: 2,
+  },
+  ratingText: {
+    fontSize: 12,
+    color: '#F59E0B',
+    fontWeight: '600',
+  },
+  noResultsContainer: {
+    alignItems: 'center',
+    paddingVertical: SPACING.xl,
+  },
   noResultsText: {
     textAlign: 'center',
     padding: SPACING.lg,
     color: COLORS.textSecondary,
     fontSize: 14,
+  },
+  favoritesToggleButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.bgLightBlue,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SPACING.sm,
+  },
+  favoritesToggleButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+  searchHintContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    backgroundColor: COLORS.bgLightBlue,
+    borderRadius: SPACING.md,
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.sm,
+  },
+  searchHintText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginLeft: SPACING.sm,
+    flex: 1,
   },
   updatingContainer: {
     flexDirection: 'row',
