@@ -109,6 +109,7 @@ interface ItineraryViewScreenProps {
   customRouteData?: CustomItineraryResponse | null; // manual/custom itinerary data
   isManual?: boolean;
   overlayContent?: ReactNode;
+  onProgressUpdate?: () => void; // callback to refresh progress when visited changes
 }
 
 export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
@@ -119,6 +120,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   customRouteData = null,
   isManual = false,
   overlayContent,
+  onProgressUpdate,
 }) => {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
@@ -146,6 +148,12 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   const [autocompleteResults, setAutocompleteResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isUpdatingRoute, setIsUpdatingRoute] = useState(false);
+
+  // Visited activities state for MAIN routes
+  const [visitedActivities, setVisitedActivities] = useState<Set<string>>(new Set());
+
+  // Animation state for visit button
+  const [animatingButtons, setAnimatingButtons] = useState<Set<string>>(new Set());
 
   // Sync custom route data (manual)
   useEffect(() => {
@@ -219,6 +227,58 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     routeData?.startLocationCoordinates ||
     optimizedRoute?.[0]?.startLocationCoordinates ||
     null;
+
+  // Get route status
+  const status = (routeDetails as any)?.status;
+
+  // Load visited activities for MAIN routes and handle route switching
+  useEffect(() => {
+    const handleMainRouteChange = async () => {
+      if (status === 'MAIN' && routeId) {
+        try {
+          // Get the current main route ID
+          const currentMainRouteId = await AsyncStorage.getItem('current_main_route_id');
+          
+          // If this route is newly promoted to MAIN
+          if (currentMainRouteId !== routeId) {
+            console.log('New MAIN route detected:', routeId, 'Previous:', currentMainRouteId);
+            
+            // Clear visited data of old main route
+            if (currentMainRouteId) {
+              const oldVisitedKey = `visited_${currentMainRouteId}`;
+              await AsyncStorage.removeItem(oldVisitedKey);
+              console.log('Cleared visited data for old MAIN route:', currentMainRouteId);
+            }
+            
+            // Clear visited data of current route (fresh start)
+            const visitedKey = `visited_${routeId}`;
+            await AsyncStorage.removeItem(visitedKey);
+            setVisitedActivities(new Set());
+            
+            // Set this route as current main
+            await AsyncStorage.setItem('current_main_route_id', routeId);
+            console.log('Reset visited data for new MAIN route:', routeId);
+          } else {
+            // Same main route, load existing visited data
+            const visitedKey = `visited_${routeId}`;
+            const visitedData = await AsyncStorage.getItem(visitedKey);
+            if (visitedData) {
+              const visitedArray: string[] = JSON.parse(visitedData);
+              const visitedSet = new Set(visitedArray);
+              setVisitedActivities(visitedSet);
+            }
+          }
+        } catch (error) {
+          console.error('Error handling main route change:', error);
+        }
+      } else if (status !== 'MAIN') {
+        // Not a main route, clear visited state
+        setVisitedActivities(new Set());
+      }
+    };
+
+    handleMainRouteChange();
+  }, [status, routeId]);
 
   // Get title
   const title =
@@ -366,6 +426,43 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       latitudeDelta: latDelta,
       longitudeDelta: lngDelta,
     };
+  };
+
+  // Toggle visited activity for MAIN routes
+  const toggleVisited = async (day: number, activityIndex: number) => {
+    if (status !== 'MAIN' || !routeId) return;
+
+    const activityKey = `${day}-${activityIndex}`;
+
+    // Trigger animation
+    setAnimatingButtons(prev => new Set(prev).add(activityKey));
+    setTimeout(() => {
+      setAnimatingButtons(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(activityKey);
+        return newSet;
+      });
+    }, 300);
+
+    const newVisited = new Set(visitedActivities);
+    if (newVisited.has(activityKey)) {
+      newVisited.delete(activityKey);
+    } else {
+      newVisited.add(activityKey);
+    }
+    setVisitedActivities(newVisited);
+
+    // Save to AsyncStorage
+    try {
+      const visitedKey = `visited_${routeId}`;
+      await AsyncStorage.setItem(visitedKey, JSON.stringify([...newVisited]));
+      // Trigger progress update callback
+      if (onProgressUpdate) {
+        onProgressUpdate();
+      }
+    } catch (error) {
+      console.error('Error saving visited activities:', error);
+    }
   };
 
   // Route segments for polylines (bao gồm đoạn từ điểm bắt đầu đến POI đầu tiên nếu có)
@@ -881,9 +978,12 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   key={`start-${selectedDay}`}
                   coordinate={toMapCoordinate(startLocation)!} 
                   title="Điểm bắt đầu"
+                  anchor={{ x: 0.5, y: 1 }}
                 >
-                  <View style={styles.startMarker}>
-                    <Text style={styles.markerText}>BĐ</Text>
+                  <View style={styles.markerContainer}>
+                    <View style={styles.startMarker}>
+                      <Text style={styles.markerText}>BĐ</Text>
+                    </View>
                   </View>
                 </Marker>
               )}
@@ -893,10 +993,21 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const coord = toMapCoordinate(activity.location || activity.place?.location);
                 if (!coord) return null;
 
+                const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
                 return (
-                  <Marker key={`marker-${selectedDay}-${index}`} coordinate={coord}>
-                    <View style={styles.marker}>
-                      <Text style={styles.markerText}>{index + 1}</Text>
+                  <Marker 
+                    key={`marker-${selectedDay}-${index}`} 
+                    coordinate={coord}
+                    anchor={{ x: 0.5, y: 1 }}
+                  >
+                    <View style={styles.markerContainer}>
+                      <View style={[styles.marker, isVisited && styles.markerVisited]}>
+                        {isVisited ? (
+                          <MaterialCommunityIcons name="check" size={16} color={COLORS.textWhite} />
+                        ) : (
+                          <Text style={styles.markerText}>{index + 1}</Text>
+                        )}
+                      </View>
                     </View>
                   </Marker>
                 );
@@ -1018,6 +1129,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   travelTime != null && (!startLocation ? true : index > 0);
                 const hasPhoto = activity.google_place_id; // Sẽ fetch ảnh khi click
                 const rating = activity.ecs_score;
+                const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
 
                 return (
                   <View key={`activity-${index}`}>
@@ -1035,7 +1147,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
                     {/* Activity Card */}
                     <TouchableOpacity
-                      style={styles.activityCard}
+                      style={[styles.activityCard, isVisited && styles.activityCardVisited]}
                       onPress={() => handleActivityPress(activity)}
                       disabled={isEnriching}
                       activeOpacity={0.7}
@@ -1048,10 +1160,20 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                         style={styles.cardGradientOverlay}
                       />
 
-                      {/* Number Badge - Positioned Absolutely at Top-Left */}
-                      <View style={styles.cardNumberBadge}>
+                      {/* Visited overlay gradient */}
+                      {isVisited && (
                         <LinearGradient
-                          colors={[COLORS.primary, COLORS.gradientSecondary]}
+                          colors={[COLORS.success + '10', 'transparent']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.cardVisitedOverlay}
+                        />
+                      )}
+
+                      {/* Number Badge - Positioned Absolutely at Top-Left */}
+                      <View style={[styles.cardNumberBadge, isVisited && styles.cardNumberBadgeVisited]}>
+                        <LinearGradient
+                          colors={[isVisited ? '#66BB6A' : COLORS.primary, isVisited ? '#66BB6A' : COLORS.gradientSecondary]}
                           start={{ x: 0, y: 0 }}
                           end={{ x: 1, y: 1 }}
                           style={styles.numberBadgeGradient}
@@ -1087,14 +1209,50 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           )}
                         </View>
 
-                        {/* Right: Replace POI Button */}
-                        <TouchableOpacity
-                          style={styles.cardReplaceButton}
-                          onPress={(e) => handleReplacePOI(activity, e)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.cardReplaceButtonText}>Thay đổi</Text>
-                        </TouchableOpacity>
+                        {/* Right: Replace POI Button - Only show for draft routes */}
+                        {status === 'DRAFT' && (
+                          <TouchableOpacity
+                            style={styles.cardReplaceButton}
+                            onPress={(e) => handleReplacePOI(activity, e)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.cardReplaceButtonText}>Thay đổi</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {/* Right: Visit Check Button - Only show for main routes */}
+                        {status === 'MAIN' && (
+                          <TouchableOpacity
+                            style={[
+                              styles.cardVisitButton,
+                              visitedActivities.has(`${selectedDay}-${index}`) && styles.cardVisitButtonChecked,
+                              animatingButtons.has(`${selectedDay}-${index}`) && styles.cardVisitButtonAnimating
+                            ]}
+                            onPress={() => toggleVisited(selectedDay, index)}
+                            activeOpacity={0.7}
+                          >
+                            {visitedActivities.has(`${selectedDay}-${index}`) ? (
+                              <LinearGradient
+                                colors={['#66BB6A', '#66BB6A']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={styles.cardVisitButtonGradient}
+                              >
+                                <MaterialCommunityIcons
+                                  name="check"
+                                  size={22}
+                                  color={COLORS.textWhite}
+                                />
+                              </LinearGradient>
+                            ) : (
+                              <MaterialCommunityIcons
+                                name="check"
+                                size={22}
+                                color={COLORS.textSecondary}
+                              />
+                            )}
+                          </TouchableOpacity>
+                        )}
                       </View>
 
                       {/* Tap hint */}
@@ -1341,9 +1499,9 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   marker: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: COLORS.primary,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1354,11 +1512,24 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 4,
     elevation: 5,
+    overflow: 'visible',
+  },
+  markerContainer: {
+    overflow: 'visible',
   },
   markerText: {
     color: COLORS.textWhite,
     fontSize: 13,
     fontWeight: 'bold',
+  },
+  markerVisited: {
+    backgroundColor: '#66BB6A',
+    borderColor: '#66BB6A',
+    shadowColor: '#66BB6A',
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    elevation: 8,
+    overflow: 'visible',
   },
   tabsContainer: {
     backgroundColor: 'transparent',
@@ -1461,6 +1632,15 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary + '10',
     position: 'relative',
   },
+  activityCardVisited: {
+    borderColor: '#66BB6A',
+    borderWidth: 2,
+    shadowColor: '#66BB6A',
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+    transform: [{ scale: 1.02 }],
+  },
   cardNumberBadge: {
     position: 'absolute',
     top: SPACING.md,
@@ -1475,6 +1655,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 6,
     elevation: 5,
+  },
+  cardNumberBadgeVisited: {
+    shadowColor: '#66BB6A',
   },
   cardNumberBadgeTop: {
     position: 'absolute',
@@ -1497,6 +1680,14 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: '100%',
+  },
+  cardVisitedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '100%',
+    borderRadius: SPACING.lg,
   },
   cardContent: {
     flexDirection: 'row',
@@ -1591,6 +1782,37 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: COLORS.textWhite,
+  },
+  cardVisitButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.bgCard,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#4DB8FF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
+    transform: [{ scale: 1 }],
+  },
+  cardVisitButtonChecked: {
+    backgroundColor: '#66BB6A',
+    borderColor: '#66BB6A',
+    shadowColor: '#66BB6A',
+    shadowOpacity: 0.4,
+    transform: [{ scale: 1.05 }],
+  },
+  cardVisitButtonAnimating: {
+    transform: [{ scale: 1.2 }],
+  },
+  cardVisitButtonGradient: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   replaceModalContainer: {
     flex: 1,

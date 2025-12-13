@@ -45,6 +45,7 @@ const ItineraryScreen: React.FC = () => {
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
   const [editingRouteName, setEditingRouteName] = useState('');
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+  const [mainRouteProgress, setMainRouteProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
   
   useFocusEffect(
     React.useCallback(() => {
@@ -148,6 +149,56 @@ const ItineraryScreen: React.FC = () => {
     };
   }, []); // Empty dependency array - runs only once on mount
 
+  // Function to calculate main route progress
+  const calculateProgress = React.useCallback(async () => {
+    if (mainRoute) {
+      try {
+        // Get total places in main route
+        const routeData = mainRoute.route_data_json;
+        let totalPlaces = 0;
+
+        // Count from optimized_route
+        if (Array.isArray(routeData?.optimized_route)) {
+          totalPlaces = routeData.optimized_route.reduce(
+            (sum: number, day: any) => sum + (day?.activities?.length || 0),
+            0
+          );
+        } else if (Array.isArray(routeData?.days)) {
+          // Count from custom itinerary days
+          totalPlaces = routeData.days.reduce(
+            (sum: number, day: any) => sum + ((day?.places && Array.isArray(day.places)) ? day.places.length : 0),
+            0
+          );
+        }
+
+        // Get visited data
+        const visitedKey = `visited_${mainRoute.route_id}`;
+        const visitedData = await AsyncStorage.getItem(visitedKey);
+        let completedPlaces = 0;
+        if (visitedData) {
+          try {
+            const visitedArray = JSON.parse(visitedData);
+            completedPlaces = visitedArray.length;
+          } catch (e) {
+            console.error('Error parsing visited data:', e);
+          }
+        }
+
+        setMainRouteProgress({
+          completed: completedPlaces,
+          total: totalPlaces,
+        });
+      } catch (error) {
+        console.error('Error calculating progress:', error);
+      }
+    }
+  }, [mainRoute]);
+
+  // Calculate main route progress
+  useEffect(() => {
+    calculateProgress();
+  }, [mainRoute]);
+
   const handleActivateRoute = async (routeId: string) => {
     try {
       const token = await AsyncStorage.getItem('userToken');
@@ -205,6 +256,18 @@ const ItineraryScreen: React.FC = () => {
                 }
 
                 setMainRoute(newMainRoute);
+
+                // Reset visited data for the new main route
+                if (newMainRoute) {
+                  try {
+                    const visitedKey = `visited_${newMainRoute.route_id}`;
+                    await AsyncStorage.removeItem(visitedKey);
+                    // Recalculate progress after resetting
+                    setMainRouteProgress({ completed: 0, total: 0 });
+                  } catch (error) {
+                    console.error('Error resetting visited data:', error);
+                  }
+                }
 
                 // Refresh confirmed routes for current tab
                 if (activeTab === 'ai') {
@@ -667,6 +730,7 @@ const ItineraryScreen: React.FC = () => {
                       </View>
                     </View>
                   </View>
+
                   <View style={styles.currentCardContent}>
                     <View style={styles.currentCardRow}>
                       <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
@@ -698,6 +762,35 @@ const ItineraryScreen: React.FC = () => {
                       </View>
                     </View>
                   </View>
+                  {/* Progress Bar - Bottom */}
+                  {mainRouteProgress.total > 0 && (
+                    <View style={styles.progressBarBottomContainer}>
+                      <View style={styles.progressBarBackgroundBottom}>
+                        <LinearGradient
+                          colors={['rgba(255, 255, 255, 0.4)', 'rgba(255, 255, 255, 0.2)', 'rgba(255, 255, 255, 0.4)']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.progressBarBackgroundGradient}
+                        />
+                        <View
+                          style={[
+                            styles.progressBarFillBottom,
+                            { width: `${Math.min(100, (mainRouteProgress.completed / mainRouteProgress.total) * 100)}%` }
+                          ]}
+                        />
+                        <Text style={[
+                          styles.progressTextBottom,
+                          { 
+                            color: Math.round((mainRouteProgress.completed / mainRouteProgress.total) * 100) >= 50 
+                              ? '#00A3FF' 
+                              : '#FFFFFF' 
+                          }
+                        ]}>
+                          {mainRouteProgress.completed}/{mainRouteProgress.total} ({Math.round((mainRouteProgress.completed / mainRouteProgress.total) * 100)}%)
+                        </Text>
+                      </View>
+                    </View>
+                  )}
                   {/* Complete Button */}
                   <TouchableOpacity
                     style={styles.completeButton}
@@ -941,6 +1034,7 @@ const ItineraryScreen: React.FC = () => {
             setViewerRouteId(null);
             setViewerRouteData(null);
           }}
+          onProgressUpdate={calculateProgress}
         />
       )}
 
@@ -1065,8 +1159,8 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
   },
   currentCardGradient: {
-    padding: SPACING.lg,
-    gap: SPACING.md,
+    padding: SPACING.md,
+    gap: SPACING.sm,
   },
   currentCardHeader: {
     gap: SPACING.sm,
@@ -1330,6 +1424,40 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: COLORS.textSecondary,
     textAlign: 'center',
+  },
+  progressBarBottomContainer: {
+    marginTop: SPACING.sm,
+  },
+  progressBarBackgroundBottom: {
+    height: 18,
+    borderRadius: 9,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressBarBackgroundGradient: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+  },
+  progressBarFillBottom: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
+  },
+  progressTextBottom: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#00A3FF',
+    textAlign: 'center',
+    zIndex: 1,
   },
   tabContainer: {
     flexDirection: 'row',
