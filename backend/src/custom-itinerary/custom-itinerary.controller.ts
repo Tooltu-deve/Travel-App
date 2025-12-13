@@ -50,11 +50,12 @@ export class CustomItineraryController {
    * Body:
    * - input: chuỗi người dùng nhập (bắt buộc)
    * - sessionToken: optional, để gom billing trong một session
+   * - destination: optional, tên thành phố để giới hạn kết quả trong thành phố đó
    * Debounce 150ms phía server, trả tối đa 5 gợi ý
    */
   @Post('autocomplete')
   async autocomplete(@Body() dto: AutocompleteRequestDto) {
-    return this.customItineraryService.autocompletePlaces(dto.input, dto.sessionToken);
+    return this.customItineraryService.autocompletePlaces(dto.input, dto.sessionToken, dto.destination);
   }
 
   /**

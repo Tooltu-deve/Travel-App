@@ -255,6 +255,7 @@ export class CustomItineraryService {
   async autocompletePlaces(
     userInput: string,
     token?: string,
+    destination?: string,
   ): Promise<
     Array<{
       description: string;
@@ -285,6 +286,24 @@ export class CustomItineraryService {
         includedRegionCodes: ['VN'], // Giới hạn Việt Nam
         sessionToken: token || undefined,
       };
+
+      // Nếu có destination, lấy tọa độ và giới hạn kết quả trong vùng đó
+      if (destination) {
+        try {
+          const location = await this.getCityCoordinates(destination);
+          body.locationRestriction = {
+            circle: {
+              center: {
+                latitude: location.lat,
+                longitude: location.lng,
+              },
+              radius: 50000.0, // 50km radius around the city
+            },
+          };
+        } catch (error) {
+          this.logger.warn(`Could not get coordinates for destination: ${destination}. Proceeding without location restriction.`);
+        }
+      }
       const headers = {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': this.googlePlacesApiKey,
