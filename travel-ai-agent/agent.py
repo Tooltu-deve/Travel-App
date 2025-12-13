@@ -626,44 +626,6 @@ def profile_collector_node(state: TravelState) -> TravelState:
     preferences = state.get("user_preferences", UserPreferences())
     last_message = messages[-1].content if messages else ""
     
-    # CHECK: If user hasn't provided start location, try to detect from user message first
-    # IMPORTANT: Start location MUST be provided explicitly by user
-    start_location_just_detected = False
-    
-    if not preferences.departure_location and last_message:
-        # Try to geocode the user message - they might be answering our question about start location
-        print(f"   🔍 Attempting to geocode user message as start location: '{last_message}'")
-        geocoded = geocode_location(last_message)
-        if geocoded:
-            # Successfully geocoded!
-            preferences.departure_location = last_message.strip()
-            preferences.departure_coordinates = {"lat": geocoded['lat'], "lng": geocoded['lng']}
-            print(f"   ✅ Geocoded start location: {last_message} → ({geocoded['lat']}, {geocoded['lng']})")
-            start_location_just_detected = True
-        else:
-            # Geocoding failed - ask user again
-            print(f"   ❌ Geocoding failed for: {last_message}")
-            ai_response = f"❌ Không tìm thấy địa điểm '{last_message}'.\n\nVui lòng nhập tên thành phố hoặc địa điểm khác (ví dụ: Hà Nội, TP.HCM, Đà Nẵng, hoặc bất kỳ nơi nào)."
-            state["messages"].append(AIMessage(content=ai_response))
-            return state
-    
-    # If still no start location after attempted geocode, ask user
-    if not preferences.departure_location:
-        # Check if this is first message (no destination asked yet)
-        # If yes, ask for start location FIRST
-        if not preferences.destination and not preferences.start_location:
-            # Very first turn - ask for start location immediately
-            print(f"   ❓ First turn - no start location, asking user...")
-            ai_response = "Xin chào! 👋 Tôi là AI Travel Assistant của bạn.\n\nĐầu tiên, mình cần biết bạn **muốn khởi hành từ đâu?** 📍\n\nVui lòng nhập tên thành phố hoặc địa điểm (ví dụ: Hà Nội, TP.HCM, Đà Nẵng, 227 Nguyễn văn cừ, v.v.)"
-            state["messages"].append(AIMessage(content=ai_response))
-            return state
-        else:
-            # User has destination but no start location yet
-            print(f"   ❓ Has destination but no start location - asking user...")
-            ai_response = "Còn một thông tin quan trọng nữa - **bạn muốn khởi hành từ đâu?** 📍\n\nVui lòng nhập tên thành phố hoặc địa điểm (ví dụ: Hà Nội, TP.HCM, Đà Nẵng, 227 Nguyễn văn cừ, v.v.)"
-            state["messages"].append(AIMessage(content=ai_response))
-            return state
-    
     # Determine what information we're still missing
     missing_info = []
     # Use destination field, fallback to start_location for backward compatibility
@@ -713,11 +675,6 @@ def profile_collector_node(state: TravelState) -> TravelState:
     current_dest = updated_preferences.destination or updated_preferences.start_location
     if is_confirmation and current_dest:
         print(f"   ✅ User confirmed (destination already set: {current_dest})")
-        
-        # Auto-set departure_location to destination (this is OK, not asking user)
-        if not updated_preferences.departure_location:
-            updated_preferences.departure_location = current_dest
-            print(f"      → Auto-setting departure_location to: {current_dest}")
     
     # Destination detection (IMPORTANT!)
     # Only update if found in current message - preserve existing destination if not mentioned
@@ -753,29 +710,13 @@ def profile_collector_node(state: TravelState) -> TravelState:
             updated_preferences.destination = existing_dest
             updated_preferences.start_location = existing_dest
             print(f"   🔄 PRESERVED destination from state: {existing_dest}")
+
     
-    # NOTE: Departure location detection removed - no longer asking users for this
-    # Departure location will be auto-set to destination in the logic below
+    # NOTE: Do NOT auto-capture departure location here!
+    # Only capture when system explicitly asks for it (when missing_fields includes it)
+    # Capture will happen AFTER destination is confirmed to be set
     
-    # START LOCATION DETECTION (from user input if they're answering the "where are you starting from?" question)
-    # Accept ANY string and geocode it to validate
-    if not preferences.departure_location and last_message:
-        # Try to geocode the entire user message as a location
-        # Pass destination context for better geocoding accuracy
-        destination_context = updated_preferences.destination or updated_preferences.start_location
-        geocoded = geocode_location(last_message, destination_context)
-        if geocoded:
-            # Successfully geocoded - use this as start location
-            updated_preferences.departure_location = last_message.strip()
-            updated_preferences.departure_coordinates = {"lat": geocoded['lat'], "lng": geocoded['lng']}
-            print(f"   ✅ Geocoded start location from user input: '{last_message}' → ({geocoded['lat']}, {geocoded['lng']})")
-        # If geocode fails, we'll ask user again in the "missing_info" logic
-    
-    # Auto-set departure_location to destination if not set
-    # Handle departure_location preservation
-    # NOTE: Do NOT auto-set to destination! User MUST explicitly provide start location
-    print(f"   🔍 DEBUG: updated_preferences.departure_location = {updated_preferences.departure_location}, preferences.departure_location = {preferences.departure_location}")
-    
+    # Handle departure_location preservation from previous state
     if preferences.departure_location:
         # Preserve existing departure_location if set
         updated_preferences.departure_location = preferences.departure_location
@@ -783,9 +724,9 @@ def profile_collector_node(state: TravelState) -> TravelState:
         if preferences.departure_coordinates:
             updated_preferences.departure_coordinates = preferences.departure_coordinates
         print(f"   🔄 PRESERVED departure_location from state: {preferences.departure_location}")
-    elif updated_preferences.departure_location:
-        # departure_location was just set by geocoding from user message
-        print(f"   ✅ departure_location just set in updated_preferences: {updated_preferences.departure_location}")
+    
+    # DEBUG
+    print(f"   🔍 DEBUG: updated_pref.departure_location = {updated_preferences.departure_location}, pref.departure_location = {preferences.departure_location}")
     
     # Travel style detection
     if any(word in user_text for word in ["chill", "nghỉ dưỡng", "thư giãn", "yên tĩnh"]):
@@ -914,6 +855,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
         updated_preferences.budget_range = "budget"
     elif any(word in user_text for word in ["cao cấp", "sang", "luxury", "đắt tiền"]):
         updated_preferences.budget_range = "luxury"
+    
     # NOTE: Do NOT set default budget_range here - let it remain None
     # This ensures the assistant will ask the user to specify their budget
     
@@ -950,6 +892,22 @@ def profile_collector_node(state: TravelState) -> TravelState:
         missing_fields.append("điểm đến (bạn muốn đi đâu?)")
     elif not updated_preferences.departure_location:
         missing_fields.append("điểm xuất phát (khởi hành từ đâu?)")
+        # CAPTURE LOGIC: Only capture if we have 2+ messages (meaning LLM already asked for departure)
+        # Don't capture on first exchange when we just asked for destination
+        if len(state["messages"]) > 1 and not preferences.departure_location:
+            # User is responding to "where are you starting from?" question
+            # Try to geocode and save their answer
+            destination_context = updated_preferences.destination or updated_preferences.start_location
+            if destination_context:  # Only geocode if we have destination context
+                geocoded = geocode_location(last_message, destination_context)
+                if geocoded:
+                    updated_preferences.departure_location = last_message.strip()
+                    updated_preferences.departure_coordinates = {"lat": geocoded['lat'], "lng": geocoded['lng']}
+                    print(f"   ✅ CAPTURED start location: '{last_message}' → ({geocoded['lat']}, {geocoded['lng']})")
+                else:
+                    # Geocoding failed but save anyway
+                    updated_preferences.departure_location = last_message.strip()
+                    print(f"   ⚠️  Geocoding failed, saved as: '{last_message}'")
     elif not updated_preferences.duration:
         missing_fields.append("thời gian (mấy ngày?)")
     elif not updated_preferences.group_type:
@@ -970,6 +928,7 @@ def profile_collector_node(state: TravelState) -> TravelState:
     
     Thông tin hiện tại về khách hàng:
     - Điểm đến: {updated_preferences.destination or updated_preferences.start_location or "Chưa biết"}
+    - Điểm xuất phát/khởi hành: {updated_preferences.departure_location or "Chưa biết"} ⭐ (BẮT BUỘC - nơi khách bắt đầu chuyến đi)
     - Nhóm đi: {updated_preferences.group_type or "Chưa biết"}  
     - Ngân sách: {updated_preferences.budget_range or "Chưa biết"} ⭐ (CẦN THIẾT - ảnh hưởng đến lựa chọn địa điểm và quán ăn)
     - Thời gian: {updated_preferences.duration or "Chưa biết"}
@@ -991,8 +950,9 @@ def profile_collector_node(state: TravelState) -> TravelState:
     - Nếu khách trả lời "có", "muốn", "được", "ok" SAU KHI đã có đầy đủ tất cả thông tin → Nói sẽ tạo lộ trình
     - Nếu còn thiếu thông tin → Hỏi những trường còn thiếu một cách tự nhiên
     - ⭐ HỎI TUẦN TỰ - Chỉ hỏi MỘT trường còn thiếu duy nhất, không hỏi nhiều cái cùng lúc!
+    - ⭐ ĐIỂM XUẤT PHÁT là BẮT BUỘC - không được bỏ qua! Nếu khách chưa nói → hỏi cụ thể: "Chuyến đi này bạn sẽ khởi hành từ đâu? (ví dụ: Hà Nội, quận 1, nhà sân bay...)"
     - ⭐ NGÂN SÁCH là BẮT BUỘC - không được bỏ qua! Nếu khách chưa nói → hỏi cụ thể: "Bạn có ngân sách bao nhiêu cho chuyến du lịch này?"
-    - ⭐ Tâm trạng/MOOD phải HỎI CUỐI CÙNG, sau khi tất cả các trường khác (điểm đến, khởi hành, thời gian, nhóm đi, ngân sách) đã có!
+    - ⭐ Tâm trạng/MOOD phải HỎI CUỐI CÙNG, sau khi tất cả các trường khác (điểm đến, điểm xuất phát, thời gian, nhóm đi, ngân sách) đã có!
     - Tâm trạng/mood ảnh hưởng trực tiếp đến mức độ chất lượng của các địa điểm được chọn
     - Hỏi tự nhiên, thân thiện, lồng ghép các câu hỏi
     - Khi hỏi về tâm trạng/mood, giới thiệu ngắn gọn các lựa chọn
@@ -1042,7 +1002,15 @@ def itinerary_planner_node(state: TravelState) -> TravelState:
     
     # Get destination (location filter) - use destination field, fallback to start_location
     destination = preferences.destination or preferences.start_location or "Hà Nội"
-    departure = preferences.departure_location or destination  # Default to destination if not set
+    departure = preferences.departure_location  # User MUST provide start location explicitly
+    if not departure:
+        print(f"   ❌ ERROR: departure_location is not set!")
+        error_msg = "❌ Lỗi: Chưa xác định điểm bắt đầu! Vui lòng cung cấp điểm xuất phát của bạn."
+        return {
+            **state,
+            "messages": state["messages"] + [AIMessage(content=error_msg)],
+            "session_stage": "profiling"
+        }
     print(f"   → Destination: {destination}, Departure: {departure}")
     
     # Search for places based on preferences WITH location filter

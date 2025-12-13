@@ -744,6 +744,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
                           {[
                             'Gần đây có quán cà phê nào không?',
+                            'Tôi muốn đi du lịch ở thành phố hồ chí minh',
                             'Tôi muốn đi du lịch ở thành phố Hồ Chí Minh, 2 người, 3 ngày, ngân sách 7 triệu, náo nhiệt, 227 nguyễn văn cừ',
                             'Gợi ý lộ trình du lịch Đà Nẵng - Hội An, 2 người, 2 ngày, 5 triệu đồng'
                           ].map((suggestion, index) => (
