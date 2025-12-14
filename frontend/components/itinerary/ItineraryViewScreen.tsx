@@ -33,6 +33,29 @@ const ROUTE_COLORS = {
 
 const CARD_WIDTH = SCREEN_WIDTH - SPACING.lg * 2;
 
+// Ngưỡng khoảng cách tối thiểu (mét) - địa điểm gần hơn ngưỡng này được coi là trùng lặp
+const MIN_DISTANCE_THRESHOLD_METERS = 30;
+
+// Hàm tính khoảng cách giữa 2 tọa độ (Haversine formula) - trả về khoảng cách tính bằng mét
+const calculateDistanceMeters = (
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number => {
+  const R = 6371000; // Bán kính Trái Đất tính bằng mét
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 interface Step {
   travel_mode: string;
   encoded_polyline: string;
@@ -918,20 +941,78 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       return;
     }
 
+    // For favorites, use googlePlaceId; for regular autocomplete, use placeId
+    const placeId = suggestion.isFavorite 
+      ? suggestion.googlePlaceId 
+      : (suggestion.placeId || suggestion.place_id);
+    if (!placeId) {
+      Alert.alert('Lỗi', 'Không tìm thấy Place ID.');
+      return;
+    }
+
+    // Chuẩn hoá Place ID để so sánh
+    const normalizedNewPlaceId = (placeId || '').replace(/^places\//, '');
+    const oldNormalizedPlaceId = (replacingPOI.google_place_id || '').replace(/^places\//, '');
+
+    // Kiểm tra địa điểm mới có trùng với địa điểm đang thay thế không
+    if (normalizedNewPlaceId === oldNormalizedPlaceId) {
+      Alert.alert(
+        'Địa điểm trùng lặp',
+        'Địa điểm bạn chọn trùng với địa điểm hiện tại. Vui lòng chọn địa điểm khác.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // Kiểm tra địa điểm mới có tồn tại trong cùng ngày chưa (chỉ kiểm tra trong ngày đang chọn)
+    const routeData = (routeDetails as any).route_data_json || routeDetails;
+    let isDuplicate = false;
+    let duplicateName = '';
+
+    // Kiểm tra trong optimized_route (AI route) - chỉ trong ngày đang chọn (selectedDay)
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
+      if (currentDay?.activities && Array.isArray(currentDay.activities)) {
+        for (const act of currentDay.activities) {
+          const actNorm = (act.google_place_id || '').replace(/^places\//, '');
+          if (actNorm === normalizedNewPlaceId && actNorm !== oldNormalizedPlaceId) {
+            isDuplicate = true;
+            duplicateName = act.name || 'Địa điểm này';
+            break;
+          }
+        }
+      }
+    }
+
+    // Kiểm tra trong days (custom itinerary) - chỉ trong ngày đang chọn (selectedDay)
+    if (!isDuplicate && routeData.days && Array.isArray(routeData.days)) {
+      const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
+      if (currentDay?.places && Array.isArray(currentDay.places)) {
+        for (const place of currentDay.places) {
+          const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+          if (placeNorm === normalizedNewPlaceId && placeNorm !== oldNormalizedPlaceId) {
+            isDuplicate = true;
+            duplicateName = place.name || 'Địa điểm này';
+            break;
+          }
+        }
+      }
+    }
+
+    if (isDuplicate) {
+      Alert.alert(
+        'Địa điểm trùng lặp',
+        `"${duplicateName}" đã có trong ngày ${selectedDay}. Vui lòng chọn địa điểm khác.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setIsUpdatingRoute(true);
     try {
       const token = await AsyncStorage.getItem('userToken');
       if (!token) {
         Alert.alert('Lỗi', 'Bạn cần đăng nhập để thay đổi địa điểm.');
-        return;
-      }
-
-      // For favorites, use googlePlaceId; for regular autocomplete, use placeId
-      const placeId = suggestion.isFavorite 
-        ? suggestion.googlePlaceId 
-        : (suggestion.placeId || suggestion.place_id);
-      if (!placeId) {
-        Alert.alert('Lỗi', 'Không tìm thấy Place ID.');
         return;
       }
 
@@ -960,13 +1041,79 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
           ? [enrichedData.location.lng, enrichedData.location.lat]
           : undefined);
 
-      // Chuẩn hoá Place ID, thêm prefix nếu thiếu
-      const normalizedPlaceId = (placeId || '').replace(/^places\//, '');
-      const placeIdForSend = placeId.startsWith('places/') ? placeId : `places/${normalizedPlaceId}`;
-      const oldNormalized = (replacingPOI.google_place_id || '').replace(/^places\//, '');
+      // Lấy tọa độ của địa điểm mới
+      let newLat: number | undefined;
+      let newLng: number | undefined;
+      if (coords && Array.isArray(coords) && coords.length === 2) {
+        newLng = coords[0];
+        newLat = coords[1];
+      } else if (enrichedData?.location?.lat !== undefined && enrichedData?.location?.lng !== undefined) {
+        newLat = enrichedData.location.lat;
+        newLng = enrichedData.location.lng;
+      }
 
-      // Build updated route payload
-      const routeData = (routeDetails as any).route_data_json || routeDetails;
+      // Kiểm tra địa điểm quá gần với các địa điểm khác trong cùng ngày (khác place_id nhưng cùng vị trí)
+      if (newLat !== undefined && newLng !== undefined) {
+        let isTooClose = false;
+        let tooCloseName = '';
+
+        // Kiểm tra trong optimized_route (AI route) - chỉ trong ngày đang chọn
+        if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+          const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
+          if (currentDay?.activities && Array.isArray(currentDay.activities)) {
+            for (const act of currentDay.activities) {
+              // Bỏ qua địa điểm đang thay thế
+              const actNorm = (act.google_place_id || '').replace(/^places\//, '');
+              if (actNorm === oldNormalizedPlaceId) continue;
+
+              if (act.location?.lat !== undefined && act.location?.lng !== undefined) {
+                const distance = calculateDistanceMeters(newLat, newLng, act.location.lat, act.location.lng);
+                if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
+                  isTooClose = true;
+                  tooCloseName = act.name || 'Địa điểm này';
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // Kiểm tra trong days (custom itinerary) - chỉ trong ngày đang chọn
+        if (!isTooClose && routeData.days && Array.isArray(routeData.days)) {
+          const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
+          if (currentDay?.places && Array.isArray(currentDay.places)) {
+            for (const place of currentDay.places) {
+              // Bỏ qua địa điểm đang thay thế
+              const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+              if (placeNorm === oldNormalizedPlaceId) continue;
+
+              if (place.location?.lat !== undefined && place.location?.lng !== undefined) {
+                const distance = calculateDistanceMeters(newLat, newLng, place.location.lat, place.location.lng);
+                if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
+                  isTooClose = true;
+                  tooCloseName = place.name || 'Địa điểm này';
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        if (isTooClose) {
+          setIsUpdatingRoute(false);
+          Alert.alert(
+            'Địa điểm trùng lặp',
+            `"${newName}" quá gần với "${tooCloseName}" (dưới ${MIN_DISTANCE_THRESHOLD_METERS}m, có thể là cùng một địa điểm). Vui lòng chọn địa điểm khác.`,
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+      }
+
+      // Chuẩn hoá Place ID, thêm prefix nếu thiếu
+      const placeIdForSend = placeId.startsWith('places/') ? placeId : `places/${normalizedNewPlaceId}`;
+
+      // Build updated route payload (sử dụng lại routeData đã parse ở trên)
       const updatedRoute = JSON.parse(JSON.stringify(routeData)); // Deep clone
 
       // Find and replace POI in optimized_route
@@ -975,7 +1122,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
           if (day.activities && Array.isArray(day.activities)) {
             day.activities.forEach((act: Activity) => {
               const actNorm = (act.google_place_id || '').replace(/^places\//, '');
-              if (actNorm === oldNormalized) {
+              if (actNorm === oldNormalizedPlaceId) {
                 act.google_place_id = placeIdForSend;
                 act.name = newName;
                 if (coords && Array.isArray(coords) && coords.length === 2) {
@@ -997,7 +1144,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
           if (day.places && Array.isArray(day.places)) {
             day.places.forEach((place: CustomPlaceWithRoute) => {
               const currentPlaceId = (place.google_place_id || place.placeId || '').replace(/^places\//, '');
-              if (currentPlaceId === oldNormalized) {
+              if (currentPlaceId === oldNormalizedPlaceId) {
                 place.google_place_id = placeIdForSend;
                 place.placeId = placeIdForSend;
                 place.name = newName;
