@@ -573,9 +573,12 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
                 style={styles.favoriteButton}
                 onPress={async () => {
                   try {
-                    const id = place.googlePlaceId || place._id?.toString() || placeId;
-                    if (id) {
-                      await toggleLike(id);
+                    // CRITICAL: Always use googlePlaceId for like/unlike (not MongoDB _id)
+                    const googleId = place.googlePlaceId || place.google_place_id;
+                    if (googleId) {
+                      await toggleLike(googleId);
+                    } else {
+                      console.error('No googlePlaceId found for place:', place);
                     }
                   } catch (e) {
                     console.error('Failed to toggle like', e);
@@ -584,9 +587,9 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
               >
                 <BlurView intensity={80} tint="light" style={styles.favoriteButtonBlur}>
                   <FontAwesome
-                    name={isLiked(place.googlePlaceId || place._id?.toString() || placeId || '') ? 'heart' : 'heart-o'}
+                    name={isLiked(place.googlePlaceId || place.google_place_id || '') ? 'heart' : 'heart-o'}
                     size={24}
-                    color={isLiked(place.googlePlaceId || place._id?.toString() || placeId || '') ? COLORS.favoriteActive : COLORS.textMain}
+                    color={isLiked(place.googlePlaceId || place.google_place_id || '') ? COLORS.favoriteActive : COLORS.textMain}
                   />
                 </BlurView>
               </TouchableOpacity>

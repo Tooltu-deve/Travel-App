@@ -12,7 +12,7 @@
  * 🔧 THAY ĐỔI URL TẠI ĐÂY:
  * 
  * Nếu cùng mạng WiFi:
- *   const API_BASE_URL = 'http://192.168.1.255:3000';
+ *   const API_BASE_URL = 'http://192.168.1.178:3000';
  * 
  * Nếu dùng Ngrok (không cùng mạng):
  *   const API_BASE_URL = 'https://a1b2c3d4.ngrok.io';
@@ -22,7 +22,8 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Simulator only)
+// const API_BASE_URL = 'http://192.168.1.178:3000'; // ⬅️ WiFi IP (cho điện thoại thật)
 // ============================================
 // TYPES
 // ============================================
@@ -581,16 +582,19 @@ export const getLikedPlacesAPI = async (
   token: string,
 ): Promise<Array<{
   place_id: string;
+  google_place_id: string;
   type: string;
   opening_hours: any;
   is_stub: boolean;
 }>> => {
   const response = await makeRequest<Array<{
-    id: string;
+    place_id: string;
+    google_place_id: string;
     name: string;
     address: string;
-    mood: string;
-    rating: number | null;
+    type: string;
+    opening_hours: any;
+    is_stub: boolean;
   }>>(
     '/api/v1/favorites/liked-places',
     {
@@ -601,16 +605,16 @@ export const getLikedPlacesAPI = async (
     },
   );
   
-  // Transform data to match expected return type while preserving useful fields
+  // Backend returns the correct structure, just pass it through with all fields
   return response.map(place => ({
-    place_id: place.id,
-    type: place.mood || 'unknown',
-    opening_hours: null,
-    is_stub: false,
+    place_id: place.place_id,
+    google_place_id: place.google_place_id,
+    type: place.type || '',
+    opening_hours: place.opening_hours || {},
+    is_stub: place.is_stub || false,
     // Preserve additional fields for convenience (to avoid extra API calls)
     name: place.name,
     address: place.address,
-    rating: place.rating,
   } as any)); // Cast to any to allow extra fields beyond the interface
 };
 

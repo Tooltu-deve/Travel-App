@@ -72,8 +72,13 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ...base, moods };
       }))).filter(Boolean); // filter out nulls
       setFavorites(enriched);
-      // include place_id (snake_case) when building the set of liked ids
-      const ids = new Set<string>(enriched.map((p: any) => p.google_place_id || p.googlePlaceId || p.place_id || p.placeId || p.id || p._id).filter(Boolean) as string[]);
+      // CRITICAL: Use google_place_id (not MongoDB _id) for consistency with toggleLike
+      // Backend returns both place_id (_id) and google_place_id - we need google_place_id for API calls
+      const ids = new Set<string>(
+        enriched
+          .map((p: any) => p.google_place_id || p.googlePlaceId)
+          .filter(Boolean) as string[]
+      );
       setLikedPlaceIds(ids);
     } catch (err) {
       console.warn('refreshFavorites failed', err);
@@ -86,11 +91,23 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [refreshFavorites]);
 
   const toggleLike = useCallback(async (id: string) => {
-    if (!id) return;
+    if (!id) {
+      console.error('❌ [toggleLike] No ID provided');
+      return;
+    }
+    console.log('🔄 [toggleLike] Starting like/unlike for:', id);
+    console.log('   Current liked IDs:', Array.from(likedPlaceIds));
+    
     const token = await getToken();
-    if (!token) throw new Error('Not logged in');
+    if (!token) {
+      console.error('❌ [toggleLike] Not logged in');
+      throw new Error('Not logged in');
+    }
 
     // optimistic
+    const wasLiked = likedPlaceIds.has(id);
+    console.log(`   Action: ${wasLiked ? 'UNLIKE' : 'LIKE'}`);
+    
     setLikedPlaceIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -99,10 +116,13 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     pendingRef.current.add(id);
 
     try {
-      await likePlaceAPI(token, id);
+      console.log('📡 [toggleLike] Calling likePlaceAPI...');
+      const result = await likePlaceAPI(token, id);
+      console.log('✅ [toggleLike] API success:', result);
       // background refresh favorites
       refreshFavorites().catch(() => {});
-    } catch (err) {
+    } catch (err: any) {
+      console.error('❌ [toggleLike] API error:', err?.message || err);
       // rollback
       setLikedPlaceIds(prev => {
         const next = new Set(prev);
@@ -113,7 +133,7 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } finally {
       pendingRef.current.delete(id);
     }
-  }, [getToken, refreshFavorites]);
+  }, [getToken, refreshFavorites, likedPlaceIds]);
 
   return (
     <FavoritesContext.Provider value={{ likedPlaceIds, favorites, isLiked, toggleLike, refreshFavorites, getPlaceDetails }}>
