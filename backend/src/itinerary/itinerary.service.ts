@@ -499,31 +499,11 @@ export class ItineraryService {
   }
 
   /**
-   * Lọc POI theo budget range
-   */
-  filterByBudget(
-    pois: PlaceDocument[],
-    budgetRange?: string,
-  ): PlaceDocument[] {
-    if (!budgetRange) {
-      return pois;
-    }
-
-    return pois.filter((poi) => {
-      const poiBudget = poi.budgetRange?.toLowerCase();
-      return poiBudget === budgetRange.toLowerCase();
-    });
-  }
-
-
-  /**
-   * Lọc POI theo budget và destination từ database
-   * @param budget - Budget range
+   * Lọc POI theo destination từ database
    * @param destination - Tên thành phố
    * @returns Danh sách POI đã được lọc
    */
-  async filterPoisByBudgetAndDestination(
-    budget: string,
+  async filterPoisByDestination(
     destination: string,
   ): Promise<PlaceDocument[]> {
     // Lấy tất cả POI từ MongoDB
@@ -537,31 +517,9 @@ export class ItineraryService {
       console.log(`📍 Sau khi lọc theo thành phố "${destination}": ${pois.length} POI`);
     }
 
-    // Lọc theo budget range
-    if (budget) {
-      const beforeCount = pois.length;
-      const availableBudgets = new Set(
-        pois.map((p) => p.budgetRange?.toLowerCase()).filter(Boolean),
-      );
-      console.log(
-        `💰 Lọc theo budget "${budget}". Các budget có sẵn: ${Array.from(availableBudgets).join(', ') || 'không có'}`,
-      );
-
-      pois = this.filterByBudget(pois, budget);
-      console.log(
-        `💰 Sau khi lọc theo budget "${budget}": ${pois.length} POI (từ ${beforeCount} POI)`,
-      );
-
-      if (pois.length === 0 && beforeCount > 0) {
-        console.warn(
-          `⚠️  Không tìm thấy POI nào với budget "${budget}". Các budget có sẵn: ${Array.from(availableBudgets).join(', ')}`,
-        );
-      }
-    }
-
     if (pois.length === 0) {
       throw new HttpException(
-        `Không tìm thấy POI nào phù hợp với budget "${budget}" và destination "${destination}".`,
+        `Không tìm thấy POI nào phù hợp với destination "${destination}".`,
         HttpStatus.NOT_FOUND,
       );
     }
@@ -1749,8 +1707,7 @@ export class ItineraryService {
     // Geocode start_location từ string sang coordinates
     const currentLocation = await this.geocodeAddress(generateDto.start_location);
 
-    let places = await this.filterPoisByBudgetAndDestination(
-      generateDto.budget,
+    let places = await this.filterPoisByDestination(
       generateDto.destination,
     );
 
@@ -1805,7 +1762,6 @@ export class ItineraryService {
       destination: generateDto.destination,
       duration_days: generateDto.duration_days,
       start_datetime: generateDto.start_datetime || null,
-      budget: generateDto.budget,
       user_mood: generateDto.user_mood,
       created_at: new Date().toISOString(),
     };
@@ -1862,7 +1818,6 @@ export class ItineraryService {
       destination: generateDto.destination,
       duration_days: generateDto.duration_days,
       start_datetime: generateDto.start_datetime || null,
-      budget: generateDto.budget,
       user_mood: generateDto.user_mood,
       created_at: new Date().toISOString(),
       weather_alerts: alerts,
