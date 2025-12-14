@@ -62,7 +62,6 @@ const SmartAgentFormScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   // Form state
-  const [budget, setBudget] = useState<string>('affordable');
   const [destination, setDestination] = useState<string>('');
   const [profileMoods, setProfileMoods] = useState<string[]>([]);
   const [currentLocationText, setCurrentLocationText] = useState<string>('');
@@ -81,14 +80,6 @@ const SmartAgentFormScreen: React.FC = () => {
   const [autocompleteSessionToken, setAutocompleteSessionToken] = useState<string>('');
 
   // ...existing code...
-
-  // Available options - Sử dụng đúng các giá trị budget từ database
-  const budgetOptions = [
-    { value: 'free', label: 'Miễn phí' },
-    { value: 'cheap', label: 'Rẻ' },
-    { value: 'affordable', label: 'Hợp lý' },
-    { value: 'expensive', label: 'Đắt' },
-  ];
 
   // Danh sách các thành phố từ scrape_poi_reviews.py
   const vietnamCities = [
@@ -247,7 +238,6 @@ const SmartAgentFormScreen: React.FC = () => {
       setIsLoading(true);
       // Prepare request body
       const requestBody: any = {
-        budget,
         destination: destination.trim(),
         user_mood: profileMoods,
         duration_days: days,
@@ -560,34 +550,7 @@ const SmartAgentFormScreen: React.FC = () => {
               />
           </View>
 
-            {/* Budget */}
-            <View style={styles.section}>
-              <Text style={styles.label}>Ngân sách</Text>
-              <View style={styles.optionsRow}>
-                {budgetOptions.map((option) => (
-            <TouchableOpacity
-                    key={option.value}
-                      style={[
-                      styles.optionButton,
-                      budget === option.value && styles.optionButtonActive,
-                      ]}
-                    onPress={() => setBudget(option.value)}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                        styles.optionButtonText,
-                        budget === option.value && styles.optionButtonTextActive,
-                        ]}
-                      >
-                      {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                ))}
-              </View>
-          </View>
-
-          {/* Current Location with Autocomplete */}
+          {/* Current Location with Autocomplete */
           <View style={styles.section}>
               <Text style={styles.label}>Địa điểm xuất phát *</Text>
               <View style={styles.autocompleteContainer}>
@@ -657,6 +620,7 @@ const SmartAgentFormScreen: React.FC = () => {
                 Nhập địa chỉ xuất phát (gợi ý giới hạn trong {destination})
               </Text>
             </View>
+          }
 
             {/* Summary */}
             <View style={styles.summaryContainer}>
