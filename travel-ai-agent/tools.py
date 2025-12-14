@@ -95,17 +95,11 @@ def search_places(query: str, location_filter: Optional[str] = None, category_fi
         print(f"Error in search_places: {e}")
         return []
 
-@tool  
-def calculate_distance(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
+# Helper function for internal use (not a tool)
+def _calculate_distance_helper(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
     """
-    Tính khoảng cách giữa 2 điểm theo tọa độ (lat, lng) bằng Haversine formula.
-    
-    Args:
-        point1: (latitude, longitude) của điểm 1
-        point2: (latitude, longitude) của điểm 2
-        
-    Returns:
-        float: Khoảng cách tính theo km
+    Helper function to calculate distance without @tool decorator.
+    Used internally by other functions.
     """
     try:
         lat1, lon1 = point1
@@ -128,6 +122,20 @@ def calculate_distance(point1: Tuple[float, float], point2: Tuple[float, float])
     except Exception as e:
         print(f"Error calculating distance: {e}")
         return float('inf')
+
+@tool  
+def calculate_distance(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
+    """
+    Tính khoảng cách giữa 2 điểm theo tọa độ (lat, lng) bằng Haversine formula.
+    
+    Args:
+        point1: (latitude, longitude) của điểm 1
+        point2: (latitude, longitude) của điểm 2
+        
+    Returns:
+        float: Khoảng cách tính theo km
+    """
+    return _calculate_distance_helper(point1, point2)
 
 @tool
 def optimize_route(places: List[Dict], start_location: Optional[Tuple[float, float]] = None) -> List[Dict]:
@@ -1232,15 +1240,16 @@ def _find_emergency_from_database(
         return []
 
 @tool
-def get_weather_alerts_and_suggestions(current_location: Dict[str, float]) -> Dict:
+def get_weather_forecast(current_location: Dict[str, float], days: int = 5) -> Dict:
     """
-    Lấy cảnh báo thời tiết realtime và gợi ý hoạt động phù hợp.
+    Lấy dự báo thời tiết 5 ngày tới và gợi ý hoạt động phù hợp.
     
     Args:
         current_location: Vị trí hiện tại {'lat': float, 'lng': float}
+        days: Số ngày dự báo (mặc định 5, tối đa 5)
     
     Returns:
-        Dict với weather data, alerts và activity suggestions
+        Dict với current weather, forecast 5 days, alerts và suggestions
     """
     try:
         lat = current_location.get('lat')
@@ -1249,7 +1258,6 @@ def get_weather_alerts_and_suggestions(current_location: Dict[str, float]) -> Di
         if not lat or not lng:
             return {"error": "Invalid location"}
         
-        # Call OpenWeatherMap API for real-time weather
         api_key = os.getenv("OPENWEATHER_API_KEY")
         if not api_key:
             print("   ⚠️ OPENWEATHER_API_KEY not found, using fallback")
@@ -1257,29 +1265,64 @@ def get_weather_alerts_and_suggestions(current_location: Dict[str, float]) -> Di
                 "weather": "Unknown",
                 "temperature": 25,
                 "alerts": [],
-                "suggestions": ["Mang theo nước uống", "Thoa kem chống nắng"]
+                "suggestions": ["Mang theo nước uống", "Thoa kem chống nắng"],
+                "forecast": []
             }
         
-        # Current weather + forecast
-        url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lng}&appid={api_key}&units=metric&lang=vi"
-        response = requests.get(url, timeout=5)
+        # Get current weather
+        current_url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lng}&appid={api_key}&units=metric&lang=vi"
+        current_response = requests.get(current_url, timeout=5)
         
-        if response.status_code != 200:
-            print(f"   ❌ Weather API error: {response.status_code}")
+        # Get 5-day forecast
+        forecast_url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lng}&appid={api_key}&units=metric&lang=vi"
+        forecast_response = requests.get(forecast_url, timeout=5)
+        
+        if current_response.status_code != 200:
+            print(f"   ❌ Weather API error: {current_response.status_code}")
             return {"error": "Weather API unavailable"}
         
-        data = response.json()
+        current_data = current_response.json()
         
-        # Extract weather info
-        temp = round(data['main']['temp'])
-        feels_like = round(data['main']['feels_like'])
-        humidity = data['main']['humidity']
-        weather_main = data['weather'][0]['main']
-        weather_desc = data['weather'][0]['description']
+        # Extract current weather info
+        temp = round(current_data['main']['temp'])
+        feels_like = round(current_data['main']['feels_like'])
+        humidity = current_data['main']['humidity']
+        weather_main = current_data['weather'][0]['main']
+        weather_desc = current_data['weather'][0]['description']
+        wind_speed = current_data.get('wind', {}).get('speed', 0)
+        
+        # Process forecast data
+        forecast_list = []
+        if forecast_response.status_code == 200:
+            forecast_data = forecast_response.json()
+            # Group by day (take midday forecast ~12:00)
+            daily_forecasts = {}
+            for item in forecast_data['list']:
+                date = datetime.fromtimestamp(item['dt']).date()
+                hour = datetime.fromtimestamp(item['dt']).hour
+                
+                # Take midday forecast (closest to 12:00)
+                if date not in daily_forecasts or abs(hour - 12) < abs(daily_forecasts[date]['hour'] - 12):
+                    daily_forecasts[date] = {
+                        'hour': hour,
+                        'temp': round(item['main']['temp']),
+                        'condition': item['weather'][0]['main'],
+                        'description': item['weather'][0]['description'],
+                        'rain_probability': item.get('pop', 0) * 100  # Probability of precipitation
+                    }
+            
+            # Convert to list and limit to requested days
+            for date in sorted(daily_forecasts.keys())[:days]:
+                forecast_list.append({
+                    'date': date.strftime('%d/%m/%Y'),
+                    'day_name': date.strftime('%A'),
+                    **daily_forecasts[date]
+                })
         
         # Generate alerts based on weather
         alerts = []
         suggestions = []
+        indoor_needed = False
         
         # Temperature alerts
         if temp > 35:
@@ -1289,6 +1332,7 @@ def get_weather_alerts_and_suggestions(current_location: Dict[str, float]) -> Di
                 "Ghé trung tâm thương mại",
                 "Tránh ra ngoài 11h-15h"
             ])
+            indoor_needed = True
         elif temp > 30:
             alerts.append("☀️ Trời nắng nóng, cần bảo vệ da")
             suggestions.extend([
@@ -1308,23 +1352,42 @@ def get_weather_alerts_and_suggestions(current_location: Dict[str, float]) -> Di
             alerts.append("🌧️ Có mưa! Mang theo ô/áo mưa")
             suggestions.extend([
                 "Ghé quán cà phê trong nhà",
-                "Tham quan bảo tàng/trung tâm mua sắm",
-                "Tránh hoạt động ngoài trời"
+                "Tham quan bảo tàng, viện bảo tàng",
+                "Đi trung tâm mua sắm",
+                "Tham quan thủy cung",
+                "Thư giãn tại spa"
             ])
+            indoor_needed = True
+        
+        # Wind alerts
+        if wind_speed > 10:
+            alerts.append("💨 Gió mạnh, cẩn thận khi di chuyển")
         
         # Humidity alerts
         if humidity > 80:
             alerts.append("💧 Độ ẩm cao, có thể khó chịu")
             suggestions.append("Chọn địa điểm có điều hòa")
+            indoor_needed = True
+        
+        # Check forecast for rain in next few days
+        upcoming_rain = [f for f in forecast_list if f.get('condition') in ['Rain', 'Drizzle', 'Thunderstorm']]
+        if upcoming_rain:
+            dates = ", ".join([f['date'] for f in upcoming_rain[:2]])
+            alerts.append(f"📅 Dự báo có mưa: {dates}")
+            # Also mark indoor as needed if rain is forecasted soon
+            indoor_needed = True
         
         return {
             "temperature": temp,
             "feels_like": feels_like,
             "humidity": humidity,
+            "wind_speed": wind_speed,
             "condition": weather_main,
             "description": weather_desc,
             "alerts": alerts,
             "suggestions": suggestions,
+            "indoor_needed": indoor_needed,
+            "forecast": forecast_list,
             "timestamp": datetime.now().isoformat()
         }
     
@@ -1333,8 +1396,154 @@ def get_weather_alerts_and_suggestions(current_location: Dict[str, float]) -> Di
         return {
             "error": str(e),
             "alerts": [],
-            "suggestions": ["Kiểm tra thời tiết trên điện thoại"]
+            "suggestions": ["Kiểm tra thời tiết trên điện thoại"],
+            "forecast": []
         }
+
+@tool
+def search_indoor_places(current_location: Dict[str, float], limit: int = 10) -> List[Dict]:
+    """
+    Tìm các địa điểm trong nhà phù hợp khi thời tiết xấu (mưa, nắng nóng).
+    Ưu tiên Google Places API để có kết quả chính xác và realtime.
+    
+    Args:
+        current_location: Vị trí hiện tại {'lat': float, 'lng': float}
+        limit: Số lượng địa điểm tối đa
+    
+    Returns:
+        List các địa điểm trong nhà gần nhất
+    """
+    try:
+        lat = current_location.get('lat')
+        lng = current_location.get('lng')
+        user_coords = (lat, lng)
+        
+        unique_places = []
+        seen_names = set()
+        
+        # Search directly in MongoDB (Google Places API not enabled for legacy APIs)
+        print(f"   🔍 Searching indoor places in MongoDB at ({lat}, {lng})...")
+        
+        # Search terms for indoor places (both Vietnamese and English)
+        indoor_search_terms = [
+            # Shopping
+            'trung tâm thương mại', 'shopping mall', 'vincom', 'aeon', 'lotte',
+            # Museum & Culture
+            'bảo tàng', 'museum', 'viện bảo tàng', 'art gallery', 'phòng tranh',
+            # Food & Beverage
+            'cafe', 'cà phê', 'coffee', 'nhà hàng', 'restaurant', 
+            # Entertainment
+            'rạp chiếu phim', 'cinema', 'cgv', 'galaxy',
+            # Wellness & Spa
+            'spa', 'massage',
+            # Aquarium
+            'thủy cung', 'aquarium',
+        ]
+        
+        # Search with each term directly in MongoDB
+        for search_term in indoor_search_terms:
+            if len(unique_places) >= limit * 2:  # Get more candidates
+                break
+            
+            try:
+                # Direct MongoDB query with regex
+                places = list(places_collection.find({
+                    "$or": [
+                        {"name": {"$regex": search_term, "$options": "i"}},
+                        {"description": {"$regex": search_term, "$options": "i"}},
+                        {"type": {"$regex": search_term, "$options": "i"}}
+                    ]
+                }, {"_id": 0}).limit(5))
+                
+                for place in places:
+                    name = place.get('name', '')
+                    if name and name not in seen_names:
+                        if 'location' in place and 'coordinates' in place['location']:
+                            lng_db, lat_db = place['location']['coordinates']
+                            distance = _calculate_distance_helper(user_coords, (lat_db, lng_db))
+                            
+                            # Include places within 10km (wider radius)
+                            if distance <= 10.0:
+                                place['distance_km'] = distance
+                                place['source'] = 'mongodb'
+                                
+                                # Ensure rating fields exist
+                                if 'rating' not in place:
+                                    place['rating'] = None
+                                if 'user_ratings_total' not in place:
+                                    place['user_ratings_total'] = 0
+                                
+                                unique_places.append(place)
+                                seen_names.add(name)
+                                print(f"      • {name} - {distance:.1f}km")
+                                
+                                if len(unique_places) >= limit * 2:
+                                    break
+                                    
+            except Exception as e:
+                print(f"   ⚠️ Error searching '{search_term}': {e}")
+                continue
+        
+        # If still not enough, try searching by common types
+        if len(unique_places) < limit:
+            print(f"   🔍 Broadening search with common types...")
+            common_types = ['cafe', 'restaurant', 'museum', 'shopping', 'cinema']
+            
+            for place_type in common_types:
+                if len(unique_places) >= limit * 2:
+                    break
+                
+                try:
+                    places = list(places_collection.find({
+                        "type": {"$regex": place_type, "$options": "i"}
+                    }, {"_id": 0}).limit(10))
+                    
+                    for place in places:
+                        name = place.get('name', '')
+                        if name and name not in seen_names:
+                            if 'location' in place and 'coordinates' in place['location']:
+                                lng_db, lat_db = place['location']['coordinates']
+                                distance = _calculate_distance_helper(user_coords, (lat_db, lng_db))
+                                
+                                if distance <= 10.0:
+                                    place['distance_km'] = distance
+                                    place['source'] = 'mongodb'
+                                    
+                                    if 'rating' not in place:
+                                        place['rating'] = None
+                                    if 'user_ratings_total' not in place:
+                                        place['user_ratings_total'] = 0
+                                    
+                                    unique_places.append(place)
+                                    seen_names.add(name)
+                                    print(f"      • {name} - {distance:.1f}km")
+                                    
+                                    if len(unique_places) >= limit * 2:
+                                        break
+                except Exception as e:
+                    print(f"   ⚠️ Error searching type '{place_type}': {e}")
+                    continue
+        
+        # Sort by distance and return top results
+        unique_places.sort(key=lambda x: x.get('distance_km', 999))
+        
+        result = unique_places[:limit]
+        print(f"   ✅ Returning {len(result)} indoor places from MongoDB")
+        return result
+    
+    except Exception as e:
+        print(f"   ❌ Error searching indoor places: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+@tool
+def get_weather_alerts_and_suggestions(current_location: Dict[str, float]) -> Dict:
+    """
+    DEPRECATED: Use get_weather_forecast() instead.
+    Kept for backward compatibility.
+    """
+    return get_weather_forecast(current_location, days=1)
 
 @tool
 def get_smart_directions(

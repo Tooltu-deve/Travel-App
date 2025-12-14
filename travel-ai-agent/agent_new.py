@@ -30,7 +30,8 @@ from tools import (
     search_nearby_places, get_place_details, get_travel_tips, 
     find_emergency_services,
     # Enhanced features
-    get_weather_alerts_and_suggestions,
+    get_weather_forecast,
+    search_indoor_places,
     get_smart_directions,
     get_time_based_activity_suggestions
 )
@@ -87,9 +88,9 @@ def companion_assistant_node(state: TravelState) -> TravelState:
     
     try:
         # PRIORITY 0: SMART FEATURES (weather, directions, time-based)
-        if any(word in user_text for word in ["thời tiết", "weather", "trời", "nắng", "mưa", "nhiệt độ"]):
+        if any(word in user_text for word in ["thời tiết", "weather", "trời", "nắng", "mưa", "nhiệt độ", "dự báo", "forecast"]):
             print("   🌤️ Type: Weather check")
-            response_text = _handle_weather_check(user_text, current_location)
+            response_text = _handle_weather_check(user_text, current_location, state.get("itinerary"))
         
         elif any(word in user_text for word in ["chỉ đường", "đường đi", "directions", "đi như thế nào", "đi đến", "đến đây", "từ đây", "traffic", "kẹt xe", "giao thông", "muốn đến", "đi tới", "đông người", "đông đúc", "tắc đường", "tình trạng đường", "có đông không", "có kẹt không"]):
             print("   🚗 Type: Smart directions / Traffic check")
@@ -153,8 +154,25 @@ def companion_assistant_node(state: TravelState) -> TravelState:
                 print("   👋 Type: Greeting / First time user")
                 response_text = _handle_greeting(current_location)
             else:
-                print("   💬 Type: General travel question")
-                response_text = _handle_general_question(user_text)
+                # Check if travel-related before processing
+                if not _is_travel_related(user_text):
+                    print("   🚫 Non-travel question detected in default case")
+                    response_text = """🧳 Xin lỗi, tôi là **trợ lý du lịch AI** và chỉ có thể hỗ trợ các câu hỏi liên quan đến du lịch.
+
+💡 **Tôi có thể giúp bạn:**
+• Tìm địa điểm gần đây (nhà hàng, quán café, bảo tàng...)
+• Kiểm tra thời tiết và gợi ý hoạt động
+• Chỉ đường và thông tin giao thông
+• Gợi ý món ăn địa phương
+• Tìm dịch vụ khẩn cấp (bệnh viện, ATM, công an...)
+• Thông tin về địa điểm tham quan
+• Tips chụp ảnh và check-in
+
+❓ **Hãy hỏi tôi về du lịch nhé!**
+Ví dụ: "Quán cà phê gần đây", "Thời tiết hôm nay", "Đặc sản ở đây là gì?"""
+                else:
+                    print("   💬 Type: General travel question")
+                    response_text = _handle_general_question(user_text)
     
     except Exception as e:
         print(f"   ❌ Error: {e}")
@@ -936,11 +954,89 @@ def _handle_place_info(user_text: str, active_place_id: Optional[str]) -> str:
     else:
         return "📍 Bạn đang ở địa điểm nào? Cho tôi biết để tìm thông tin nhé!"
 
+def _is_travel_related(user_text: str) -> bool:
+    """Check if the question is related to travel"""
+    
+    # Travel-related keywords
+    travel_keywords = [
+        # Du lịch chung
+        "du lịch", "travel", "trip", "tour", "chuyến đi", "hành trình",
+        # Địa điểm
+        "địa điểm", "place", "destination", "visit", "tham quan", "đi", "đến",
+        "gần", "nearby", "xung quanh", "quanh đây",
+        # Ăn uống
+        "ăn", "eat", "food", "quán", "nhà hàng", "restaurant", "cafe", "món", "đặc sản",
+        # Khách sạn/Lưu trú
+        "hotel", "khách sạn", "resort", "homestay", "lưu trú", "ở", "nghỉ",
+        # Di chuyển
+        "đường", "road", "direction", "taxi", "xe", "bus", "train", "flight",
+        "chỉ đường", "đi như thế nào", "giao thông", "traffic",
+        # Hoạt động du lịch
+        "chụp ảnh", "photo", "check-in", "checkin", "sống ảo",
+        "mua sắm", "shopping", "market", "chợ",
+        # Thời tiết (liên quan du lịch)
+        "thời tiết", "weather", "trời", "mưa", "nắng", "lạnh", "nóng",
+        # Tips du lịch
+        "tip", "gợi ý", "suggest", "recommend", "nên", "advice",
+        # Dịch vụ
+        "bệnh viện", "hospital", "pharmacy", "atm", "bank",
+        "khẩn cấp", "emergency", "cấp cứu",
+        # Văn hóa/Lịch sử
+        "văn hóa", "culture", "lịch sử", "history", "bảo tàng", "museum",
+        "chùa", "temple", "đền", "đình", "phố cổ",
+        # Tên thành phố phổ biến ở VN
+        "hà nội", "sài gòn", "hồ chí minh", "đà nẵng", "hội an", "huế",
+        "nha trang", "đà lạt", "phú quốc", "hạ long", "sa pa", "vũng tàu",
+        "cần thơ", "phan thiết", "ninh bình", "hải phòng",
+        # Loại địa điểm
+        "bãi biển", "beach", "núi", "mountain", "công viên", "park",
+        "hồ", "lake", "sông", "river", "thác", "waterfall"
+    ]
+    
+    user_text_lower = user_text.lower()
+    
+    # Check if any travel keyword is in the text
+    for keyword in travel_keywords:
+        if keyword in user_text_lower:
+            return True
+    
+    # Check for question patterns about locations/directions
+    location_patterns = [
+        "ở đâu", "where", "làm sao", "how to", "có gì", "what",
+        "bao xa", "how far", "mất bao lâu", "how long",
+        "giờ mở cửa", "opening hours", "có mở", "open"
+    ]
+    
+    for pattern in location_patterns:
+        if pattern in user_text_lower:
+            return True
+    
+    return False
+
 def _handle_general_question(user_text: str) -> str:
-    """Handle general travel questions"""
+    """Handle general travel questions - only travel-related questions"""
+    
+    # First, check if the question is travel-related
+    if not _is_travel_related(user_text):
+        print("   🚫 Non-travel question detected")
+        return """🧳 Xin lỗi, tôi là **trợ lý du lịch AI** và chỉ có thể hỗ trợ các câu hỏi liên quan đến du lịch.
+
+💡 **Tôi có thể giúp bạn:**
+• Tìm địa điểm gần đây (nhà hàng, quán café, bảo tàng...)
+• Kiểm tra thời tiết và gợi ý hoạt động
+• Chỉ đường và thông tin giao thông
+• Gợi ý món ăn địa phương
+• Tìm dịch vụ khẩn cấp (bệnh viện, ATM, công an...)
+• Thông tin về địa điểm tham quan
+• Tips chụp ảnh và check-in
+
+❓ **Hãy hỏi tôi về du lịch nhé!**
+Ví dụ: "Quán cà phê gần đây", "Thời tiết hôm nay", "Đặc sản ở đây là gì?"""
     
     system_prompt = """
     Bạn là travel companion AI đang hỗ trợ du khách TRONG LÚC đi du lịch.
+    
+    QUAN TRỌNG: Chỉ trả lời câu hỏi liên quan đến du lịch, địa điểm, ẩm thực, văn hóa, di chuyển.
     
     Trả lời câu hỏi ngắn gọn, thực tế, hữu ích.
     
@@ -958,22 +1054,26 @@ def _handle_general_question(user_text: str) -> str:
         print(f"   ❌ Error in general question: {e}")
         return "😔 Xin lỗi, tôi gặp lỗi khi xử lý câu hỏi. Bạn có thể thử lại không?"
 
-def _handle_weather_check(user_text: str, current_location: Optional[Dict]) -> str:
-    """Handle weather check with alerts and suggestions"""
+def _handle_weather_check(user_text: str, current_location: Optional[Dict], itinerary: Optional[List] = None) -> str:
+    """Handle weather check with forecast, alerts, and indoor place suggestions when it rains"""
     
     if not current_location:
-        response = "🌤️ **Cần bật GPS để kiểm tra thời tiết tại vị trí của bạn!**\n\n"
+        response = "🌤️ **Cần bật GPS để kiểm tra thời tiết chính xác!**\n\n"
         response += "📍 **Cách bật GPS:**\n"
         response += "1. Mở **Cài đặt** trên điện thoại\n"
         response += "2. Vào **Quyền riêng tư** → **Dịch vụ định vị**\n"
         response += "3. Bật **Dịch vụ định vị** cho ứng dụng này\n\n"
         response += "🔄 Sau khi bật, hãy thử hỏi lại: 'Thời tiết bây giờ thế nào?'\n\n"
-        response += "💡 Hoặc bạn có thể cho tôi biết tên thành phố!"
+        response += "💡 Hoặc bạn có thể cho tôi biết bạn đang ở **thành phố nào**!"
         return response
     
     try:
-        weather_data = get_weather_alerts_and_suggestions.invoke({
-            "current_location": current_location
+        # Check if user asks for forecast
+        is_forecast_request = any(word in user_text for word in ["dự báo", "forecast", "mấy ngày", "tuần sau", "mai"])
+        
+        weather_data = get_weather_forecast.invoke({
+            "current_location": current_location,
+            "days": 5
         })
         
         if weather_data.get('error'):
@@ -983,18 +1083,35 @@ def _handle_weather_check(user_text: str, current_location: Optional[Dict]) -> s
         feels_like = weather_data.get('feels_like', 'N/A')
         condition = weather_data.get('description', 'N/A')
         humidity = weather_data.get('humidity', 'N/A')
+        wind_speed = weather_data.get('wind_speed', 0)
         
         response = f"🌤️ **Thời tiết hiện tại:**\n\n"
         response += f"🌡️ Nhiệt độ: **{temp}°C** (cảm giác như {feels_like}°C)\n"
         response += f"☁️ Tình trạng: **{condition}**\n"
         response += f"💧 Độ ẩm: **{humidity}%**\n"
+        if wind_speed > 5:
+            response += f"💨 Gió: **{wind_speed:.1f} m/s**\n"
+        
+        # Show forecast if requested or if there are important weather changes
+        forecast = weather_data.get('forecast', [])
+        if (is_forecast_request or len(forecast) > 0) and forecast:
+            response += f"\n📅 **Dự báo 5 ngày tới:**\n"
+            for day in forecast[:5]:
+                date = day.get('date', '')
+                temp_forecast = day.get('temp', 'N/A')
+                condition_forecast = day.get('description', '')
+                rain_prob = day.get('rain_probability', 0)
+                
+                response += f"\n• **{date}**: {temp_forecast}°C - {condition_forecast}"
+                if rain_prob > 30:
+                    response += f" (☔ {rain_prob:.0f}% mưa)"
         
         # Add alerts
         alerts = weather_data.get('alerts', [])
         if alerts:
-            response += f"\n⚠️ **Cảnh báo:**\n"
+            response += f"\n\n⚠️ **Cảnh báo:**\n"
             for alert in alerts:
-                response += f"{alert}\n"
+                response += f"• {alert}\n"
         
         # Add suggestions
         suggestions = weather_data.get('suggestions', [])
@@ -1003,10 +1120,53 @@ def _handle_weather_check(user_text: str, current_location: Optional[Dict]) -> s
             for i, suggestion in enumerate(suggestions[:3], 1):
                 response += f"{i}. {suggestion}\n"
         
+        # If it's raining or will rain, AUTOMATICALLY suggest indoor places
+        is_rainy = weather_data.get('condition') in ['Rain', 'Drizzle', 'Thunderstorm']
+        indoor_needed = weather_data.get('indoor_needed', False)
+        
+        # ALWAYS show indoor places when it's raining or too hot
+        if is_rainy or indoor_needed:
+            response += f"\n\n🏠 **Địa điểm trong nhà gần bạn:**\n"
+            response += "_(Phù hợp khi trời mưa hoặc nắng nóng)_\n"
+            
+            try:
+                indoor_places = search_indoor_places.invoke({
+                    "current_location": current_location,
+                    "limit": 5
+                })
+                
+                if indoor_places:
+                    for i, place in enumerate(indoor_places[:5], 1):
+                        name = place.get('name', 'Unknown')
+                        distance = place.get('distance_km', 0)
+                        place_type = place.get('type', '').replace('_', ' ').title()
+                        
+                        response += f"\n{i}. **{name}** ({distance:.1f}km)"
+                        
+                        rating = place.get('rating')
+                        if rating and rating > 0:
+                            total_ratings = place.get('user_ratings_total', 0)
+                            response += f"\n   ⭐ {rating}"
+                            if total_ratings > 0:
+                                response += f" ({total_ratings} đánh giá)"
+                        
+                        if place.get('address'):
+                            response += f"\n   📍 {place.get('address')}"
+                        
+                        response += "\n"
+                    
+                    response += "\n💡 **Tip:** Những địa điểm này đều có mái che, phù hợp cho ngày mưa!"
+                else:
+                    response += "\n(Không tìm thấy địa điểm trong nhà gần bạn)\n"
+            except Exception as e:
+                print(f"   ⚠️ Could not get indoor places: {e}")
+        
         return response
     
     except Exception as e:
         print(f"   ❌ Error checking weather: {e}")
+        import traceback
+        traceback.print_exc()
         return "😔 Xin lỗi, tôi gặp lỗi khi kiểm tra thời tiết."
 
 def _handle_smart_directions(user_text: str, current_location: Optional[Dict], itinerary: Optional[List], is_traffic_focus: bool = False) -> str:
