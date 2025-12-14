@@ -15,6 +15,7 @@ import {
   Dimensions,
   Animated,
   Clipboard,
+  Linking,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -32,6 +33,10 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  action?: {
+    type: string;
+    value: string;
+  };
 }
 
 interface ChatModalProps {
@@ -55,7 +60,7 @@ const parseMarkdownLine = (text: string) => {
   ];
 
   let result = text;
-  
+
   // Replace patterns
   result = result.replace(/\*\*(.+?)\*\*/g, '\x01BOLD\x02$1\x01/BOLD\x02');
   result = result.replace(/__(.+?)__/g, '\x01BOLD\x02$1\x01/BOLD\x02');
@@ -178,6 +183,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
   const [itineraryId, setItineraryId] = useState<string | null>(null);
   const [itinerary, setItinerary] = useState<any>(null);
   const [itineraryStatus, setItineraryStatus] = useState<'DRAFT' | 'CONFIRMED' | null>(null);
+  const [startLocation, setStartLocation] = useState<string | { lat: number; lng: number } | undefined>(undefined);
   const [showItineraryDetail, setShowItineraryDetail] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -208,7 +214,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
         const offsetY = event.nativeEvent.contentOffset.y;
         const contentHeight = event.nativeEvent.contentSize.height;
         const scrollViewHeight = event.nativeEvent.layoutMeasurement.height;
-        
+
         const isNearBottom = contentHeight - offsetY - scrollViewHeight < 100;
         setShowScrollButton(!isNearBottom && messages.length > 0);
       },
@@ -227,6 +233,48 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
       return;
     }
 
+    // Check if message needs GPS location (nearby places, weather, directions, traffic, food suggestions, etc.)
+    const isLocationQuery =
+      message.toLowerCase().includes('gần') ||
+      message.toLowerCase().includes('nearby') ||
+      message.toLowerCase().includes('xung quanh') ||
+      message.toLowerCase().includes('quanh đây') ||
+      message.toLowerCase().includes('ở đây') ||
+      message.toLowerCase().includes('thời tiết') ||
+      message.toLowerCase().includes('weather') ||
+      message.toLowerCase().includes('trời') ||
+      message.toLowerCase().includes('nắng') ||
+      message.toLowerCase().includes('mưa') ||
+      message.toLowerCase().includes('chỉ đường') ||
+      message.toLowerCase().includes('directions') ||
+      message.toLowerCase().includes('đường đi') ||
+      message.toLowerCase().includes('kẹt xe') ||
+      message.toLowerCase().includes('traffic') ||
+      message.toLowerCase().includes('đông người') ||
+      message.toLowerCase().includes('đông đúc') ||
+      message.toLowerCase().includes('tắc đường') ||
+      message.toLowerCase().includes('giao thông') ||
+      message.toLowerCase().includes('ăn gì') ||
+      message.toLowerCase().includes('món ăn') ||
+      message.toLowerCase().includes('nên ăn') ||
+      message.toLowerCase().includes('gợi ý món');
+
+    // If asking location-based question but no location yet, request it now
+    let currentLocation = location;
+    if (isLocationQuery && !location) {
+      console.debug('[ChatModal] Location query detected, requesting GPS permission...');
+      try {
+        currentLocation = await requestLocation();
+        if (!currentLocation) {
+          // Permission denied or error - let backend handle it with the message
+          console.warn('[ChatModal] Could not get location, proceeding without it');
+        }
+      } catch (err) {
+        console.error('[ChatModal] Error requesting location:', err);
+        // Continue anyway, backend will prompt user
+      }
+    }
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -238,20 +286,6 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
     setInputText('');
     setIsLoading(true);
 
-    // Check if user is asking about nearby places and request location if needed
-    const isNearbyQuery = message.toLowerCase().includes('gần') || 
-                          message.toLowerCase().includes('quanh') ||
-                          message.toLowerCase().includes('xung quanh');
-
-    let currentLocation = location;
-    if (isNearbyQuery && !currentLocation) {
-      console.debug('[Chat] Nearby query detected, requesting location...');
-      currentLocation = await requestLocation();
-      if (currentLocation) {
-        console.debug('[Chat] Location obtained for nearby query:', currentLocation);
-      }
-    }
-
     try {
       let attempt = 0;
       let lastError: any = null;
@@ -259,18 +293,20 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
       while (attempt <= MAX_CHAT_RETRIES) {
         try {
           const requestBody: any = { message, sessionId };
-          
-          // Add location in context if available
+
+          // ALWAYS send GPS location if available (backend will use it when needed)
           if (currentLocation) {
             requestBody.context = {
               current_location: {
                 lat: currentLocation.latitude,
-                lng: currentLocation.longitude,
-              },
+                lng: currentLocation.longitude
+              }
             };
-            console.debug('[Chat] Sending location in context:', requestBody.context.current_location);
+            console.debug('[ChatModal] Sending current_location:', requestBody.context.current_location);
+          } else {
+            console.debug('[ChatModal] No GPS location available');
           }
-          
+
           console.debug('Sending chat request', requestBody);
           const response = await fetch(`${API_BASE_URL}/api/v1/ai/chat`, {
             method: 'POST',
@@ -322,7 +358,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
               Alert.alert(
                 'Yêu cầu quá lâu',
                 timeoutText + '\n\nVui lòng thử lại với tin nhắn ngắn hơn hoặc đợi một lúc rồi thử lại.',
-                [{ text: 'OK', onPress: () => {} }]
+                [{ text: 'OK', onPress: () => { } }]
               );
               return;
             }
@@ -354,22 +390,114 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           }
 
           // Track itinerary from response
-          if (dataOk.itineraryId) {
-            console.debug('[Chat Response] Setting itineraryId from dataOk.itineraryId:', dataOk.itineraryId);
-            setItineraryId(dataOk.itineraryId);
-          } else if (dataOk.metadata?.itinerary_id) {
-            // Fallback: get itinerary_id from metadata
-            console.debug('[Chat Response] Setting itineraryId from metadata:', dataOk.metadata.itinerary_id);
-            setItineraryId(dataOk.metadata.itinerary_id);
-          } else if (dataOk.itinerary_id) {
-            // Fallback: get itinerary_id from top level (snake_case)
-            console.debug('[Chat Response] Setting itineraryId from dataOk.itinerary_id:', dataOk.itinerary_id);
-            setItineraryId(dataOk.itinerary_id);
+          const newItineraryId = dataOk.itineraryId || dataOk.metadata?.itinerary_id || dataOk.itinerary_id;
+          const isNewItinerary = newItineraryId && newItineraryId !== itineraryId;
+
+          if (newItineraryId) {
+            if (isNewItinerary) {
+              console.debug('[Chat Response] NEW itinerary detected:', newItineraryId);
+              setItineraryId(newItineraryId);
+              setItineraryStatus('DRAFT'); // Always DRAFT for new itinerary
+            } else {
+              console.debug('[Chat Response] Same itinerary:', newItineraryId);
+              setItineraryId(newItineraryId);
+            }
           }
+
           if (dataOk.itinerary && Array.isArray(dataOk.itinerary)) {
             console.debug('[Chat Response] Setting itinerary with', dataOk.itinerary.length, 'items');
-            setItinerary(dataOk.itinerary);
+
+            // DEBUG: Log first item structure to see if encoded_polyline exists
+            if (dataOk.itinerary.length > 0) {
+              console.log('[DEBUG] First itinerary item structure:', JSON.stringify(dataOk.itinerary[0], null, 2));
+            }
+
+            // Transform itinerary to match ItineraryItem interface
+            const transformedItinerary = dataOk.itinerary.map((item: any, index: number) => {
+              // Extract day from item or use calculated day
+              const day = item.day || Math.floor(index / 3) + 1;
+
+              return {
+                day,
+                time: item.time || item.estimated_arrival || item.arrival_time || '09:00',
+                activity: item.activity || item.name || 'Hoạt động',
+                place: {
+                  name: item.place?.name || item.name || 'Địa điểm',
+                  address: item.place?.address || item.address,
+                  googlePlaceId: item.place?.googlePlaceId || item.google_place_id || item.googlePlaceId,
+                  location: item.place?.location || (item.location && {
+                    lat: typeof item.location.lat === 'number' ? item.location.lat : item.location[1],
+                    lng: typeof item.location.lng === 'number' ? item.location.lng : item.location[0],
+                  }),
+                  rating: item.place?.rating || item.rating,
+                },
+                duration_minutes: item.duration_minutes || item.duration || 90,
+                notes: item.notes,
+                encoded_polyline: item.encoded_polyline || item.start_encoded_polyline,
+                start_location_polyline: item.start_location_polyline,
+                travel_duration_minutes: item.travel_duration_minutes || item.start_travel_duration_minutes,
+                travel_duration_from_start: item.travel_duration_from_start,
+                type: item.type,
+                ecs_score: item.ecs_score,
+              };
+            });
+
+            console.debug('[Chat Response] Transformed itinerary:', transformedItinerary);
+
+            // If start_location exists and first item doesn't have start_location_polyline, fetch it
+            if (dataOk.start_location && transformedItinerary.length > 0 && !transformedItinerary[0].start_location_polyline) {
+              console.log('[Chat Response] Fetching start_location_polyline from Google Directions API...');
+              const apiKey = process.env.EXPO_PUBLIC_GOOGLE_DIRECTIONS_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
+              if (apiKey && transformedItinerary[0].place?.location) {
+                const firstActivityLoc = transformedItinerary[0].place.location;
+                const startLoc = dataOk.start_location;
+                const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${startLoc.lat},${startLoc.lng}&destination=${firstActivityLoc.lat},${firstActivityLoc.lng}&mode=driving&key=${apiKey}`;
+
+                fetch(directionsUrl)
+                  .then(res => res.json())
+                  .then(data => {
+                    if (data.routes && data.routes[0]) {
+                      const polyline = data.routes[0].overview_polyline?.points;
+                      const duration = data.routes[0].legs?.[0]?.duration?.value || 0;
+                      if (polyline) {
+                        console.log('[Chat Response] ✅ start_location_polyline fetched!');
+                        transformedItinerary[0].start_location_polyline = polyline;
+                        transformedItinerary[0].travel_duration_from_start = Math.round(duration / 60);
+                        setItinerary([...transformedItinerary]); // Force re-render
+                      }
+                    }
+                  })
+                  .catch(err => console.warn('[Chat Response] Failed to fetch start_location_polyline:', err));
+              }
+            }
+
+            // Log for debugging - check if polylines exist
+            const hasPolylines = transformedItinerary.some((item: any) => item.encoded_polyline);
+            const hasStartLocationPolylines = transformedItinerary.some((item: any) => item.start_location_polyline);
+            console.debug('[Chat Response] Has polylines:', hasPolylines);
+            console.debug('[Chat Response] Has start_location_polylines:', hasStartLocationPolylines);
+            if (!hasPolylines) {
+              console.warn('[Chat Response] ⚠️  No encoded_polyline found in itinerary data');
+            }
+            if (hasStartLocationPolylines) {
+              console.log('[Chat Response] ✅ START LOCATION POLYLINE found!');
+              const itemWithStartPolyline = transformedItinerary.find((item: any) => item.start_location_polyline);
+              console.log('[Chat Response] First item with start_location_polyline:', {
+                place: itemWithStartPolyline?.place?.name,
+                start_location_polyline_length: itemWithStartPolyline?.start_location_polyline?.length,
+                travel_duration_from_start: itemWithStartPolyline?.travel_duration_from_start,
+              });
+            }
+
+            setItinerary(transformedItinerary);
           }
+
+          // Capture start_location from response
+          if (dataOk.start_location) {
+            console.debug('[Chat Response] Setting start location:', dataOk.start_location);
+            setStartLocation(dataOk.start_location);
+          }
+
           if (dataOk.stage) {
             console.debug('[Chat Response] Stage:', dataOk.stage, '. ItineraryId:', dataOk.itineraryId || dataOk.metadata?.itinerary_id);
           }
@@ -377,11 +505,18 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           console.debug('[Chat Response] Full response object keys:', Object.keys(dataOk));
           console.debug('[Chat Response] Final itineraryId state:', itineraryId);
 
+          // Check for action metadata (e.g., open Google Maps)
+          const action = dataOk.metadata?.action;
+          if (action) {
+            console.debug('[Chat Response] Action detected:', action);
+          }
+
           const assistantMessage: Message = {
             id: (Date.now() + 1).toString(),
             role: 'assistant',
             content: String(resp),
             timestamp: new Date(),
+            action: action || undefined,
           };
 
           setMessages(prev => [...prev, assistantMessage]);
@@ -422,7 +557,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
       [
         {
           text: 'Hủy',
-          onPress: () => {},
+          onPress: () => { },
           style: 'cancel',
         },
         {
@@ -432,21 +567,21 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             try {
               // Get userId from userData (_id or id field)
               const userId = (userData as any)?._id || userData?.id || '';
-              
+
               console.debug('userData:', userData);
               console.debug('userId extracted:', userId);
-              
+
               const resetBody: any = {
                 userId: userId,
               };
-              
+
               // Add sessionId if available
               if (sessionId) {
                 resetBody.sessionId = sessionId;
               }
-              
+
               console.debug('Sending reset request', resetBody);
-              
+
               const response = await fetch(`${API_BASE_URL}/api/v1/ai/reset`, {
                 method: 'POST',
                 headers: {
@@ -466,6 +601,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
                 setSessionId(null);
                 setItineraryId(null);
                 setItinerary(null);
+                setStartLocation(undefined);
                 setShowItineraryDetail(false);
                 Alert.alert('Thành công', 'Cuộc trò chuyện đã được xóa');
               } else {
@@ -505,10 +641,10 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             styles.avatarContainer,
             item.role === 'user' ? styles.userAvatar : styles.assistantAvatar
           ]}>
-            <MaterialCommunityIcons 
-              name={item.role === 'user' ? 'account' : 'robot-happy-outline'} 
-              size={18} 
-              color={COLORS.textWhite} 
+            <MaterialCommunityIcons
+              name={item.role === 'user' ? 'account' : 'robot-happy-outline'}
+              size={18}
+              color={COLORS.textWhite}
             />
           </View>
           <Text style={[
@@ -521,7 +657,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
             {item.timestamp.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
           </Text>
         </View>
-        
+
         <View style={styles.messageContent}>
           {item.role === 'assistant' ? (
             <RenderMarkdownText text={item.content} />
@@ -532,9 +668,34 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
           )}
         </View>
 
+        {/* Action button (e.g., Open Google Maps) */}
+        {item.action && item.action.type === 'OPEN_MAPS' && (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => {
+              Linking.openURL(item.action!.value).catch((err: any) => {
+                console.error('Failed to open Maps:', err);
+                Alert.alert('Lỗi', 'Không thể mở Google Maps');
+              });
+            }}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={[COLORS.primary, COLORS.gradientSecondary]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.actionButtonGradient}
+            >
+              <MaterialCommunityIcons name="map-marker-path" size={20} color={COLORS.textWhite} />
+              <Text style={styles.actionButtonText}>Mở Google Maps</Text>
+              <MaterialCommunityIcons name="open-in-new" size={16} color={COLORS.textWhite} />
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
         {/* Copy button for assistant messages */}
         {item.role === 'assistant' && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.copyButton}
             onPress={() => copyToClipboard(item.content)}
           >
@@ -558,6 +719,7 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
         <ItineraryDetailScreen
           itinerary={itinerary}
           itineraryId={itineraryId}
+          startLocation={startLocation}
           itineraryStatus={itineraryStatus}
           setItineraryStatus={setItineraryStatus}
           onClose={() => setShowItineraryDetail(false)}
@@ -575,238 +737,240 @@ export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
 
       {/* Main Chat Modal */}
       {!showItineraryDetail && (
-      <LinearGradient
-        colors={[COLORS.gradientBlue1, COLORS.gradientBlue2, COLORS.bgLightBlue]}
-        style={styles.gradientBackground}
-      >
-        <KeyboardAvoidingView
-          style={styles.container}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        <LinearGradient
+          colors={['#E3F2FD', 'rgba(178, 221, 247, 1)', COLORS.bgMain]}
+          style={styles.gradientBackground}
         >
-          {/* Header with Glassmorphism */}
-          <BlurView intensity={90} tint="light" style={styles.header}>
-            <View style={styles.headerContent}>
-              <TouchableOpacity onPress={onClose} style={styles.headerButton}>
-                <View style={styles.iconCircle}>
-                  <MaterialCommunityIcons name="close" size={24} color={COLORS.primary} />
+          <KeyboardAvoidingView
+            style={styles.container}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            {/* Header with Glassmorphism */}
+            <BlurView intensity={90} tint="light" style={styles.header}>
+              <View style={styles.headerContent}>
+                <TouchableOpacity onPress={onClose} style={styles.headerButton}>
+                  <View style={styles.iconCircle}>
+                    <MaterialCommunityIcons name="close" size={24} color={COLORS.primary} />
+                  </View>
+                </TouchableOpacity>
+
+                <View style={styles.headerTitleContainer}>
+                  <View style={styles.aiIconContainer}>
+                    <LinearGradient
+                      colors={[COLORS.primary, COLORS.gradientSecondary]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.aiIconGradient}
+                    >
+                      <MaterialCommunityIcons name="robot-happy" size={26} color={COLORS.textWhite} />
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.headerTitleBox}>
+                    <Text style={styles.headerTitle}>AI Assistant</Text>
+                    <Text style={styles.headerSubtitle}>Du lịch thông minh</Text>
+                  </View>
                 </View>
-              </TouchableOpacity>
-              
-              <View style={styles.headerTitleContainer}>
-                <View style={styles.aiIconContainer}>
-                  <LinearGradient
-                    colors={[COLORS.primary, COLORS.gradientSecondary]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.aiIconGradient}
-                  >
-                    <MaterialCommunityIcons name="robot-happy" size={26} color={COLORS.textWhite} />
-                  </LinearGradient>
-                </View>
-                <View style={styles.headerTitleBox}>
-                  <Text style={styles.headerTitle}>AI Assistant</Text>
-                  <Text style={styles.headerSubtitle}>Du lịch thông minh</Text>
-                </View>
-              </View>
 
-              <TouchableOpacity onPress={resetConversation} style={styles.headerButton}>
-                <View style={styles.iconCircle}>
-                  <MaterialCommunityIcons name="restart" size={24} color={COLORS.primary} />
-                </View>
-              </TouchableOpacity>
-            </View>
-          </BlurView>
-
-          {/* Messages List */}
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            renderItem={renderMessage}
-            keyExtractor={(item) => item.id}
-            style={styles.messagesList}
-            contentContainerStyle={styles.messagesContent}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <ScrollView 
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={styles.emptyScrollContent}
-                >
-                  <LinearGradient
-                    colors={[COLORS.primary + '15', COLORS.gradientSecondary + '15']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.emptyBackgroundGradient}
-                  >
-                    <View style={styles.emptyContent}>
-                      {/* Icon with animation-ready styling */}
-                      <View style={styles.emptyIconWrap}>
-                        <LinearGradient
-                          colors={[COLORS.primary, COLORS.gradientSecondary]}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          style={styles.emptyIconContainer}
-                        >
-                          <MaterialCommunityIcons name="chat-plus-outline" size={72} color={COLORS.textWhite} />
-                        </LinearGradient>
-                      </View>
-
-                      {/* Title */}
-                      <Text style={styles.emptyTitle}>Chào mừng bạn đến với{'\n'}AI Travel Assistant!</Text>
-
-                      {/* Subtitle */}
-                      <Text style={styles.emptySubtitle}>
-                        Hãy bắt đầu cuộc trò chuyện bằng cách hỏi tôi về các địa điểm du lịch, lịch trình, hoặc bất kỳ điều gì bạn muốn biết về chuyến đi của mình.
-                      </Text>
-
-                      {/* Suggestions */}
-                      <View style={styles.suggestionContainer}>
-                        <View style={styles.suggestionHeader}>
-                          <MaterialCommunityIcons name="lightbulb-on" size={18} color={COLORS.primary} />
-                          <Text style={styles.suggestionTitle}>Gợi ý câu hỏi</Text>
-                        </View>
-
-                        {[
-                          'Gần đây có quán cà phê nào không?',
-                          'Tôi muốn du lịch Hà Nội, 4 người, 3 ngày, ngân sách 10 triệu đồng',
-                          'Gợi ý lộ trình du lịch Đà Nẵng - Hội An, 2 người, 2 ngày, 5 triệu đồng'
-                        ].map((suggestion, index) => (
-                          <TouchableOpacity 
-                            key={index}
-                            style={styles.suggestionChip}
-                            onPress={() => setInputText(suggestion)}
-                            activeOpacity={0.7}
-                          >
-                            <LinearGradient
-                              colors={[COLORS.primary + '10', COLORS.gradientSecondary + '10']}
-                              start={{ x: 0, y: 0 }}
-                              end={{ x: 1, y: 0 }}
-                              style={styles.suggestionChipGradient}
-                            >
-                              <MaterialCommunityIcons name={`numeric-${index + 1}-circle-outline`} size={20} color={COLORS.primary} />
-                              <Text style={styles.suggestionText} numberOfLines={2}>{suggestion}</Text>
-                              <MaterialCommunityIcons name="chevron-right" size={20} color={COLORS.primary} />
-                            </LinearGradient>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  </LinearGradient>
-                </ScrollView>
-              </View>
-            }
-          />
-
-          {/* Scroll to Bottom Button */}
-          {showScrollButton && (
-            <Animated.View 
-              style={[
-                styles.scrollButtonContainer,
-                {
-                  transform: [{ scale: buttonScale }],
-                  opacity: buttonScale,
-                }
-              ]}
-            >
-              <TouchableOpacity 
-                style={styles.scrollButton}
-                onPress={scrollToBottom}
-              >
-                <LinearGradient
-                  colors={[COLORS.primary, COLORS.gradientSecondary]}
-                  style={styles.scrollButtonGradient}
-                >
-                  <MaterialCommunityIcons name="chevron-down" size={24} color={COLORS.textWhite} />
-                </LinearGradient>
-              </TouchableOpacity>
-            </Animated.View>
-          )}
-
-          {/* Loading Indicator */}
-          {isLoading && (
-            <BlurView intensity={60} tint="light" style={styles.loadingContainer}>
-              <View style={styles.loadingContent}>
-                <ActivityIndicator size="small" color={COLORS.primary} />
-                <Text style={styles.loadingText}>AI đang suy nghĩ...</Text>
+                <TouchableOpacity onPress={resetConversation} style={styles.headerButton}>
+                  <View style={styles.iconCircle}>
+                    <MaterialCommunityIcons name="restart" size={24} color={COLORS.primary} />
+                  </View>
+                </TouchableOpacity>
               </View>
             </BlurView>
-          )}
 
-          {/* Input Container with Glassmorphism */}
-          <BlurView intensity={80} tint="light" style={styles.inputContainer}>
-            {/* Itinerary Quick View Button */}
-            {itinerary && itinerary.length > 0 && (
-              <TouchableOpacity
-                style={styles.itineraryQuickButton}
-                onPress={() => {
-                  console.debug('[ChatModal] Itinerary button pressed:', {
-                    hasItinerary: !!itinerary,
-                    itineraryLength: itinerary?.length,
-                    itineraryId,
-                  });
-                  setShowItineraryDetail(true);
-                }}
+            {/* Messages List */}
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              renderItem={renderMessage}
+              keyExtractor={(item) => item.id}
+              style={styles.messagesList}
+              contentContainerStyle={styles.messagesContent}
+              onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.emptyScrollContent}
+                  >
+                    <LinearGradient
+                      colors={[COLORS.primary + '15', COLORS.gradientSecondary + '15']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.emptyBackgroundGradient}
+                    >
+                      <View style={styles.emptyContent}>
+                        {/* Icon with animation-ready styling */}
+                        <View style={styles.emptyIconWrap}>
+                          <LinearGradient
+                            colors={[COLORS.primary, COLORS.gradientSecondary]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.emptyIconContainer}
+                          >
+                            <MaterialCommunityIcons name="chat-plus-outline" size={72} color={COLORS.textWhite} />
+                          </LinearGradient>
+                        </View>
+
+                        {/* Title */}
+                        <Text style={styles.emptyTitle}>Chào mừng bạn đến với{'\n'}AI Travel Assistant!</Text>
+
+                        {/* Subtitle */}
+                        <Text style={styles.emptySubtitle}>
+                          Hãy bắt đầu cuộc trò chuyện bằng cách hỏi tôi về các địa điểm du lịch, lịch trình, hoặc bất kỳ điều gì bạn muốn biết về chuyến đi của mình.
+                        </Text>
+
+                        {/* Suggestions */}
+                        <View style={styles.suggestionContainer}>
+                          <View style={styles.suggestionHeader}>
+                            <MaterialCommunityIcons name="lightbulb-on" size={18} color={COLORS.primary} />
+                            <Text style={styles.suggestionTitle}>Gợi ý câu hỏi</Text>
+                          </View>
+
+                          {[
+                            'Giới thiệu về Dinh độc lập đi bạn.',
+                            'Tôi nên làm gì bây giờ?',
+                            'Thời tiết hiện tại như thế nào?',
+                            'Ăn gì bây giờ đây ae?',
+                            'Đi đến đại học Sài Gòn có kẹt xe không?'
+                          ].map((suggestion, index) => (
+                            <TouchableOpacity
+                              key={index}
+                              style={styles.suggestionChip}
+                              onPress={() => setInputText(suggestion)}
+                              activeOpacity={0.7}
+                            >
+                              <LinearGradient
+                                colors={[COLORS.primary + '10', COLORS.gradientSecondary + '10']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                                style={styles.suggestionChipGradient}
+                              >
+                                <MaterialCommunityIcons name={`numeric-${index + 1}-circle-outline`} size={20} color={COLORS.primary} />
+                                <Text style={styles.suggestionText} numberOfLines={2}>{suggestion}</Text>
+                                <MaterialCommunityIcons name="chevron-right" size={20} color={COLORS.primary} />
+                              </LinearGradient>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    </LinearGradient>
+                  </ScrollView>
+                </View>
+              }
+            />
+
+            {/* Scroll to Bottom Button */}
+            {showScrollButton && (
+              <Animated.View
+                style={[
+                  styles.scrollButtonContainer,
+                  {
+                    transform: [{ scale: buttonScale }],
+                    opacity: buttonScale,
+                  }
+                ]}
               >
-                <LinearGradient
-                  colors={[COLORS.primary + '25', COLORS.gradientSecondary + '15']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.itineraryQuickButtonGradient}
+                <TouchableOpacity
+                  style={styles.scrollButton}
+                  onPress={scrollToBottom}
                 >
-                  <View style={styles.itineraryQuickButtonIconWrapper}>
-                    <MaterialCommunityIcons name="calendar-check" size={20} color={COLORS.textWhite} />
-                  </View>
-                  <View style={styles.itineraryQuickButtonText}>
-                    <Text style={styles.itineraryQuickButtonTitle}>
-                      Lộ trình của bạn
-                    </Text>
-                    <Text style={styles.itineraryQuickButtonSubtitle}>
-                      {itinerary.length} hoạt động • Nhấn để xem chi tiết
-                    </Text>
-                  </View>
-                  <MaterialCommunityIcons name="chevron-right" size={22} color={COLORS.primary} />
-                </LinearGradient>
-              </TouchableOpacity>
+                  <LinearGradient
+                    colors={[COLORS.primary, COLORS.gradientSecondary]}
+                    style={styles.scrollButtonGradient}
+                  >
+                    <MaterialCommunityIcons name="chevron-down" size={24} color={COLORS.textWhite} />
+                  </LinearGradient>
+                </TouchableOpacity>
+              </Animated.View>
             )}
 
-            <View style={styles.inputWrapper}>
-              <TextInput
-                style={styles.textInput}
-                value={inputText}
-                onChangeText={setInputText}
-                placeholder="Hỏi AI về kế hoạch du lịch..."
-                placeholderTextColor={COLORS.textSecondary + '70'}
-                multiline
-                maxLength={500}
-                placeholderTextColor={COLORS.textSecondary}
-              />
-              <TouchableOpacity
-                style={[styles.sendButton, (!inputText.trim() || isLoading || !token) && styles.sendButtonDisabled]}
-                onPress={() => sendMessage(inputText)}
-                disabled={!inputText.trim() || isLoading || !token}
-              >
-                <LinearGradient
-                  colors={(!inputText.trim() || isLoading || !token) 
-                    ? [COLORS.disabled, COLORS.disabled] 
-                    : [COLORS.primary, COLORS.gradientSecondary]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.sendButtonGradient}
+            {/* Loading Indicator */}
+            {isLoading && (
+              <BlurView intensity={60} tint="light" style={styles.loadingContainer}>
+                <View style={styles.loadingContent}>
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                  <Text style={styles.loadingText}>AI đang suy nghĩ...</Text>
+                </View>
+              </BlurView>
+            )}
+
+            {/* Input Container with Glassmorphism */}
+            <BlurView intensity={80} tint="light" style={styles.inputContainer}>
+              {/* Itinerary Quick View Button */}
+              {itinerary && itinerary.length > 0 && (
+                <TouchableOpacity
+                  style={styles.itineraryQuickButton}
+                  onPress={() => {
+                    console.debug('[ChatModal] Itinerary button pressed:', {
+                      hasItinerary: !!itinerary,
+                      itineraryLength: itinerary?.length,
+                      itineraryId,
+                    });
+                    setShowItineraryDetail(true);
+                  }}
                 >
-                  <MaterialCommunityIcons
-                    name={isLoading ? "loading" : "send"}
-                    size={22}
-                    color={COLORS.textWhite}
-                  />
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </BlurView>
-        </KeyboardAvoidingView>
-      </LinearGradient>
+                  <LinearGradient
+                    colors={[COLORS.primary + '25', COLORS.gradientSecondary + '15']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.itineraryQuickButtonGradient}
+                  >
+                    <View style={styles.itineraryQuickButtonIconWrapper}>
+                      <MaterialCommunityIcons name="calendar-check" size={20} color={COLORS.textWhite} />
+                    </View>
+                    <View style={styles.itineraryQuickButtonText}>
+                      <Text style={styles.itineraryQuickButtonTitle}>
+                        Lộ trình của bạn
+                      </Text>
+                      <Text style={styles.itineraryQuickButtonSubtitle}>
+                        {itinerary.length} hoạt động • Nhấn để xem chi tiết
+                      </Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={22} color={COLORS.primary} />
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
+
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.textInput}
+                  value={inputText}
+                  onChangeText={setInputText}
+                  placeholder="Hỏi AI về kế hoạch du lịch..."
+                  placeholderTextColor={COLORS.textSecondary + '70'}
+                  multiline
+                  maxLength={500}
+                  placeholderTextColor={COLORS.textSecondary}
+                />
+                <TouchableOpacity
+                  style={[styles.sendButton, (!inputText.trim() || isLoading || !token) && styles.sendButtonDisabled]}
+                  onPress={() => sendMessage(inputText)}
+                  disabled={!inputText.trim() || isLoading || !token}
+                >
+                  <LinearGradient
+                    colors={(!inputText.trim() || isLoading || !token)
+                      ? [COLORS.disabled, COLORS.disabled]
+                      : [COLORS.primary, COLORS.gradientSecondary]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.sendButtonGradient}
+                  >
+                    <MaterialCommunityIcons
+                      name={isLoading ? "loading" : "send"}
+                      size={22}
+                      color={COLORS.textWhite}
+                    />
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            </BlurView>
+          </KeyboardAvoidingView>
+        </LinearGradient>
       )}
     </Modal>
   );
@@ -1057,6 +1221,31 @@ const styles = StyleSheet.create({
     marginRight: 10,
     fontWeight: '600',
     minWidth: 20,
+  },
+  actionButton: {
+    marginTop: 12,
+    marginBottom: 4,
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  actionButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  actionButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textWhite,
+    letterSpacing: 0.5,
   },
   copyButton: {
     flexDirection: 'row',
