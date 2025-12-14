@@ -521,19 +521,24 @@ const ItineraryScreen: React.FC = () => {
   };
 
   const getRouteTitle = (route: TravelRoute, index: number) => {
-    // Helper function to extract base title (without suffix numbers)
-    const extractBaseTitle = (r: TravelRoute, fallbackIndex: number) => {
-      const fullTitle =
-        r.title?.trim() ||
-        (typeof (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination) === 'string'
-          ? (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination).trim()
-          : `Lộ trình ${r.route_id?.slice(-6) || fallbackIndex}`);
-      
-      // Remove suffix like (2), (3) etc.
-      return fullTitle.replace(/\s*\(\d+\)$/, '');
-    };
+    // Get the stored title first
+    const storedTitle =
+      route.title?.trim() ||
+      (typeof (route.route_data_json?.summary?.title || route.route_data_json?.metadata?.title || route.route_data_json?.destination) === 'string'
+        ? (route.route_data_json?.summary?.title || route.route_data_json?.metadata?.title || route.route_data_json?.destination).trim()
+        : `Lộ trình ${route.route_id?.slice(-6) || index}`);
 
-    const baseTitle = extractBaseTitle(route, index);
+    // Check if the stored title already has a suffix like "(2)", "(3)", etc.
+    const hasSuffix = /\s*\(\d+\)$/.test(storedTitle);
+    
+    // If it already has a suffix, preserve it as-is
+    // This ensures the name "sticks" to the route even when it changes status
+    if (hasSuffix) {
+      return storedTitle;
+    }
+
+    // If no suffix, extract base title for duplicate checking
+    const baseTitle = storedTitle;
 
     // Combine mainRoute and confirmedRoutes for duplicate checking
     const allRoutes: TravelRoute[] = [];
@@ -542,10 +547,17 @@ const ItineraryScreen: React.FC = () => {
     }
     allRoutes.push(...confirmedRoutes);
 
-    // Find all routes with the same base title
+    // Find all routes with the same base title (excluding those with existing suffixes)
     const sameNameRoutes = allRoutes.filter(r => {
-      const otherBaseTitle = extractBaseTitle(r, allRoutes.indexOf(r) + 1);
-      return otherBaseTitle === baseTitle;
+      const rTitle =
+        r.title?.trim() ||
+        (typeof (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination) === 'string'
+          ? (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination).trim()
+          : '');
+      
+      // Extract base title (remove suffix if exists)
+      const rBaseTitle = rTitle.replace(/\s*\(\d+\)$/, '');
+      return rBaseTitle === baseTitle;
     });
 
     // If only one route with this name, no suffix needed
@@ -553,18 +565,8 @@ const ItineraryScreen: React.FC = () => {
       return baseTitle;
     }
 
-    // Priority sorting: Main route first, then by route_id (creation time)
-    sameNameRoutes.sort((a, b) => {
-      const aIsMain = mainRoute?.route_id === a.route_id;
-      const bIsMain = mainRoute?.route_id === b.route_id;
-      
-      // Main route always comes first
-      if (aIsMain && !bIsMain) return -1;
-      if (!aIsMain && bIsMain) return 1;
-      
-      // For non-main routes, sort by route_id (creation time)
-      return a.route_id.localeCompare(b.route_id);
-    });
+    // Sort by route_id (creation time) to determine suffix order
+    sameNameRoutes.sort((a, b) => a.route_id.localeCompare(b.route_id));
 
     // Find position of current route in the same-name group (1-indexed)
     const positionInGroup = sameNameRoutes.findIndex(r => r.route_id === route.route_id) + 1;

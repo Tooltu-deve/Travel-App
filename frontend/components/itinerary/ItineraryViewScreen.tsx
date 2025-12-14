@@ -19,7 +19,7 @@ import { MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING } from '../../constants';
-import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI, autocompletePlacesAPI, getLikedPlacesAPI, getPlaceByIdAPI } from '../../services/api';
+import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI, autocompletePlacesAPI, getLikedPlacesAPI, getPlaceByIdAPI, API_BASE_URL } from '../../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { POIDetailBottomSheet } from '../place/POIDetailBottomSheet';
 
@@ -948,7 +948,6 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
       // Call API to update route
       const routeId = (routeDetails as any).route_id;
-      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000';
       const response = await fetch(`${API_BASE_URL}/api/v1/itineraries/custom-route`, {
         method: 'POST',
         headers: {
