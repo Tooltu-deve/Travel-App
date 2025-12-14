@@ -1,10 +1,12 @@
 import { FontAwesome } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Image, Alert } from 'react-native';
 import { COLORS, SPACING } from '../../constants';
 import { translatePlaceType } from '../../constants/placeTypes';
 import { useFavorites } from '@/contexts/FavoritesContext';
-import { getPlacesAPI, API_BASE_URL } from '@/services/api';
+import { getPlacesAPI, API_BASE_URL, enrichPlaceAPI } from '@/services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { POIDetailBottomSheet } from '../place/POIDetailBottomSheet';
 
 // Render a list of mock favorite places using a card UI similar to Favorites
 export const ReviewCard: React.FC = () => {
@@ -13,6 +15,10 @@ export const ReviewCard: React.FC = () => {
   const [visibleCount, setVisibleCount] = useState<number>(5);
   
   const { isLiked, toggleLike } = useFavorites();
+
+  const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
+  const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
+  const [isEnriching, setIsEnriching] = useState(false);
 
   // helper: derive moods array from place object
   const deriveMoods = (p: any): string[] => {
@@ -34,6 +40,86 @@ export const ReviewCard: React.FC = () => {
   const deriveAndTranslateMoods = (p: any): string[] => {
     const m = deriveMoods(p) || [];
     return m.map((x) => translatePlaceType(x));
+  };
+
+  const handlePlacePress = async (place: any) => {
+    const googlePlaceId = place.googlePlaceId;
+    if (!googlePlaceId) {
+      Alert.alert('Thông báo', 'Địa điểm này chưa có Google Place ID.');
+      return;
+    }
+
+    setIsEnriching(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để xem chi tiết địa điểm.');
+        return;
+      }
+
+      // Gọi enrich API để cập nhật thông tin POI
+      // Force refresh để đảm bảo lấy dữ liệu mới bằng tiếng Việt từ Google Places API
+      const response = await enrichPlaceAPI(token, googlePlaceId, false);
+      
+      // Map dữ liệu từ enriched response sang format mà bottom sheet hiểu
+      const enrichedData = response?.data || response;
+      const mappedPlaceData = {
+        _id: enrichedData.googlePlaceId,
+        googlePlaceId: enrichedData.googlePlaceId,
+        name: enrichedData.name,
+        address: enrichedData.address,
+        formatted_address: enrichedData.address,
+        description: enrichedData.description || enrichedData.editorialSummary,
+        editorialSummary: enrichedData.editorialSummary,
+        rating: enrichedData.rating,
+        user_ratings_total: enrichedData.reviews?.length || 0,
+        contactNumber: enrichedData.contactNumber,
+        phone: enrichedData.contactNumber,
+        websiteUri: enrichedData.websiteUri,
+        website: enrichedData.websiteUri,
+        photos: enrichedData.photos || [],
+        reviews: enrichedData.reviews?.map((review: any) => {
+          // Debug: Log review data để kiểm tra
+          console.log('[ReviewCard] Review data:', JSON.stringify(review, null, 2));
+          
+          // Lấy tên tác giả từ authorAttributions
+          let authorName = 'Người dùng ẩn danh';
+          if (review.authorAttributions) {
+            const attributions = Array.isArray(review.authorAttributions) ? review.authorAttributions : [review.authorAttributions];
+            const firstAttribution = attributions[0];
+            if (firstAttribution && firstAttribution.displayName) {
+              authorName = firstAttribution.displayName;
+            }
+          }
+          
+          return {
+            authorName,
+            rating: review.rating,
+            text: review.text,
+            relativePublishTimeDescription: review.relativePublishTimeDescription,
+            publishTime: review.relativePublishTimeDescription,
+            authorAttributions: review.authorAttributions,
+          };
+        }) || [],
+        type: enrichedData.type,
+        types: enrichedData.types,
+        location: enrichedData.location,
+        openingHours: enrichedData.openingHours,
+        emotionalTags: enrichedData.emotionalTags,
+        budgetRange: enrichedData.budgetRange,
+      };
+
+      setSelectedPlaceData(mappedPlaceData);
+      setIsBottomSheetVisible(true);
+    } catch (error: any) {
+      console.error('❌ Error enriching POI:', error);
+      Alert.alert(
+        'Lỗi',
+        error.message || 'Không thể tải thông tin chi tiết địa điểm. Vui lòng thử lại.'
+      );
+    } finally {
+      setIsEnriching(false);
+    }
   };
 
   useEffect(() => {
@@ -176,112 +262,124 @@ export const ReviewCard: React.FC = () => {
   const placesToShow = allPlaces.slice(0, visibleCount);
 
   return (
-    <View>
-      {isLoading && allPlaces.length === 0 && (
-        <View style={{ padding: SPACING.md }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bgLightBlue, padding: SPACING.sm, borderRadius: 10 }}>
-            <FontAwesome name="info-circle" size={14} color={COLORS.textSecondary} />
-            <Text style={{ marginLeft: 8, color: COLORS.textSecondary }}>Đang tải...</Text>
+    <>
+      <View>
+        {isLoading && allPlaces.length === 0 && (
+          <View style={{ padding: SPACING.md }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bgLightBlue, padding: SPACING.sm, borderRadius: 10 }}>
+              <FontAwesome name="info-circle" size={14} color={COLORS.textSecondary} />
+              <Text style={{ marginLeft: 8, color: COLORS.textSecondary }}>Đang tải...</Text>
+            </View>
           </View>
-        </View>
-      )}
-      {placesToShow.map((place) => (
-        <View key={place.id} style={styles.placeCard}>
-          {/* Heart Button - Top Right Corner */}
-          <TouchableOpacity
-            style={[
-              styles.likeButton,
-              isLiked((place as any).googlePlaceId || place.placeId || place.id) && styles.likeButtonActive
-            ]}
-            activeOpacity={0.85}
-            onPress={async () => {
-              try {
-                const id = (place as any).googlePlaceId || place.placeId || place.id;
-                await toggleLike(id);
-              } catch (e) {
-                console.error('Failed to toggle like', e);
-              }
-            }}
-          >
-            <FontAwesome 
-              name={isLiked((place as any).googlePlaceId || place.placeId || place.id) ? "heart" : "heart-o"} 
-              size={20} 
-              color={isLiked((place as any).googlePlaceId || place.placeId || place.id) ? '#E53E3E' : '#9CA3AF'} 
-            />
-          </TouchableOpacity>
-
-          <View style={styles.placeContent}>
-            {/* Image Section - Left Side */}
-            {place.photoName ? (
-              <Image
-                source={{
-                  uri: `${API_BASE_URL}/api/v1/places/photo?name=${encodeURIComponent(place.photoName)}&maxWidthPx=400`,
-                }}
-                style={styles.placeImage}
-                resizeMode="cover"
+        )}
+        {placesToShow.map((place) => (
+          <TouchableOpacity key={place.id} style={styles.placeCard} onPress={() => handlePlacePress(place)} activeOpacity={0.9}>
+            {/* Heart Button - Top Right Corner */}
+            <TouchableOpacity
+              style={[
+                styles.likeButton,
+                isLiked((place as any).googlePlaceId || place.placeId || place.id) && styles.likeButtonActive
+              ]}
+              activeOpacity={0.85}
+              onPress={async () => {
+                try {
+                  const id = (place as any).googlePlaceId || place.placeId || place.id;
+                  await toggleLike(id);
+                } catch (e) {
+                  console.error('Failed to toggle like', e);
+                }
+              }}
+            >
+              <FontAwesome 
+                name={isLiked((place as any).googlePlaceId || place.placeId || place.id) ? "heart" : "heart-o"} 
+                size={20} 
+                color={isLiked((place as any).googlePlaceId || place.placeId || place.id) ? '#E53E3E' : '#9CA3AF'} 
               />
-            ) : (
-              <View style={styles.placeholderImage}>
-                <FontAwesome name="image" size={32} color={COLORS.textSecondary} />
-              </View>
-            )}
+            </TouchableOpacity>
 
-            {/* Content Section - Right Side */}
-            <View style={styles.placeInfo}>
-              <View style={styles.placeHeader}>
-                <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
-              </View>
-              <View style={styles.placeRow}>
-                <FontAwesome name="map-marker" size={14} color={COLORS.primary} />
-                <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
-              </View>
+            <View style={styles.placeContent}>
+              {/* Image Section - Left Side */}
+              {place.photoName ? (
+                <Image
+                  source={{
+                    uri: `${API_BASE_URL}/api/v1/places/photo?name=${encodeURIComponent(place.photoName)}&maxWidthPx=400`,
+                  }}
+                  style={styles.placeImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.placeholderImage}>
+                  <FontAwesome name="image" size={32} color={COLORS.textSecondary} />
+                </View>
+              )}
 
-            <View style={styles.placeFooter}>
-              <View style={styles.leftCol}>
-                {renderStars(place.rating)}
+              {/* Content Section - Right Side */}
+              <View style={styles.placeInfo}>
+                <View style={styles.placeHeader}>
+                  <Text style={styles.placeName} numberOfLines={2}>{place.name}</Text>
+                </View>
+                <View style={styles.placeRow}>
+                  <FontAwesome name="map-marker" size={14} color={COLORS.primary} />
+                  <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
+                </View>
+
+              <View style={styles.placeFooter}>
+                <View style={styles.leftCol}>
+                  {renderStars(place.rating)}
+                </View>
+                <View style={styles.moodTags}>
+                  {place.moods.slice(0, 3).map((m: string, i: number) => (
+                    <View key={i} style={styles.moodTag}>
+                      <Text style={styles.moodTagText} numberOfLines={1}>{m}</Text>
+                    </View>
+                  ))}
+                  {place.moods.length > 3 && <Text style={styles.moreMoodsText}>+{place.moods.length - 3}</Text>}
+                </View>
               </View>
-              <View style={styles.moodTags}>
-                {place.moods.slice(0, 3).map((m: string, i: number) => (
-                  <View key={i} style={styles.moodTag}>
-                    <Text style={styles.moodTagText} numberOfLines={1}>{m}</Text>
-                  </View>
-                ))}
-                {place.moods.length > 3 && <Text style={styles.moreMoodsText}>+{place.moods.length - 3}</Text>}
               </View>
             </View>
-            </View>
-          </View>
-        </View>
-      ))}
-
-      {allPlaces.length > visibleCount && (
-        <View style={{ padding: SPACING.md }}>
-          <TouchableOpacity
-            onPress={() => {
-              // each click loads 5 more
-              setVisibleCount((v) => Math.min(allPlaces.length, v + 5));
-            }}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingVertical: SPACING.md,
-              paddingHorizontal: SPACING.md,
-              borderRadius: 12,
-              backgroundColor: COLORS.bgLightBlue,
-              borderWidth: 1,
-              borderColor: COLORS.borderLight,
-              marginTop: SPACING.sm,
-              width: '100%'
-            }}
-          >
-            <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.primary }}>
-              {'Tải thêm 5 địa điểm'}
-            </Text>
           </TouchableOpacity>
-        </View>
-      )}
-    </View>
+        ))}
+
+        {allPlaces.length > visibleCount && (
+          <View style={{ padding: SPACING.md }}>
+            <TouchableOpacity
+              onPress={() => {
+                // each click loads 5 more
+                setVisibleCount((v) => Math.min(allPlaces.length, v + 5));
+              }}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingVertical: SPACING.md,
+                paddingHorizontal: SPACING.md,
+                borderRadius: 12,
+                backgroundColor: COLORS.bgLightBlue,
+                borderWidth: 1,
+                borderColor: COLORS.borderLight,
+                marginTop: SPACING.sm,
+                width: '100%'
+              }}
+            >
+              <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.primary }}>
+                {'Tải thêm 5 địa điểm'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      {/* POI Detail Bottom Sheet */}
+      <POIDetailBottomSheet
+        visible={isBottomSheetVisible}
+        placeData={selectedPlaceData}
+        onClose={() => {
+          setIsBottomSheetVisible(false);
+          setSelectedPlaceData(null);
+        }}
+      />
+    </>
   );
 };
 
@@ -433,7 +531,6 @@ const styles = StyleSheet.create({
     color: '#3083FF',
     fontWeight: '700',
     letterSpacing: 0.2,
-    numberOfLines: 1,
   },
   moreMoodsText: {
     fontSize: 11,

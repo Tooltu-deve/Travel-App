@@ -19,7 +19,7 @@ import { MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING } from '../../constants';
-import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI, autocompletePlacesAPI } from '../../services/api';
+import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI, autocompletePlacesAPI, getLikedPlacesAPI, getPlaceByIdAPI, API_BASE_URL } from '../../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { POIDetailBottomSheet } from '../place/POIDetailBottomSheet';
 
@@ -109,6 +109,7 @@ interface ItineraryViewScreenProps {
   customRouteData?: CustomItineraryResponse | null; // manual/custom itinerary data
   isManual?: boolean;
   overlayContent?: ReactNode;
+  onProgressUpdate?: () => void; // callback to refresh progress when visited changes
 }
 
 export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
@@ -119,6 +120,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   customRouteData = null,
   isManual = false,
   overlayContent,
+  onProgressUpdate,
 }) => {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
@@ -146,10 +148,39 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   const [autocompleteResults, setAutocompleteResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isUpdatingRoute, setIsUpdatingRoute] = useState(false);
+  
+  // Favorites state
+  const [favoritesPlaces, setFavoritesPlaces] = useState<any[]>([]);
+  const [isLoadingFavorites, setIsLoadingFavorites] = useState(false);
+  const [isUsingFavorites, setIsUsingFavorites] = useState(false);
+
+  // Visited activities state for MAIN routes
+  const [visitedActivities, setVisitedActivities] = useState<Set<string>>(new Set());
+
+  // Animation state for visit button
+  const [animatingButtons, setAnimatingButtons] = useState<Set<string>>(new Set());
 
   // Sync custom route data (manual)
   useEffect(() => {
     if (customRouteData) {
+      console.log('\n📝 [Frontend] Received customRouteData:', customRouteData);
+      console.log('   - Has days:', !!customRouteData.days);
+      console.log('   - Days count:', customRouteData.days?.length);
+      
+      if (customRouteData.days?.[0]?.places) {
+        const firstPlace = customRouteData.days[0].places[0];
+        console.log('   - First place of first day:', firstPlace?.name);
+        console.log('   - First place start_encoded_polyline:', !!(firstPlace as any)?.start_encoded_polyline);
+        console.log('   - First place start_travel_duration_minutes:', (firstPlace as any)?.start_travel_duration_minutes);
+        console.log('   - First place encoded_polyline:', !!firstPlace?.encoded_polyline);
+        console.log('   - First place travel_duration_minutes:', firstPlace?.travel_duration_minutes);
+        
+        const lastPlace = customRouteData.days[0].places[customRouteData.days[0].places.length - 1];
+        console.log('   - Last place of first day:', lastPlace?.name);
+        console.log('   - Last place encoded_polyline:', !!lastPlace?.encoded_polyline);
+        console.log('   - Last place travel_duration_minutes:', lastPlace?.travel_duration_minutes);
+      }
+      
       setRouteDetails(customRouteData);
       setIsLoading(false);
       setError(null);
@@ -194,19 +225,44 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     (Array.isArray(routeData?.days)
       ? routeData.days.map((d: CustomDayWithRoutes, idx: number) => ({
           day: d.day ?? d.dayNumber ?? idx + 1,
-          activities: (d.places || []).map((p) => ({
-            name: p.name,
-            location: p.location,
-            google_place_id: (p as any).google_place_id || p.placeId,
-            encoded_polyline: p.encoded_polyline || undefined,
-            travel_duration_minutes:
-              p.travel_duration_minutes != null ? Number(p.travel_duration_minutes) : undefined,
-            estimated_arrival: (p as any).estimated_arrival,
-            estimated_departure: (p as any).estimated_departure,
-          })),
+          activities: (d.places || []).map((p) => {
+            const activity = {
+              name: p.name,
+              location: p.location,
+              google_place_id: (p as any).google_place_id || p.placeId,
+              encoded_polyline: p.encoded_polyline || undefined,
+              travel_duration_minutes:
+                p.travel_duration_minutes != null ? Number(p.travel_duration_minutes) : undefined,
+              estimated_arrival: (p as any).estimated_arrival,
+              estimated_departure: (p as any).estimated_departure,
+              start_encoded_polyline: (p as any).start_encoded_polyline || undefined,
+              start_travel_duration_minutes: (p as any).start_travel_duration_minutes != null 
+                ? Number((p as any).start_travel_duration_minutes) 
+                : undefined,
+            };
+            return activity;
+          }),
           day_start_time: (d as any).day_start_time,
         }))
       : []);
+  
+  // Log normalized route data
+  if (optimizedRoute.length > 0 && routeDetails) {
+    console.log('\n📋 [Frontend] Normalized optimizedRoute:');
+    console.log('   - Total days:', optimizedRoute.length);
+    optimizedRoute.forEach((day, dayIdx) => {
+      console.log(`   Day ${day.day}:`);
+      day.activities?.forEach((act, actIdx) => {
+        console.log(`      POI ${actIdx} (${act.name}):`);
+        if (actIdx === 0) {
+          console.log(`         - start_encoded_polyline: ${!!(act as any).start_encoded_polyline}`);
+          console.log(`         - start_travel_duration_minutes: ${(act as any).start_travel_duration_minutes ?? 'undefined'}`);
+        }
+        console.log(`         - encoded_polyline: ${!!act.encoded_polyline}`);
+        console.log(`         - travel_duration_minutes: ${act.travel_duration_minutes ?? 'undefined'}`);
+      });
+    });
+  }
 
   const totalDays = optimizedRoute.length || (routeDetails as any)?.duration_days || 1;
 
@@ -219,6 +275,58 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     routeData?.startLocationCoordinates ||
     optimizedRoute?.[0]?.startLocationCoordinates ||
     null;
+
+  // Get route status
+  const status = (routeDetails as any)?.status;
+
+  // Load visited activities for MAIN routes and handle route switching
+  useEffect(() => {
+    const handleMainRouteChange = async () => {
+      if (status === 'MAIN' && routeId) {
+        try {
+          // Get the current main route ID
+          const currentMainRouteId = await AsyncStorage.getItem('current_main_route_id');
+          
+          // If this route is newly promoted to MAIN
+          if (currentMainRouteId !== routeId) {
+            console.log('New MAIN route detected:', routeId, 'Previous:', currentMainRouteId);
+            
+            // Clear visited data of old main route
+            if (currentMainRouteId) {
+              const oldVisitedKey = `visited_${currentMainRouteId}`;
+              await AsyncStorage.removeItem(oldVisitedKey);
+              console.log('Cleared visited data for old MAIN route:', currentMainRouteId);
+            }
+            
+            // Clear visited data of current route (fresh start)
+            const visitedKey = `visited_${routeId}`;
+            await AsyncStorage.removeItem(visitedKey);
+            setVisitedActivities(new Set());
+            
+            // Set this route as current main
+            await AsyncStorage.setItem('current_main_route_id', routeId);
+            console.log('Reset visited data for new MAIN route:', routeId);
+          } else {
+            // Same main route, load existing visited data
+            const visitedKey = `visited_${routeId}`;
+            const visitedData = await AsyncStorage.getItem(visitedKey);
+            if (visitedData) {
+              const visitedArray: string[] = JSON.parse(visitedData);
+              const visitedSet = new Set(visitedArray);
+              setVisitedActivities(visitedSet);
+            }
+          }
+        } catch (error) {
+          console.error('Error handling main route change:', error);
+        }
+      } else if (status !== 'MAIN') {
+        // Not a main route, clear visited state
+        setVisitedActivities(new Set());
+      }
+    };
+
+    handleMainRouteChange();
+  }, [status, routeId]);
 
   // Get title
   const title =
@@ -368,25 +476,79 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     };
   };
 
+  // Toggle visited activity for MAIN routes
+  const toggleVisited = async (day: number, activityIndex: number) => {
+    if (status !== 'MAIN' || !routeId) return;
+
+    const activityKey = `${day}-${activityIndex}`;
+
+    // Trigger animation
+    setAnimatingButtons(prev => new Set(prev).add(activityKey));
+    setTimeout(() => {
+      setAnimatingButtons(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(activityKey);
+        return newSet;
+      });
+    }, 300);
+
+    const newVisited = new Set(visitedActivities);
+    if (newVisited.has(activityKey)) {
+      newVisited.delete(activityKey);
+    } else {
+      newVisited.add(activityKey);
+    }
+    setVisitedActivities(newVisited);
+
+    // Save to AsyncStorage
+    try {
+      const visitedKey = `visited_${routeId}`;
+      await AsyncStorage.setItem(visitedKey, JSON.stringify([...newVisited]));
+      // Trigger progress update callback
+      if (onProgressUpdate) {
+        onProgressUpdate();
+      }
+    } catch (error) {
+      console.error('Error saving visited activities:', error);
+    }
+  };
+
   // Route segments for polylines (bao gồm đoạn từ điểm bắt đầu đến POI đầu tiên nếu có)
     const routeSegments = (() => {
+      console.log('\n🗺️ [Frontend] Building route segments for map...');
+      console.log('   - Start location:', startLocation);
+      console.log('   - Activities count:', activities.length);
+      
       const segments: { points: { latitude: number; longitude: number }[]; mode: string }[] = [];
 
       // Đoạn từ điểm bắt đầu đến POI đầu tiên
       if (startLocation && activities.length > 0) {
+        console.log('   - Checking first activity for start_encoded_polyline...');
+        console.log('     First activity:', activities[0]?.name);
+        console.log('     Has start_encoded_polyline:', !!activities[0]?.start_encoded_polyline);
+        
         if (activities[0]?.start_encoded_polyline) {
+          const decoded = decodePolyline(activities[0].start_encoded_polyline);
+          console.log('     ✅ Decoded start polyline, points:', decoded.length);
           segments.push({
-            points: decodePolyline(activities[0].start_encoded_polyline),
+            points: decoded,
             mode: 'DRIVE', // Default to DRIVE for start segment
           });
+        } else {
+          console.log('     ⚠️ No start_encoded_polyline found for first activity');
         }
       }
 
       activities.forEach((activity, idx) => {
+        console.log(`   - Processing POI ${idx} (${activity.name})...`);
+        console.log(`     Has encoded_polyline: ${!!activity.encoded_polyline}`);
+        console.log(`     Has steps: ${!!activity.steps}`);
+        
         if (activity.steps && activity.steps.length > 0) {
-          activity.steps.forEach((step) => {
+          activity.steps.forEach((step, stepIdx) => {
             const decoded = decodePolyline(step.encoded_polyline);
             if (decoded.length > 1) {
+              console.log(`       Step ${stepIdx}: ${decoded.length} points`);
               segments.push({
                 points: decoded,
                 mode: step.travel_mode,
@@ -396,14 +558,18 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         } else {
           const decoded = decodePolyline(activity.encoded_polyline);
           if (decoded.length > 1) {
+            console.log(`     ✅ Decoded polyline: ${decoded.length} points`);
             segments.push({
               points: decoded,
               mode: 'DRIVE', // Default
             });
+          } else {
+            console.log(`     ⚠️ No valid polyline (${decoded.length} points)`);
           }
         }
       });
 
+      console.log(`   📊 Total segments created: ${segments.length}`);
       return segments.filter((segment) => segment.points.length > 1);
     })();
 
@@ -586,8 +752,31 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
   // Debounced search for autocomplete
   useEffect(() => {
-    if (!isReplacePOIModalVisible || !searchQuery.trim()) {
-      // Chỉ set state nếu autocompleteResults không rỗng (tránh vòng lặp vô hạn)
+    if (!isReplacePOIModalVisible) {
+      setAutocompleteResults((prev) => prev.length > 0 ? [] : prev);
+      return;
+    }
+
+    // If favorites mode is on
+    if (isUsingFavorites) {
+      if (!searchQuery.trim()) {
+        // Show all favorites when input is empty
+        setAutocompleteResults(favoritesPlaces);
+        return;
+      } else {
+        // Filter favorites based on search text
+        const filteredFavorites = favoritesPlaces.filter(fav =>
+          fav.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          fav.structuredFormat?.mainText?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          fav.structuredFormat?.secondaryText?.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+        setAutocompleteResults(filteredFavorites);
+        return;
+      }
+    }
+
+    // Normal autocomplete mode
+    if (!searchQuery.trim()) {
       setAutocompleteResults((prev) => prev.length > 0 ? [] : prev);
       return;
     }
@@ -634,7 +823,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     }, 300); // 300ms debounce
 
     return () => clearTimeout(timeoutId);
-  }, [searchQuery, isReplacePOIModalVisible]);
+  }, [searchQuery, isReplacePOIModalVisible, isUsingFavorites, favoritesPlaces]);
 
   // Handle replace POI button press
   const handleReplacePOI = (activity: Activity, event: any) => {
@@ -642,7 +831,85 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     setReplacingPOI(activity);
     setSearchQuery('');
     setAutocompleteResults([]);
+    setIsUsingFavorites(false);
     setIsReplacePOIModalVisible(true);
+  };
+
+  // Toggle favorites mode for autocomplete
+  const toggleFavoritesMode = async () => {
+    if (isUsingFavorites) {
+      // Turn off favorites mode
+      setIsUsingFavorites(false);
+      setAutocompleteResults([]);
+      setSearchQuery('');
+    } else {
+      // Turn on favorites mode
+      if (favoritesPlaces.length === 0) {
+        // Load favorites if not loaded yet
+        try {
+          setIsLoadingFavorites(true);
+          const token = await AsyncStorage.getItem('userToken');
+          if (!token) {
+            Alert.alert('Lỗi', 'Bạn cần đăng nhập để tải địa điểm yêu thích.');
+            return;
+          }
+
+          const favorites = await getLikedPlacesAPI(token);
+          if (favorites && Array.isArray(favorites)) {
+            // Transform favorites to match autocomplete format
+            const enrichedFavorites = await Promise.all(
+              favorites.map(async (fav, index) => {
+                try {
+                  const placeDetails = await getPlaceByIdAPI(fav.place_id);
+                  return {
+                    placeId: `fav-${fav.place_id}-${index}`,
+                    text: placeDetails.name + (placeDetails.address ? `, ${placeDetails.address}` : ''),
+                    structuredFormat: {
+                      mainText: placeDetails.name,
+                      secondaryText: placeDetails.address || '',
+                    },
+                    isFavorite: true,
+                    rating: placeDetails.rating,
+                    location: placeDetails.location,
+                    originalData: fav,
+                    googlePlaceId: placeDetails.googlePlaceId,
+                  };
+                } catch (error) {
+                  console.warn('Failed to enrich favorite place:', fav.place_id, error);
+                  return {
+                    placeId: `fav-${fav.place_id}-${index}`,
+                    text: `Địa điểm ${fav.place_id}`,
+                    structuredFormat: {
+                      mainText: `Địa điểm ${fav.place_id}`,
+                      secondaryText: '',
+                    },
+                    isFavorite: true,
+                    rating: null,
+                    originalData: fav,
+                  };
+                }
+              })
+            );
+
+            setFavoritesPlaces(enrichedFavorites);
+            setAutocompleteResults(enrichedFavorites);
+            setIsUsingFavorites(true);
+            setSearchQuery('');
+          }
+        } catch (error) {
+          console.error('Load favorites error:', error);
+          Alert.alert('Lỗi', 'Không thể tải địa điểm yêu thích.');
+          return;
+        } finally {
+          setIsLoadingFavorites(false);
+        }
+      } else {
+        // Use already loaded favorites
+        setIsUsingFavorites(true);
+        setAutocompleteResults(favoritesPlaces);
+        setSearchQuery('');
+      }
+    }
   };
 
   // Handle select new POI from autocomplete
@@ -659,7 +926,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         return;
       }
 
-      const placeId = suggestion.placeId || suggestion.place_id;
+      // For favorites, use googlePlaceId; for regular autocomplete, use placeId
+      const placeId = suggestion.isFavorite 
+        ? suggestion.googlePlaceId 
+        : (suggestion.placeId || suggestion.place_id);
       if (!placeId) {
         Alert.alert('Lỗi', 'Không tìm thấy Place ID.');
         return;
@@ -742,7 +1012,6 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
       // Call API to update route
       const routeId = (routeDetails as any).route_id;
-      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000';
       const response = await fetch(`${API_BASE_URL}/api/v1/itineraries/custom-route`, {
         method: 'POST',
         headers: {
@@ -881,9 +1150,12 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   key={`start-${selectedDay}`}
                   coordinate={toMapCoordinate(startLocation)!} 
                   title="Điểm bắt đầu"
+                  anchor={{ x: 0.5, y: 1 }}
                 >
-                  <View style={styles.startMarker}>
-                    <Text style={styles.markerText}>BĐ</Text>
+                  <View style={styles.markerContainer}>
+                    <View style={styles.startMarker}>
+                      <Text style={styles.markerText}>BĐ</Text>
+                    </View>
                   </View>
                 </Marker>
               )}
@@ -893,10 +1165,21 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const coord = toMapCoordinate(activity.location || activity.place?.location);
                 if (!coord) return null;
 
+                const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
                 return (
-                  <Marker key={`marker-${selectedDay}-${index}`} coordinate={coord}>
-                    <View style={styles.marker}>
-                      <Text style={styles.markerText}>{index + 1}</Text>
+                  <Marker 
+                    key={`marker-${selectedDay}-${index}`} 
+                    coordinate={coord}
+                    anchor={{ x: 0.5, y: 1 }}
+                  >
+                    <View style={styles.markerContainer}>
+                      <View style={[styles.marker, isVisited && styles.markerVisited]}>
+                        {isVisited ? (
+                          <MaterialCommunityIcons name="check" size={16} color={COLORS.textWhite} />
+                        ) : (
+                          <Text style={styles.markerText}>{index + 1}</Text>
+                        )}
+                      </View>
                     </View>
                   </Marker>
                 );
@@ -1018,6 +1301,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   travelTime != null && (!startLocation ? true : index > 0);
                 const hasPhoto = activity.google_place_id; // Sẽ fetch ảnh khi click
                 const rating = activity.ecs_score;
+                const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
 
                 return (
                   <View key={`activity-${index}`}>
@@ -1035,7 +1319,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
                     {/* Activity Card */}
                     <TouchableOpacity
-                      style={styles.activityCard}
+                      style={[styles.activityCard, isVisited && styles.activityCardVisited]}
                       onPress={() => handleActivityPress(activity)}
                       disabled={isEnriching}
                       activeOpacity={0.7}
@@ -1048,10 +1332,20 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                         style={styles.cardGradientOverlay}
                       />
 
-                      {/* Number Badge - Positioned Absolutely at Top-Left */}
-                      <View style={styles.cardNumberBadge}>
+                      {/* Visited overlay gradient */}
+                      {isVisited && (
                         <LinearGradient
-                          colors={[COLORS.primary, COLORS.gradientSecondary]}
+                          colors={[COLORS.success + '10', 'transparent']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.cardVisitedOverlay}
+                        />
+                      )}
+
+                      {/* Number Badge - Positioned Absolutely at Top-Left */}
+                      <View style={[styles.cardNumberBadge, isVisited && styles.cardNumberBadgeVisited]}>
+                        <LinearGradient
+                          colors={[isVisited ? '#66BB6A' : COLORS.primary, isVisited ? '#66BB6A' : COLORS.gradientSecondary]}
                           start={{ x: 0, y: 0 }}
                           end={{ x: 1, y: 1 }}
                           style={styles.numberBadgeGradient}
@@ -1087,14 +1381,50 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           )}
                         </View>
 
-                        {/* Right: Replace POI Button */}
-                        <TouchableOpacity
-                          style={styles.cardReplaceButton}
-                          onPress={(e) => handleReplacePOI(activity, e)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.cardReplaceButtonText}>Thay đổi</Text>
-                        </TouchableOpacity>
+                        {/* Right: Replace POI Button - Only show for draft routes */}
+                        {status === 'DRAFT' && (
+                          <TouchableOpacity
+                            style={styles.cardReplaceButton}
+                            onPress={(e) => handleReplacePOI(activity, e)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.cardReplaceButtonText}>Thay đổi</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {/* Right: Visit Check Button - Only show for main routes */}
+                        {status === 'MAIN' && (
+                          <TouchableOpacity
+                            style={[
+                              styles.cardVisitButton,
+                              visitedActivities.has(`${selectedDay}-${index}`) && styles.cardVisitButtonChecked,
+                              animatingButtons.has(`${selectedDay}-${index}`) && styles.cardVisitButtonAnimating
+                            ]}
+                            onPress={() => toggleVisited(selectedDay, index)}
+                            activeOpacity={0.7}
+                          >
+                            {visitedActivities.has(`${selectedDay}-${index}`) ? (
+                              <LinearGradient
+                                colors={['#66BB6A', '#66BB6A']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={styles.cardVisitButtonGradient}
+                              >
+                                <MaterialCommunityIcons
+                                  name="check"
+                                  size={22}
+                                  color={COLORS.textWhite}
+                                />
+                              </LinearGradient>
+                            ) : (
+                              <MaterialCommunityIcons
+                                name="check"
+                                size={22}
+                                color={COLORS.textSecondary}
+                              />
+                            )}
+                          </TouchableOpacity>
+                        )}
                       </View>
 
                       {/* Tap hint */}
@@ -1161,9 +1491,30 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             )}
 
             <View style={styles.searchInputContainer}>
+              {/* Favorites Toggle Button */}
+              <TouchableOpacity
+                style={[
+                  styles.favoritesToggleButton,
+                  isUsingFavorites && styles.favoritesToggleButtonActive
+                ]}
+                onPress={toggleFavoritesMode}
+                disabled={isLoadingFavorites}
+                activeOpacity={0.7}
+              >
+                {isLoadingFavorites ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                  <FontAwesome 
+                    name={isUsingFavorites ? "heart" : "heart-o"} 
+                    size={18} 
+                    color={isUsingFavorites ? COLORS.textWhite : COLORS.primary} 
+                  />
+                )}
+              </TouchableOpacity>
+
               <TextInput
                 style={styles.searchInput}
-                placeholder="Tìm kiếm địa điểm thay thế..."
+                placeholder={isUsingFavorites ? "Tìm trong danh sách yêu thích..." : "Tìm kiếm địa điểm thay thế..."}
                 placeholderTextColor={COLORS.textSecondary}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -1173,6 +1524,16 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 <ActivityIndicator size="small" color={COLORS.primary} style={{ marginLeft: SPACING.sm }} />
               )}
             </View>
+
+            {/* Status hint */}
+            {isUsingFavorites && (
+              <View style={styles.searchHintContainer}>
+                <FontAwesome name="info-circle" size={14} color={COLORS.primary} />
+                <Text style={styles.searchHintText}>
+                  Đang tìm kiếm trong {favoritesPlaces.length} địa điểm yêu thích
+                </Text>
+              </View>
+            )}
 
             <FlatList
               data={autocompleteResults}
@@ -1184,7 +1545,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   disabled={isUpdatingRoute}
                 >
                   <View style={styles.autocompleteItemIcon}>
-                    <FontAwesome name="map-marker" size={16} color={COLORS.primary} />
+                    {item.isFavorite ? (
+                      <FontAwesome name="heart" size={16} color="#E53E3E" />
+                    ) : (
+                      <FontAwesome name="map-marker" size={16} color={COLORS.primary} />
+                    )}
                   </View>
                   <View style={styles.autocompleteItemContent}>
                     <Text style={styles.autocompleteItemName} numberOfLines={1}>
@@ -1195,12 +1560,24 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                         {item.structuredFormat.secondaryText}
                       </Text>
                     )}
+                    {item.rating && (
+                      <View style={styles.ratingContainer}>
+                        <FontAwesome name="star" size={12} color="#F59E0B" />
+                        <Text style={styles.ratingText}>{item.rating}</Text>
+                      </View>
+                    )}
                   </View>
                 </TouchableOpacity>
               )}
               ListEmptyComponent={
-                searchQuery.trim() && !isSearching ? (
-                  <Text style={styles.noResultsText}>Không tìm thấy kết quả</Text>
+                !isSearching && (isUsingFavorites || searchQuery.trim()) ? (
+                  <View style={styles.noResultsContainer}>
+                    <Text style={styles.noResultsText}>
+                      {isUsingFavorites 
+                        ? 'Không tìm thấy địa điểm yêu thích phù hợp'
+                        : 'Không tìm thấy kết quả'}
+                    </Text>
+                  </View>
                 ) : null
               }
               style={styles.autocompleteContainer}
@@ -1341,9 +1718,9 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   marker: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: COLORS.primary,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1354,11 +1731,24 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 4,
     elevation: 5,
+    overflow: 'visible',
+  },
+  markerContainer: {
+    overflow: 'visible',
   },
   markerText: {
     color: COLORS.textWhite,
     fontSize: 13,
     fontWeight: 'bold',
+  },
+  markerVisited: {
+    backgroundColor: '#66BB6A',
+    borderColor: '#66BB6A',
+    shadowColor: '#66BB6A',
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    elevation: 8,
+    overflow: 'visible',
   },
   tabsContainer: {
     backgroundColor: 'transparent',
@@ -1461,6 +1851,15 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary + '10',
     position: 'relative',
   },
+  activityCardVisited: {
+    borderColor: '#66BB6A',
+    borderWidth: 2,
+    shadowColor: '#66BB6A',
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+    transform: [{ scale: 1.02 }],
+  },
   cardNumberBadge: {
     position: 'absolute',
     top: SPACING.md,
@@ -1475,6 +1874,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 6,
     elevation: 5,
+  },
+  cardNumberBadgeVisited: {
+    shadowColor: '#66BB6A',
   },
   cardNumberBadgeTop: {
     position: 'absolute',
@@ -1497,6 +1899,14 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: '100%',
+  },
+  cardVisitedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '100%',
+    borderRadius: SPACING.lg,
   },
   cardContent: {
     flexDirection: 'row',
@@ -1592,6 +2002,37 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.textWhite,
   },
+  cardVisitButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.bgCard,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#4DB8FF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
+    transform: [{ scale: 1 }],
+  },
+  cardVisitButtonChecked: {
+    backgroundColor: '#66BB6A',
+    borderColor: '#66BB6A',
+    shadowColor: '#66BB6A',
+    shadowOpacity: 0.4,
+    transform: [{ scale: 1.05 }],
+  },
+  cardVisitButtonAnimating: {
+    transform: [{ scale: 1.2 }],
+  },
+  cardVisitButtonGradient: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   replaceModalContainer: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1685,11 +2126,56 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textSecondary,
   },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    marginTop: 2,
+  },
+  ratingText: {
+    fontSize: 12,
+    color: '#F59E0B',
+    fontWeight: '600',
+  },
+  noResultsContainer: {
+    alignItems: 'center',
+    paddingVertical: SPACING.xl,
+  },
   noResultsText: {
     textAlign: 'center',
     padding: SPACING.lg,
     color: COLORS.textSecondary,
     fontSize: 14,
+  },
+  favoritesToggleButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.bgLightBlue,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SPACING.sm,
+  },
+  favoritesToggleButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+  searchHintContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    backgroundColor: COLORS.bgLightBlue,
+    borderRadius: SPACING.md,
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.sm,
+  },
+  searchHintText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginLeft: SPACING.sm,
+    flex: 1,
   },
   updatingContainer: {
     flexDirection: 'row',

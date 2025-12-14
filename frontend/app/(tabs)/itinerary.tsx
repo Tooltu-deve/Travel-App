@@ -45,6 +45,7 @@ const ItineraryScreen: React.FC = () => {
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
   const [editingRouteName, setEditingRouteName] = useState('');
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+  const [mainRouteProgress, setMainRouteProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
   
   useFocusEffect(
     React.useCallback(() => {
@@ -148,6 +149,56 @@ const ItineraryScreen: React.FC = () => {
     };
   }, []); // Empty dependency array - runs only once on mount
 
+  // Function to calculate main route progress
+  const calculateProgress = React.useCallback(async () => {
+    if (mainRoute) {
+      try {
+        // Get total places in main route
+        const routeData = mainRoute.route_data_json;
+        let totalPlaces = 0;
+
+        // Count from optimized_route
+        if (Array.isArray(routeData?.optimized_route)) {
+          totalPlaces = routeData.optimized_route.reduce(
+            (sum: number, day: any) => sum + (day?.activities?.length || 0),
+            0
+          );
+        } else if (Array.isArray(routeData?.days)) {
+          // Count from custom itinerary days
+          totalPlaces = routeData.days.reduce(
+            (sum: number, day: any) => sum + ((day?.places && Array.isArray(day.places)) ? day.places.length : 0),
+            0
+          );
+        }
+
+        // Get visited data
+        const visitedKey = `visited_${mainRoute.route_id}`;
+        const visitedData = await AsyncStorage.getItem(visitedKey);
+        let completedPlaces = 0;
+        if (visitedData) {
+          try {
+            const visitedArray = JSON.parse(visitedData);
+            completedPlaces = visitedArray.length;
+          } catch (e) {
+            console.error('Error parsing visited data:', e);
+          }
+        }
+
+        setMainRouteProgress({
+          completed: completedPlaces,
+          total: totalPlaces,
+        });
+      } catch (error) {
+        console.error('Error calculating progress:', error);
+      }
+    }
+  }, [mainRoute]);
+
+  // Calculate main route progress
+  useEffect(() => {
+    calculateProgress();
+  }, [mainRoute]);
+
   const handleActivateRoute = async (routeId: string) => {
     try {
       const token = await AsyncStorage.getItem('userToken');
@@ -205,6 +256,18 @@ const ItineraryScreen: React.FC = () => {
                 }
 
                 setMainRoute(newMainRoute);
+
+                // Reset visited data for the new main route
+                if (newMainRoute) {
+                  try {
+                    const visitedKey = `visited_${newMainRoute.route_id}`;
+                    await AsyncStorage.removeItem(visitedKey);
+                    // Recalculate progress after resetting
+                    setMainRouteProgress({ completed: 0, total: 0 });
+                  } catch (error) {
+                    console.error('Error resetting visited data:', error);
+                  }
+                }
 
                 // Refresh confirmed routes for current tab
                 if (activeTab === 'ai') {
@@ -458,25 +521,24 @@ const ItineraryScreen: React.FC = () => {
   };
 
   const getRouteTitle = (route: TravelRoute, index: number) => {
-    const fallbackTitle =
-      route.route_data_json?.summary?.title ||
-      route.route_data_json?.metadata?.title ||
-      route.route_data_json?.destination;
-
-    const baseTitle =
+    // Get the stored title first
+    const storedTitle =
       route.title?.trim() ||
-      (typeof fallbackTitle === 'string' && fallbackTitle.trim()) ||
-      `Lộ trình ${route.route_id?.slice(-6) || index + 1}`;
+      (typeof (route.route_data_json?.summary?.title || route.route_data_json?.metadata?.title || route.route_data_json?.destination) === 'string'
+        ? (route.route_data_json?.summary?.title || route.route_data_json?.metadata?.title || route.route_data_json?.destination).trim()
+        : `Lộ trình ${route.route_id?.slice(-6) || index}`);
 
-    // Get helper function to extract title from a route
-    const extractTitle = (r: TravelRoute, fallbackIndex: number) => {
-      return (
-        r.title?.trim() ||
-        (typeof (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination) === 'string'
-          ? (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination).trim()
-          : `Lộ trình ${r.route_id?.slice(-6) || fallbackIndex}`)
-      );
-    };
+    // Check if the stored title already has a suffix like "(2)", "(3)", etc.
+    const hasSuffix = /\s*\(\d+\)$/.test(storedTitle);
+    
+    // If it already has a suffix, preserve it as-is
+    // This ensures the name "sticks" to the route even when it changes status
+    if (hasSuffix) {
+      return storedTitle;
+    }
+
+    // If no suffix, extract base title for duplicate checking
+    const baseTitle = storedTitle;
 
     // Combine mainRoute and confirmedRoutes for duplicate checking
     const allRoutes: TravelRoute[] = [];
@@ -485,16 +547,26 @@ const ItineraryScreen: React.FC = () => {
     }
     allRoutes.push(...confirmedRoutes);
 
-    // Find all routes with the same base title
+    // Find all routes with the same base title (excluding those with existing suffixes)
     const sameNameRoutes = allRoutes.filter(r => {
-      const otherTitle = extractTitle(r, allRoutes.indexOf(r) + 1);
-      return otherTitle === baseTitle;
+      const rTitle =
+        r.title?.trim() ||
+        (typeof (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination) === 'string'
+          ? (r.route_data_json?.summary?.title || r.route_data_json?.metadata?.title || r.route_data_json?.destination).trim()
+          : '');
+      
+      // Extract base title (remove suffix if exists)
+      const rBaseTitle = rTitle.replace(/\s*\(\d+\)$/, '');
+      return rBaseTitle === baseTitle;
     });
 
     // If only one route with this name, no suffix needed
     if (sameNameRoutes.length === 1) {
       return baseTitle;
     }
+
+    // Sort by route_id (creation time) to determine suffix order
+    sameNameRoutes.sort((a, b) => a.route_id.localeCompare(b.route_id));
 
     // Find position of current route in the same-name group (1-indexed)
     const positionInGroup = sameNameRoutes.findIndex(r => r.route_id === route.route_id) + 1;
@@ -667,6 +739,7 @@ const ItineraryScreen: React.FC = () => {
                       </View>
                     </View>
                   </View>
+
                   <View style={styles.currentCardContent}>
                     <View style={styles.currentCardRow}>
                       <FontAwesome name="map-marker" size={16} color={COLORS.textWhite} />
@@ -698,6 +771,35 @@ const ItineraryScreen: React.FC = () => {
                       </View>
                     </View>
                   </View>
+                  {/* Progress Bar - Bottom */}
+                  {mainRouteProgress.total > 0 && (
+                    <View style={styles.progressBarBottomContainer}>
+                      <View style={styles.progressBarBackgroundBottom}>
+                        <LinearGradient
+                          colors={['rgba(255, 255, 255, 0.4)', 'rgba(255, 255, 255, 0.2)', 'rgba(255, 255, 255, 0.4)']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.progressBarBackgroundGradient}
+                        />
+                        <View
+                          style={[
+                            styles.progressBarFillBottom,
+                            { width: `${Math.min(100, (mainRouteProgress.completed / mainRouteProgress.total) * 100)}%` }
+                          ]}
+                        />
+                        <Text style={[
+                          styles.progressTextBottom,
+                          { 
+                            color: Math.round((mainRouteProgress.completed / mainRouteProgress.total) * 100) >= 50 
+                              ? '#00A3FF' 
+                              : '#FFFFFF' 
+                          }
+                        ]}>
+                          {mainRouteProgress.completed}/{mainRouteProgress.total} ({Math.round((mainRouteProgress.completed / mainRouteProgress.total) * 100)}%)
+                        </Text>
+                      </View>
+                    </View>
+                  )}
                   {/* Complete Button */}
                   <TouchableOpacity
                     style={styles.completeButton}
@@ -941,6 +1043,7 @@ const ItineraryScreen: React.FC = () => {
             setViewerRouteId(null);
             setViewerRouteData(null);
           }}
+          onProgressUpdate={calculateProgress}
         />
       )}
 
@@ -1065,8 +1168,8 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
   },
   currentCardGradient: {
-    padding: SPACING.lg,
-    gap: SPACING.md,
+    padding: SPACING.md,
+    gap: SPACING.sm,
   },
   currentCardHeader: {
     gap: SPACING.sm,
@@ -1330,6 +1433,40 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: COLORS.textSecondary,
     textAlign: 'center',
+  },
+  progressBarBottomContainer: {
+    marginTop: SPACING.sm,
+  },
+  progressBarBackgroundBottom: {
+    height: 18,
+    borderRadius: 9,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressBarBackgroundGradient: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+  },
+  progressBarFillBottom: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
+  },
+  progressTextBottom: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#00A3FF',
+    textAlign: 'center',
+    zIndex: 1,
   },
   tabContainer: {
     flexDirection: 'row',
