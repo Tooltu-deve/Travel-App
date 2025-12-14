@@ -115,6 +115,22 @@ export default function TabLayout() {
         />
         
         <Tabs.Screen
+          name="calendar"
+          options={{
+            title: 'Lịch',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon 
+                focused={focused} 
+                color={color} 
+                iconName="calendar" 
+                iconLibrary="MaterialCommunityIcons"
+                size={24}
+              />
+            ),
+          }}
+        />
+        
+        <Tabs.Screen
           name="favorites"
           options={{
             title: 'Yêu thích',
