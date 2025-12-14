@@ -54,39 +54,62 @@ export class FavoritesService {
    *                         and a Place with that _id exists, it will be used instead.
    */
   async likePlace(userId: string, googlePlaceId: string): Promise<any> {
+    console.log('🔄 [likePlace] Starting like/unlike');
+    console.log('   userId:', userId);
+    console.log('   googlePlaceId:', googlePlaceId);
+    
     const user = await this.userModel.findById(userId);
     if (!user) throw new NotFoundException('User not found');
     if (!googlePlaceId || typeof googlePlaceId !== 'string' || !googlePlaceId.trim()) {
       throw new InternalServerErrorException('googlePlaceId is required and must be a non-empty string');
     }
     let place: PlaceDocument | null = null;
+    
     // Nếu truyền vào là _id MongoDB
     if (Types.ObjectId.isValid(googlePlaceId)) {
+      console.log('   Trying to find by MongoDB _id...');
       try {
         const byId = await this.placeModel.findById(googlePlaceId).exec();
         if (byId) {
+          console.log('   ✅ Found place by _id:', byId.name);
           place = byId;
         }
-      } catch (err) {}
+      } catch (err) {
+        console.log('   ❌ Error finding by _id:', err);
+      }
     }
+    
     // Nếu không tìm thấy theo _id, tìm theo googlePlaceId
     if (!place) {
+      console.log('   Trying to find by googlePlaceId field...');
       place = await this.placeModel.findOne({ googlePlaceId: googlePlaceId }).exec();
+      if (place) {
+        console.log('   ✅ Found place by googlePlaceId:', place.name);
+      }
     }
+    
     if (!place) {
+      console.error('   ❌ Place not found in database');
+      console.log('   Searching for similar places...');
+      const allPlaces = await this.placeModel.find({}, { googlePlaceId: 1, name: 1 }).limit(5).exec();
+      console.log('   Sample places in DB:', allPlaces.map(p => ({ googlePlaceId: p.googlePlaceId, name: p.name })));
       throw new InternalServerErrorException('Place không tồn tại trong hệ thống. Vui lòng nhập đúng googlePlaceId.');
     }
+    
     // Like/unlike logic
     const idx = user.likedPlaces.findIndex((id) => (id as any).equals(place._id as any));
     let action: 'like' | 'unlike' = 'like';
     if (idx > -1) {
       user.likedPlaces.splice(idx, 1);
       action = 'unlike';
+      console.log('   Action: UNLIKE');
     } else {
       user.likedPlaces.push(place._id as any);
       action = 'like';
+      console.log('   Action: LIKE');
     }
     await user.save();
+    console.log('   ✅ User saved successfully');
 
     return { success: true, liked: action === 'like' };
   }
