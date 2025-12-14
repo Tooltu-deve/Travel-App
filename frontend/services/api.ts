@@ -585,7 +585,7 @@ export const getLikedPlacesAPI = async (
   opening_hours: any;
   is_stub: boolean;
 }>> => {
-  return makeRequest<Array<{
+  const response = await makeRequest<Array<{
     id: string;
     name: string;
     address: string;
@@ -600,6 +600,18 @@ export const getLikedPlacesAPI = async (
       },
     },
   );
+  
+  // Transform data to match expected return type while preserving useful fields
+  return response.map(place => ({
+    place_id: place.id,
+    type: place.mood || 'unknown',
+    opening_hours: null,
+    is_stub: false,
+    // Preserve additional fields for convenience (to avoid extra API calls)
+    name: place.name,
+    address: place.address,
+    rating: place.rating,
+  } as any)); // Cast to any to allow extra fields beyond the interface
 };
 
 /**

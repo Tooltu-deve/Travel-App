@@ -163,6 +163,24 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   // Sync custom route data (manual)
   useEffect(() => {
     if (customRouteData) {
+      console.log('\n📝 [Frontend] Received customRouteData:', customRouteData);
+      console.log('   - Has days:', !!customRouteData.days);
+      console.log('   - Days count:', customRouteData.days?.length);
+      
+      if (customRouteData.days?.[0]?.places) {
+        const firstPlace = customRouteData.days[0].places[0];
+        console.log('   - First place of first day:', firstPlace?.name);
+        console.log('   - First place start_encoded_polyline:', !!(firstPlace as any)?.start_encoded_polyline);
+        console.log('   - First place start_travel_duration_minutes:', (firstPlace as any)?.start_travel_duration_minutes);
+        console.log('   - First place encoded_polyline:', !!firstPlace?.encoded_polyline);
+        console.log('   - First place travel_duration_minutes:', firstPlace?.travel_duration_minutes);
+        
+        const lastPlace = customRouteData.days[0].places[customRouteData.days[0].places.length - 1];
+        console.log('   - Last place of first day:', lastPlace?.name);
+        console.log('   - Last place encoded_polyline:', !!lastPlace?.encoded_polyline);
+        console.log('   - Last place travel_duration_minutes:', lastPlace?.travel_duration_minutes);
+      }
+      
       setRouteDetails(customRouteData);
       setIsLoading(false);
       setError(null);
@@ -207,19 +225,44 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     (Array.isArray(routeData?.days)
       ? routeData.days.map((d: CustomDayWithRoutes, idx: number) => ({
           day: d.day ?? d.dayNumber ?? idx + 1,
-          activities: (d.places || []).map((p) => ({
-            name: p.name,
-            location: p.location,
-            google_place_id: (p as any).google_place_id || p.placeId,
-            encoded_polyline: p.encoded_polyline || undefined,
-            travel_duration_minutes:
-              p.travel_duration_minutes != null ? Number(p.travel_duration_minutes) : undefined,
-            estimated_arrival: (p as any).estimated_arrival,
-            estimated_departure: (p as any).estimated_departure,
-          })),
+          activities: (d.places || []).map((p) => {
+            const activity = {
+              name: p.name,
+              location: p.location,
+              google_place_id: (p as any).google_place_id || p.placeId,
+              encoded_polyline: p.encoded_polyline || undefined,
+              travel_duration_minutes:
+                p.travel_duration_minutes != null ? Number(p.travel_duration_minutes) : undefined,
+              estimated_arrival: (p as any).estimated_arrival,
+              estimated_departure: (p as any).estimated_departure,
+              start_encoded_polyline: (p as any).start_encoded_polyline || undefined,
+              start_travel_duration_minutes: (p as any).start_travel_duration_minutes != null 
+                ? Number((p as any).start_travel_duration_minutes) 
+                : undefined,
+            };
+            return activity;
+          }),
           day_start_time: (d as any).day_start_time,
         }))
       : []);
+  
+  // Log normalized route data
+  if (optimizedRoute.length > 0 && routeDetails) {
+    console.log('\n📋 [Frontend] Normalized optimizedRoute:');
+    console.log('   - Total days:', optimizedRoute.length);
+    optimizedRoute.forEach((day, dayIdx) => {
+      console.log(`   Day ${day.day}:`);
+      day.activities?.forEach((act, actIdx) => {
+        console.log(`      POI ${actIdx} (${act.name}):`);
+        if (actIdx === 0) {
+          console.log(`         - start_encoded_polyline: ${!!(act as any).start_encoded_polyline}`);
+          console.log(`         - start_travel_duration_minutes: ${(act as any).start_travel_duration_minutes ?? 'undefined'}`);
+        }
+        console.log(`         - encoded_polyline: ${!!act.encoded_polyline}`);
+        console.log(`         - travel_duration_minutes: ${act.travel_duration_minutes ?? 'undefined'}`);
+      });
+    });
+  }
 
   const totalDays = optimizedRoute.length || (routeDetails as any)?.duration_days || 1;
 
@@ -472,23 +515,40 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
   // Route segments for polylines (bao gồm đoạn từ điểm bắt đầu đến POI đầu tiên nếu có)
     const routeSegments = (() => {
+      console.log('\n🗺️ [Frontend] Building route segments for map...');
+      console.log('   - Start location:', startLocation);
+      console.log('   - Activities count:', activities.length);
+      
       const segments: { points: { latitude: number; longitude: number }[]; mode: string }[] = [];
 
       // Đoạn từ điểm bắt đầu đến POI đầu tiên
       if (startLocation && activities.length > 0) {
+        console.log('   - Checking first activity for start_encoded_polyline...');
+        console.log('     First activity:', activities[0]?.name);
+        console.log('     Has start_encoded_polyline:', !!activities[0]?.start_encoded_polyline);
+        
         if (activities[0]?.start_encoded_polyline) {
+          const decoded = decodePolyline(activities[0].start_encoded_polyline);
+          console.log('     ✅ Decoded start polyline, points:', decoded.length);
           segments.push({
-            points: decodePolyline(activities[0].start_encoded_polyline),
+            points: decoded,
             mode: 'DRIVE', // Default to DRIVE for start segment
           });
+        } else {
+          console.log('     ⚠️ No start_encoded_polyline found for first activity');
         }
       }
 
       activities.forEach((activity, idx) => {
+        console.log(`   - Processing POI ${idx} (${activity.name})...`);
+        console.log(`     Has encoded_polyline: ${!!activity.encoded_polyline}`);
+        console.log(`     Has steps: ${!!activity.steps}`);
+        
         if (activity.steps && activity.steps.length > 0) {
-          activity.steps.forEach((step) => {
+          activity.steps.forEach((step, stepIdx) => {
             const decoded = decodePolyline(step.encoded_polyline);
             if (decoded.length > 1) {
+              console.log(`       Step ${stepIdx}: ${decoded.length} points`);
               segments.push({
                 points: decoded,
                 mode: step.travel_mode,
@@ -498,14 +558,18 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         } else {
           const decoded = decodePolyline(activity.encoded_polyline);
           if (decoded.length > 1) {
+            console.log(`     ✅ Decoded polyline: ${decoded.length} points`);
             segments.push({
               points: decoded,
               mode: 'DRIVE', // Default
             });
+          } else {
+            console.log(`     ⚠️ No valid polyline (${decoded.length} points)`);
           }
         }
       });
 
+      console.log(`   📊 Total segments created: ${segments.length}`);
       return segments.filter((segment) => segment.points.length > 1);
     })();
 
