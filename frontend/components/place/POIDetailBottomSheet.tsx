@@ -353,7 +353,9 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
   };
 
   const handlePhonePress = (phone: string) => {
-    Linking.openURL(`tel:${phone}`);
+    // Remove spaces and special characters from phone number
+    const cleanPhone = phone.replace(/\s+/g, '');
+    Linking.openURL(`tel:${cleanPhone}`);
   };
 
   const handleWebsitePress = (url: string) => {
