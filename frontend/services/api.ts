@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Simulator only)
+const API_BASE_URL = 'https://travel-app-vfcj.onrender.com'; // ⬅️ Local URL (Simulator only)
 // const API_BASE_URL = 'http://192.168.1.178:3000'; // ⬅️ WiFi IP (cho điện thoại thật)
 // ============================================
 // TYPES
@@ -176,7 +176,12 @@ const makeRequest = async <T>(
 
     // Get response text first to debug
     const text = await response.text();
-    console.log('📄 Response Text:', text.substring(0, 200));
+    console.log('📄 Response Status:', response.status, response.statusText);
+    console.log('📄 Response Headers:', JSON.stringify(Object.fromEntries(response.headers.entries())));
+    console.log('📄 Response Text (first 500 chars):', text.substring(0, 500));
+    if (text.length > 500) {
+      console.log('📄 Response Text (full):', text);
+    }
 
     // Handle 204 No Content - no response body to parse
     if (response.status === 204) {
