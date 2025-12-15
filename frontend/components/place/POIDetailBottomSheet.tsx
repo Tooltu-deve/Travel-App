@@ -22,9 +22,6 @@ import { COLORS, SPACING } from '../../constants';
 import { getPlaceByIdAPI, chatWithAIAPI, API_BASE_URL } from '@/services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 
-// API Base URL - imported from services/api.ts
-// const API_BASE_URL = 'http://localhost:3000';
-
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const BOTTOM_SHEET_HEIGHT = SCREEN_HEIGHT * 0.75; // 3/4 màn hình
 const DRAG_THRESHOLD = 50; // Ngưỡng kéo để đóng

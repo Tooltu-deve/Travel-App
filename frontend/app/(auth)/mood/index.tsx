@@ -14,11 +14,9 @@ import {
   View,
 } from 'react-native';
 import { SPACING } from '../../../constants';
+import { API_BASE_URL } from '@/services/api';
 
 const { width } = Dimensions.get('window');
-
-// Sử dụng cùng BASE_URL với api.ts
-const API_BASE_URL = 'http://10.0.2.2:3000';
 
 // Lưu preferences của user
 async function saveUserPreferences(moods: string[], token: string) {

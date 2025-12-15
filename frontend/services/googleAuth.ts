@@ -7,11 +7,11 @@
 
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
+import { API_BASE_URL } from './api';
 
 // ============================================
 // CONFIGURATION
 // ============================================
-const API_BASE_URL = 'https://travel-app-r9qu.onrender.com';
 
 // Khởi tạo WebBrowser để có thể dismiss khi xong
 WebBrowser.maybeCompleteAuthSession();
