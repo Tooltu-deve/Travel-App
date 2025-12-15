@@ -78,6 +78,7 @@ const SmartAgentFormScreen: React.FC = () => {
   const [isAutocompleteLoading, setIsAutocompleteLoading] = useState(false);
   const [showAutocompleteSuggestions, setShowAutocompleteSuggestions] = useState(false);
   const [autocompleteSessionToken, setAutocompleteSessionToken] = useState<string>('');
+  const [hasSelectedSuggestion, setHasSelectedSuggestion] = useState(false);
 
   // ...existing code...
 
@@ -138,7 +139,7 @@ const SmartAgentFormScreen: React.FC = () => {
   // Debounced autocomplete handler
   useEffect(() => {
     const timeoutId = setTimeout(async () => {
-      if (currentLocationText.trim().length >= 2 && destination) {
+      if (currentLocationText.trim().length >= 2 && destination && !hasSelectedSuggestion) {
         try {
           setIsAutocompleteLoading(true);
           const token = await AsyncStorage.getItem('userToken');
@@ -163,7 +164,7 @@ const SmartAgentFormScreen: React.FC = () => {
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [currentLocationText, destination, autocompleteSessionToken]);
+  }, [currentLocationText, destination, autocompleteSessionToken, hasSelectedSuggestion]);
 
   const handleGoBack = () => {
     router.back();
@@ -561,6 +562,10 @@ const SmartAgentFormScreen: React.FC = () => {
                   value={currentLocationText}
                   onChangeText={(text) => {
                     setCurrentLocationText(text);
+                    // Reset flag khi user bắt đầu gõ lại
+                    if (hasSelectedSuggestion) {
+                      setHasSelectedSuggestion(false);
+                    }
                     if (text.trim().length < 2) {
                       setShowAutocompleteSuggestions(false);
                     }
@@ -596,6 +601,7 @@ const SmartAgentFormScreen: React.FC = () => {
                             setCurrentLocationText(suggestion.description);
                             setShowAutocompleteSuggestions(false);
                             setAutocompleteSuggestions([]);
+                            setHasSelectedSuggestion(true);
                           }}
                           activeOpacity={0.7}
                         >
