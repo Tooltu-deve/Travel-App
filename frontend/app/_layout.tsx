@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import './global.css';
 import { FavoritesProvider } from '@/contexts/FavoritesContext';
+import { VoiceTranslatorProvider } from '@/contexts/VoiceTranslatorContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getProfileAPI } from '@/services/api';
 
@@ -30,7 +31,7 @@ function NavigationHandler() {
         try {
           // Kiểm tra xem user đã chọn mood hoặc skip chưa
           const hasCompletedMood = await AsyncStorage.getItem('hasCompletedMoodSelection');
-          
+
           if (hasCompletedMood === 'true') {
             // Đã chọn mood hoặc skip trước đó → vào thẳng trang chủ
             console.log('🔄 [RootLayout] User already completed mood selection, redirecting to home');
@@ -96,20 +97,22 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <FavoritesProvider>
-        <NavigationHandler />
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen 
-            name="create-itinerary" 
-            options={{ 
-              headerShown: false,
-              presentation: 'card',
-              animation: 'slide_from_bottom'
-            }} 
-          />
-        </Stack>
+        <VoiceTranslatorProvider>
+          <NavigationHandler />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="create-itinerary"
+              options={{
+                headerShown: false,
+                presentation: 'card',
+                animation: 'slide_from_bottom'
+              }}
+            />
+          </Stack>
+        </VoiceTranslatorProvider>
       </FavoritesProvider>
     </AuthProvider>
   );
