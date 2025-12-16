@@ -22,11 +22,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { COLORS } from '../../constants';
 import { useAuth } from '../../contexts/AuthContext';
-import { useVoiceTranslator } from '../../contexts/VoiceTranslatorContext';
 import { API_BASE_URL } from '../../services/api';
 import ItineraryDetailScreen from './ItineraryDetailScreen';
 import useLocation from '../../hooks/useLocation';
-import { VoiceTranslator } from '../VoiceTranslator';
 
 const { width } = Dimensions.get('window');
 
@@ -174,26 +172,9 @@ const RenderMarkdownText = ({ text }: { text: string }) => {
   return <View>{elements}</View>;
 };
 
-// Separate component to use VoiceTranslator hook safely
-const ChatModalContent: React.FC<ChatModalProps> = ({ visible, onClose }) => {
+export const ChatModal: React.FC<ChatModalProps> = ({ visible, onClose }) => {
   const { token, signOut, userData } = useAuth() as any;
   const { location, requestLocation, loading: locationLoading, error: locationError } = useLocation();
-
-  // Try to get voice translator, but fallback to defaults if not available
-  let voiceTranslatorData = {
-    recognizedText: '',
-    translatedText: '',
-    clearTexts: () => { },
-  };
-
-  try {
-    voiceTranslatorData = useVoiceTranslator();
-  } catch (e) {
-    // VoiceTranslator context not available, use defaults
-    console.warn('VoiceTranslator context not available');
-  }
-
-  const { recognizedText, translatedText, clearTexts } = voiceTranslatorData;
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -204,7 +185,6 @@ const ChatModalContent: React.FC<ChatModalProps> = ({ visible, onClose }) => {
   const [itineraryStatus, setItineraryStatus] = useState<'DRAFT' | 'CONFIRMED' | null>(null);
   const [startLocation, setStartLocation] = useState<string | { lat: number; lng: number } | undefined>(undefined);
   const [showItineraryDetail, setShowItineraryDetail] = useState(false);
-  const [showVoiceTranslator, setShowVoiceTranslator] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const buttonScale = useRef(new Animated.Value(0)).current;
@@ -919,51 +899,6 @@ const ChatModalContent: React.FC<ChatModalProps> = ({ visible, onClose }) => {
               </BlurView>
             )}
 
-            {/* Voice Translator */}
-            {showVoiceTranslator && (
-              <View style={styles.voiceTranslatorContainer}>
-                <VoiceTranslator style={styles.voiceTranslator} />
-                <View style={styles.voiceTranslatorActions}>
-                  <TouchableOpacity
-                    style={styles.voiceActionButton}
-                    onPress={() => {
-                      if (recognizedText) {
-                        setInputText(recognizedText);
-                      }
-                    }}
-                    disabled={!recognizedText}
-                  >
-                    <MaterialCommunityIcons
-                      name="text-box"
-                      size={20}
-                      color={recognizedText ? COLORS.primary : COLORS.disabled}
-                    />
-                    <Text style={[styles.voiceActionText, !recognizedText && styles.voiceActionTextDisabled]}>
-                      Dùng văn bản gốc
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.voiceActionButton}
-                    onPress={() => {
-                      if (translatedText) {
-                        setInputText(translatedText);
-                      }
-                    }}
-                    disabled={!translatedText}
-                  >
-                    <MaterialCommunityIcons
-                      name="translate"
-                      size={20}
-                      color={translatedText ? COLORS.primary : COLORS.disabled}
-                    />
-                    <Text style={[styles.voiceActionText, !translatedText && styles.voiceActionTextDisabled]}>
-                      Dùng bản dịch
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
             {/* Input Container with Glassmorphism */}
             <BlurView intensity={80} tint="light" style={styles.inputContainer}>
               {/* Itinerary Quick View Button */}
@@ -1002,31 +937,15 @@ const ChatModalContent: React.FC<ChatModalProps> = ({ visible, onClose }) => {
               )}
 
               <View style={styles.inputWrapper}>
-                {/* Voice Translator Toggle Button */}
-                <TouchableOpacity
-                  style={[styles.voiceButton, showVoiceTranslator && styles.voiceButtonActive]}
-                  onPress={() => {
-                    setShowVoiceTranslator(!showVoiceTranslator);
-                    if (showVoiceTranslator) {
-                      clearTexts();
-                    }
-                  }}
-                >
-                  <MaterialCommunityIcons
-                    name={showVoiceTranslator ? "microphone-off" : "microphone"}
-                    size={24}
-                    color={showVoiceTranslator ? COLORS.primary : COLORS.textSecondary}
-                  />
-                </TouchableOpacity>
-
                 <TextInput
                   style={styles.textInput}
                   value={inputText}
                   onChangeText={setInputText}
                   placeholder="Hỏi AI về kế hoạch du lịch..."
-                  placeholderTextColor={COLORS.textSecondary}
+                  placeholderTextColor={COLORS.textSecondary + '70'}
                   multiline
                   maxLength={500}
+                  placeholderTextColor={COLORS.textSecondary}
                 />
                 <TouchableOpacity
                   style={[styles.sendButton, (!inputText.trim() || isLoading || !token) && styles.sendButtonDisabled]}
@@ -1576,60 +1495,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     letterSpacing: 0.2,
   },
-  voiceTranslatorContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#F9F9F9',
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
-  },
-  voiceTranslator: {
-    marginBottom: 12,
-  },
-  voiceTranslatorActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  voiceActionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.bgMain,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.primary + '30',
-    gap: 6,
-  },
-  voiceActionText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.primary,
-  },
-  voiceActionTextDisabled: {
-    color: COLORS.disabled,
-  },
-  voiceButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: COLORS.bgMain,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: COLORS.primary + '30',
-  },
-  voiceButtonActive: {
-    backgroundColor: COLORS.primary + '15',
-    borderColor: COLORS.primary,
-  },
 });
-
-// Export wrapper that handles context safely
-export const ChatModal: React.FC<ChatModalProps> = (props) => {
-  return <ChatModalContent {...props} />;
-};
 
 export default ChatModal;
