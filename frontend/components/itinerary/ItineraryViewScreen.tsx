@@ -186,6 +186,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   // Track enriched activities to avoid re-enriching - use ref to avoid dependency loop
   const enrichedActivitiesRef = useRef<Set<string>>(new Set());
   const enrichingInProgressRef = useRef<Set<string>>(new Set());
+  // Trigger enrich when route changes
+  const [refreshEnrichKey, setRefreshEnrichKey] = useState(0);
 
   // Sync custom route data (manual)
   useEffect(() => {
@@ -207,7 +209,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         console.log('   - Last place encoded_polyline:', !!lastPlace?.encoded_polyline);
         console.log('   - Last place travel_duration_minutes:', lastPlace?.travel_duration_minutes);
       }
-      
+      // Reset enrich state and trigger enrich again
+      enrichedActivitiesRef.current = new Set();
+      enrichingInProgressRef.current = new Set();
+      setRefreshEnrichKey(k => k + 1);
       setRouteDetails(customRouteData);
       setIsLoading(false);
       setError(null);
@@ -230,6 +235,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         }
 
         const response = await getRouteByIdAPI(token, routeId);
+        // Reset enrich state and trigger enrich again
+        enrichedActivitiesRef.current = new Set();
+        enrichingInProgressRef.current = new Set();
+        setRefreshEnrichKey(k => k + 1);
         setRouteDetails(response.route);
       } catch (err: any) {
         console.error('Error fetching route details:', err);
@@ -501,7 +510,15 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             return;
           }
 
-          const openingHours = enrichedData.openingHours || enrichedData.opening_hours || null;
+          // Try to get opening hours from multiple sources
+          let openingHours = enrichedData.openingHours || enrichedData.opening_hours || null;
+          
+          // Fallback to weekdayDescriptions if openingHours is not available
+          if (!openingHours && (enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions)) {
+            openingHours = {
+              weekdayDescriptions: enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions
+            };
+          }
           
           if (openingHours) {
             // Update routeDetails immediately
@@ -575,7 +592,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     };
 
     enrichCurrentDayActivities();
-  }, [selectedDay, activities.length, routeDetails?.route_id]); // Only depend on day, activity count, and route ID
+  }, [selectedDay, activities.length, routeDetails?.route_id, refreshEnrichKey]); // Thêm refreshEnrichKey để trigger lại enrich khi route thay đổi
 
   // Convert to map coordinate
   const toMapCoordinate = (point?: { lat: number; lng: number } | { coordinates: [number, number] }) => {
@@ -838,7 +855,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         type: enrichedData.type || '',
         types: enrichedData.types || [],
         location: enrichedData.location || activity.location,
-        openingHours: enrichedData.openingHours || enrichedData.opening_hours || null,
+        openingHours: enrichedData.openingHours || enrichedData.opening_hours || 
+          (enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions ? {
+            weekdayDescriptions: enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions
+          } : null),
         priceLevel: enrichedData.priceLevel || enrichedData.price_level || null,
       };
 
@@ -862,8 +882,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const actPlaceId = (act.google_place_id || '').replace(/^places\//, '');
                 if (actPlaceId === normalizedPlaceId || actPlaceId === enrichedPlaceId) {
                   act.name = enrichedData.name;
-                  // Lưu thông tin giờ mở cửa vào activity
-                  (act as any).openingHours = enrichedData.openingHours || enrichedData.opening_hours || null;
+                  // Lưu thông tin giờ mở cửa vào activity với fallback
+                  (act as any).openingHours = enrichedData.openingHours || enrichedData.opening_hours || 
+                    (enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions ? {
+                      weekdayDescriptions: enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions
+                    } : null);
                   if (act.place) {
                     act.place.name = enrichedData.name;
                   }
@@ -881,8 +904,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const placeIdToMatch = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
                 if (placeIdToMatch === normalizedPlaceId || placeIdToMatch === enrichedPlaceId) {
                   place.name = enrichedData.name;
-                  // Lưu thông tin giờ mở cửa vào place
-                  (place as any).openingHours = enrichedData.openingHours || enrichedData.opening_hours || null;
+                  // Lưu thông tin giờ mở cửa vào place với fallback
+                  (place as any).openingHours = enrichedData.openingHours || enrichedData.opening_hours || 
+                    (enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions ? {
+                      weekdayDescriptions: enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions
+                    } : null);
                 }
               });
             }
@@ -1328,7 +1354,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             routeData.metadata?.start_location ||
             null,
         };
-
+        // Reset enrich state and trigger enrich again
+        enrichedActivitiesRef.current = new Set();
+        enrichingInProgressRef.current = new Set();
+        setRefreshEnrichKey(k => k + 1);
         setRouteDetails(mergedRoute);
         setIsReplacePOIModalVisible(false);
         setReplacingPOI(null);
