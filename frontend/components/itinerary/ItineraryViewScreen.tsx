@@ -28,8 +28,9 @@ import {
 } from '@/services/api';
 import { API_BASE_URL } from '@/services/api';
 
-// Mock POIDetailBottomSheet component
-const POIDetailBottomSheet = ({ visible, onClose, placeData }: any) => null;
+
+// Import POIDetailBottomSheet thật
+import POIDetailBottomSheet from '../place/POIDetailBottomSheet';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const MIN_DISTANCE_THRESHOLD_METERS = 30;
