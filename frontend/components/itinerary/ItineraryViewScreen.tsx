@@ -1100,20 +1100,48 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
     setIsUpdatingRoute(true);
     
-    // Kiểm tra địa điểm mới có tồn tại trong cùng ngày chưa (chỉ kiểm tra trong ngày đang chọn)
+    // Tìm index của địa điểm đang được thay thế
     const routeData = (routeDetails as any).route_data_json || routeDetails;
+    let replacingIndex = -1;
+    
+    // Tìm trong optimized_route (AI route)
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
+      if (currentDay?.activities && Array.isArray(currentDay.activities)) {
+        replacingIndex = currentDay.activities.findIndex((act: any) => {
+          const actNorm = (act.google_place_id || '').replace(/^places\//, '');
+          return actNorm === oldNormalizedPlaceId;
+        });
+      }
+    }
+    
+    // Tìm trong days (custom itinerary)
+    if (replacingIndex === -1 && routeData.days && Array.isArray(routeData.days)) {
+      const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
+      if (currentDay?.places && Array.isArray(currentDay.places)) {
+        replacingIndex = currentDay.places.findIndex((place: any) => {
+          const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+          return placeNorm === oldNormalizedPlaceId;
+        });
+      }
+    }
+    
+    // Kiểm tra địa điểm mới có trùng place_id với địa điểm khác không (chỉ kiểm tra trong ngày đang chọn)
     let existingPlaceName = '';
     let existingPlaceId = '';
+    let existingPlaceIndex = -1;
 
     // Kiểm tra trùng place_id trong optimized_route (AI route)
     if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
       const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
       if (currentDay?.activities && Array.isArray(currentDay.activities)) {
-        for (const act of currentDay.activities) {
+        for (let i = 0; i < currentDay.activities.length; i++) {
+          const act = currentDay.activities[i];
           const actNorm = (act.google_place_id || '').replace(/^places\//, '');
           if (actNorm === normalizedNewPlaceId && actNorm !== oldNormalizedPlaceId) {
             existingPlaceName = act.name || 'Địa điểm này';
             existingPlaceId = actNorm;
+            existingPlaceIndex = i;
             break;
           }
         }
@@ -1124,24 +1152,35 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     if (!existingPlaceId && routeData.days && Array.isArray(routeData.days)) {
       const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
       if (currentDay?.places && Array.isArray(currentDay.places)) {
-        for (const place of currentDay.places) {
+        for (let i = 0; i < currentDay.places.length; i++) {
+          const place = currentDay.places[i];
           const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
           if (placeNorm === normalizedNewPlaceId && placeNorm !== oldNormalizedPlaceId) {
             existingPlaceName = place.name || 'Địa điểm này';
             existingPlaceId = placeNorm;
+            existingPlaceIndex = i;
             break;
           }
         }
       }
     }
 
-    // Nếu đã tìm thấy trùng place_id, chỉ thông báo (không chặn)
+    // Nếu đã tìm thấy trùng place_id, kiểm tra xem có cạnh nhau không
     if (existingPlaceId) {
-      Alert.alert(
-        'Thông báo',
-        `"${existingPlaceName}" đã có trong ngày ${selectedDay}. Hệ thống vẫn sẽ thực hiện thay đổi.`,
-        [{ text: 'OK' }]
-      );
+      const isAdjacent = Math.abs(existingPlaceIndex - replacingIndex) <= 1;
+      
+      if (isAdjacent) {
+        // Cạnh nhau → CHẶN, bắt người dùng chọn lại
+        Alert.alert(
+          'Địa điểm trùng lặp',
+          `"${existingPlaceName}" đã có ở vị trí kế bên trong ngày ${selectedDay}. Vui lòng chọn địa điểm khác.`,
+          [{ text: 'OK' }]
+        );
+        setIsUpdatingRoute(false);
+        return;
+      }
+      // Không cạnh nhau → Cho phép, chỉ thông báo
+      console.log(`ℹ️ Địa điểm "${existingPlaceName}" đã có trong ngày nhưng không cạnh nhau (index ${existingPlaceIndex} vs ${replacingIndex}), vẫn cho phép.`);
     }
     try {
       const token = await AsyncStorage.getItem('userToken');
@@ -1187,15 +1226,17 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       }
 
       // Kiểm tra địa điểm quá gần với các địa điểm khác trong cùng ngày (khác place_id nhưng cùng vị trí)
-      if (newLat !== undefined && newLng !== undefined && !existingPlaceId) {
+      if (newLat !== undefined && newLng !== undefined) {
         let closePlaceName = '';
         let closePlaceId = '';
+        let closePlaceIndex = -1;
 
         // Kiểm tra trong optimized_route (AI route) - chỉ trong ngày đang chọn
         if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
           const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
           if (currentDay?.activities && Array.isArray(currentDay.activities)) {
-            for (const act of currentDay.activities) {
+            for (let i = 0; i < currentDay.activities.length; i++) {
+              const act = currentDay.activities[i];
               // Bỏ qua địa điểm đang thay thế
               const actNorm = (act.google_place_id || '').replace(/^places\//, '');
               if (actNorm === oldNormalizedPlaceId) continue;
@@ -1205,6 +1246,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
                   closePlaceName = act.name || 'Địa điểm này';
                   closePlaceId = actNorm;
+                  closePlaceIndex = i;
                   break;
                 }
               }
@@ -1216,7 +1258,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         if (!closePlaceId && routeData.days && Array.isArray(routeData.days)) {
           const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
           if (currentDay?.places && Array.isArray(currentDay.places)) {
-            for (const place of currentDay.places) {
+            for (let i = 0; i < currentDay.places.length; i++) {
+              const place = currentDay.places[i];
               // Bỏ qua địa điểm đang thay thế
               const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
               if (placeNorm === oldNormalizedPlaceId) continue;
@@ -1226,6 +1269,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
                   closePlaceName = place.name || 'Địa điểm này';
                   closePlaceId = placeNorm;
+                  closePlaceIndex = i;
                   break;
                 }
               }
@@ -1233,13 +1277,22 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
           }
         }
 
-        // Nếu tìm thấy địa điểm gần, chỉ thông báo (không chặn)
+        // Nếu tìm thấy địa điểm gần, kiểm tra xem có cạnh nhau không
         if (closePlaceId) {
-          Alert.alert(
-            'Thông báo',
-            `"${closePlaceName}" (cách địa điểm bạn chọn dưới 30m) đã có trong ngày ${selectedDay}. Hệ thống vẫn sẽ thực hiện thay đổi.`,
-            [{ text: 'OK' }]
-          );
+          const isAdjacent = Math.abs(closePlaceIndex - replacingIndex) <= 1;
+          
+          if (isAdjacent) {
+            // Cạnh nhau → CHẶN, bắt người dùng chọn lại
+            Alert.alert(
+              'Địa điểm quá gần',
+              `"${closePlaceName}" (cách địa điểm bạn chọn dưới 30m) đã có ở vị trí kế bên trong ngày ${selectedDay}. Vui lòng chọn địa điểm khác.`,
+              [{ text: 'OK' }]
+            );
+            setIsUpdatingRoute(false);
+            return;
+          }
+          // Không cạnh nhau → Cho phép, chỉ log
+          console.log(`ℹ️ Địa điểm "${closePlaceName}" cách dưới 30m nhưng không cạnh nhau (index ${closePlaceIndex} vs ${replacingIndex}), vẫn cho phép.`);
         }
       }
 
@@ -1253,16 +1306,20 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       if (updatedRoute.optimized_route && Array.isArray(updatedRoute.optimized_route)) {
         updatedRoute.optimized_route.forEach((day: DayPlan, dayIndex: number) => {
           if (day.activities && Array.isArray(day.activities)) {
-            day.activities.forEach((act: Activity) => {
-              const actNorm = (act.google_place_id || '').replace(/^places\//, '');
-              if (actNorm === oldNormalizedPlaceId) {
-                act.google_place_id = placeIdForSend;
-                act.name = newName;
-                if (coords && Array.isArray(coords) && coords.length === 2) {
-                  act.location = { lat: coords[1], lng: coords[0] };
+            // Chỉ thay thế POI tại đúng ngày và đúng index
+            if (day.day === selectedDay) {
+              day.activities.forEach((act: Activity, actIndex: number) => {
+                const actNorm = (act.google_place_id || '').replace(/^places\//, '');
+                // Kiểm tra đúng index để tránh thay thế nhiều POI cùng place_id
+                if (actNorm === oldNormalizedPlaceId && actIndex === replacingIndex) {
+                  act.google_place_id = placeIdForSend;
+                  act.name = newName;
+                  if (coords && Array.isArray(coords) && coords.length === 2) {
+                    act.location = { lat: coords[1], lng: coords[0] };
+                  }
                 }
-              }
-            });
+              });
+            }
             // Ensure travel_mode, day_start_time, day are present
             if (!day.travel_mode) day.travel_mode = 'driving';
             if (!day.day_start_time) day.day_start_time = '09:00:00';
@@ -1275,17 +1332,22 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       if (updatedRoute.days && Array.isArray(updatedRoute.days)) {
         updatedRoute.days.forEach((day: CustomDayWithRoutes) => {
           if (day.places && Array.isArray(day.places)) {
-            day.places.forEach((place: CustomPlaceWithRoute) => {
-              const currentPlaceId = (place.google_place_id || place.placeId || '').replace(/^places\//, '');
-              if (currentPlaceId === oldNormalizedPlaceId) {
-                place.google_place_id = placeIdForSend;
-                place.placeId = placeIdForSend;
-                place.name = newName;
-                if (coords && Array.isArray(coords) && coords.length === 2) {
-                  place.location = { lat: coords[1], lng: coords[0] };
+            // Chỉ thay thế POI tại đúng ngày và đúng index
+            const dayNum = day.day ?? day.dayNumber;
+            if (dayNum === selectedDay) {
+              day.places.forEach((place: CustomPlaceWithRoute, placeIndex: number) => {
+                const currentPlaceId = (place.google_place_id || place.placeId || '').replace(/^places\//, '');
+                // Kiểm tra đúng index để tránh thay thế nhiều POI cùng place_id
+                if (currentPlaceId === oldNormalizedPlaceId && placeIndex === replacingIndex) {
+                  place.google_place_id = placeIdForSend;
+                  place.placeId = placeIdForSend;
+                  place.name = newName;
+                  if (coords && Array.isArray(coords) && coords.length === 2) {
+                    place.location = { lat: coords[1], lng: coords[0] };
+                  }
                 }
-              }
-            });
+              });
+            }
           }
         });
       }
