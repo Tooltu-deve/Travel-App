@@ -183,6 +183,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   // Animation state for visit button
   const [animatingButtons, setAnimatingButtons] = useState<Set<string>>(new Set());
 
+  // Track enriched activities to avoid re-enriching - use ref to avoid dependency loop
+  const enrichedActivitiesRef = useRef<Set<string>>(new Set());
+  const enrichingInProgressRef = useRef<Set<string>>(new Set());
+
   // Sync custom route data (manual)
   useEffect(() => {
     if (customRouteData) {
@@ -447,6 +451,131 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     () => currentDayData?.activities || [],
     [currentDayData]
   );
+
+  // Auto-enrich all activities of current day to get opening hours
+  useEffect(() => {
+    const enrichCurrentDayActivities = async () => {
+      if (!activities || activities.length === 0 || !routeDetails) return;
+
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        console.log('⚠️ No token, skipping opening hours enrichment');
+        return;
+      }
+
+      // Process all activities in parallel with timeout
+      const enrichPromises = activities.map(async (activity, index) => {
+        const placeId = activity.google_place_id;
+        if (!placeId) return;
+
+        // Create unique key for this activity
+        const enrichKey = `${selectedDay}-${index}-${placeId}`;
+        
+        // Skip if already enriched or currently enriching
+        if (enrichedActivitiesRef.current.has(enrichKey) || enrichingInProgressRef.current.has(enrichKey)) {
+          return;
+        }
+
+        // Skip if already has openingHours
+        if ((activity as any).openingHours) {
+          enrichedActivitiesRef.current.add(enrichKey);
+          return;
+        }
+
+        // Mark as enriching
+        enrichingInProgressRef.current.add(enrichKey);
+
+        try {
+          // Add timeout to prevent hanging (5s)
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 5000)
+          );
+          
+          const enrichPromise = enrichPlaceAPI(token, placeId, false);
+          const response = await Promise.race([enrichPromise, timeoutPromise]) as any;
+          
+          const enrichedData = response?.data || response;
+
+          if (!enrichedData) {
+            enrichedActivitiesRef.current.add(enrichKey);
+            return;
+          }
+
+          const openingHours = enrichedData.openingHours || enrichedData.opening_hours || null;
+          
+          if (openingHours) {
+            // Update routeDetails immediately
+            setRouteDetails(prevDetails => {
+              if (!prevDetails) return prevDetails;
+              
+              try {
+                const updatedDetails = JSON.parse(JSON.stringify(prevDetails));
+                const routeDataToUpdate = updatedDetails.route_data_json || updatedDetails;
+                
+                const normalizedPlaceId = placeId.replace(/^places\//, '');
+                const enrichedPlaceId = (enrichedData.googlePlaceId || '').replace(/^places\//, '');
+
+                // Update in optimized_route
+                if (routeDataToUpdate.optimized_route && Array.isArray(routeDataToUpdate.optimized_route)) {
+                  routeDataToUpdate.optimized_route.forEach((day: DayPlan) => {
+                    if (day.day !== selectedDay) return;
+                    if (day.activities && Array.isArray(day.activities)) {
+                      day.activities.forEach((act: Activity) => {
+                        const actPlaceId = (act.google_place_id || '').replace(/^places\//, '');
+                        if (actPlaceId === normalizedPlaceId || actPlaceId === enrichedPlaceId) {
+                          (act as any).openingHours = openingHours;
+                        }
+                      });
+                    }
+                  });
+                }
+
+                // Update in days (custom itinerary)
+                if (routeDataToUpdate.days && Array.isArray(routeDataToUpdate.days)) {
+                  routeDataToUpdate.days.forEach((day: CustomDayWithRoutes) => {
+                    if ((day.day ?? day.dayNumber) !== selectedDay) return;
+                    if (day.places && Array.isArray(day.places)) {
+                      day.places.forEach((place: CustomPlaceWithRoute) => {
+                        const placeIdToMatch = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+                        if (placeIdToMatch === normalizedPlaceId || placeIdToMatch === enrichedPlaceId) {
+                          (place as any).openingHours = openingHours;
+                        }
+                      });
+                    }
+                  });
+                }
+
+                if (updatedDetails.route_data_json) {
+                  updatedDetails.route_data_json = routeDataToUpdate;
+                } else {
+                  Object.assign(updatedDetails, routeDataToUpdate);
+                }
+                
+                return updatedDetails;
+              } catch (updateErr) {
+                console.warn(`⚠️ Error updating route details for ${activity.name}:`, updateErr);
+                return prevDetails; // Return unchanged if update fails
+              }
+            });
+            
+            enrichedActivitiesRef.current.add(enrichKey);
+          } else {
+            enrichedActivitiesRef.current.add(enrichKey); // Mark as enriched even if no opening hours
+          }
+        } catch (err: any) {
+          // Skip silently - mark as enriched to avoid retry
+          enrichedActivitiesRef.current.add(enrichKey);
+        } finally {
+          enrichingInProgressRef.current.delete(enrichKey);
+        }
+      });
+
+      // Wait for all enrichments to complete (or fail gracefully)
+      await Promise.allSettled(enrichPromises);
+    };
+
+    enrichCurrentDayActivities();
+  }, [selectedDay, activities.length, routeDetails?.route_id]); // Only depend on day, activity count, and route ID
 
   // Convert to map coordinate
   const toMapCoordinate = (point?: { lat: number; lng: number } | { coordinates: [number, number] }) => {
@@ -733,6 +862,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const actPlaceId = (act.google_place_id || '').replace(/^places\//, '');
                 if (actPlaceId === normalizedPlaceId || actPlaceId === enrichedPlaceId) {
                   act.name = enrichedData.name;
+                  // Lưu thông tin giờ mở cửa vào activity
+                  (act as any).openingHours = enrichedData.openingHours || enrichedData.opening_hours || null;
                   if (act.place) {
                     act.place.name = enrichedData.name;
                   }
@@ -750,6 +881,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const placeIdToMatch = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
                 if (placeIdToMatch === normalizedPlaceId || placeIdToMatch === enrichedPlaceId) {
                   place.name = enrichedData.name;
+                  // Lưu thông tin giờ mở cửa vào place
+                  (place as any).openingHours = enrichedData.openingHours || enrichedData.opening_hours || null;
                 }
               });
             }
@@ -964,51 +1097,51 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       return;
     }
 
+    setIsUpdatingRoute(true);
+    
     // Kiểm tra địa điểm mới có tồn tại trong cùng ngày chưa (chỉ kiểm tra trong ngày đang chọn)
     const routeData = (routeDetails as any).route_data_json || routeDetails;
-    let isDuplicate = false;
-    let duplicateName = '';
+    let existingPlaceName = '';
+    let existingPlaceId = '';
 
-    // Kiểm tra trong optimized_route (AI route) - chỉ trong ngày đang chọn (selectedDay)
+    // Kiểm tra trùng place_id trong optimized_route (AI route)
     if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
       const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
       if (currentDay?.activities && Array.isArray(currentDay.activities)) {
         for (const act of currentDay.activities) {
           const actNorm = (act.google_place_id || '').replace(/^places\//, '');
           if (actNorm === normalizedNewPlaceId && actNorm !== oldNormalizedPlaceId) {
-            isDuplicate = true;
-            duplicateName = act.name || 'Địa điểm này';
+            existingPlaceName = act.name || 'Địa điểm này';
+            existingPlaceId = actNorm;
             break;
           }
         }
       }
     }
 
-    // Kiểm tra trong days (custom itinerary) - chỉ trong ngày đang chọn (selectedDay)
-    if (!isDuplicate && routeData.days && Array.isArray(routeData.days)) {
+    // Kiểm tra trùng place_id trong days (custom itinerary)
+    if (!existingPlaceId && routeData.days && Array.isArray(routeData.days)) {
       const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
       if (currentDay?.places && Array.isArray(currentDay.places)) {
         for (const place of currentDay.places) {
           const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
           if (placeNorm === normalizedNewPlaceId && placeNorm !== oldNormalizedPlaceId) {
-            isDuplicate = true;
-            duplicateName = place.name || 'Địa điểm này';
+            existingPlaceName = place.name || 'Địa điểm này';
+            existingPlaceId = placeNorm;
             break;
           }
         }
       }
     }
 
-    if (isDuplicate) {
+    // Nếu đã tìm thấy trùng place_id, chỉ thông báo (không chặn)
+    if (existingPlaceId) {
       Alert.alert(
-        'Địa điểm trùng lặp',
-        `"${duplicateName}" đã có trong ngày ${selectedDay}. Vui lòng chọn địa điểm khác.`,
+        'Thông báo',
+        `"${existingPlaceName}" đã có trong ngày ${selectedDay}. Hệ thống vẫn sẽ thực hiện thay đổi.`,
         [{ text: 'OK' }]
       );
-      return;
     }
-
-    setIsUpdatingRoute(true);
     try {
       const token = await AsyncStorage.getItem('userToken');
       if (!token) {
@@ -1053,9 +1186,9 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       }
 
       // Kiểm tra địa điểm quá gần với các địa điểm khác trong cùng ngày (khác place_id nhưng cùng vị trí)
-      if (newLat !== undefined && newLng !== undefined) {
-        let isTooClose = false;
-        let tooCloseName = '';
+      if (newLat !== undefined && newLng !== undefined && !existingPlaceId) {
+        let closePlaceName = '';
+        let closePlaceId = '';
 
         // Kiểm tra trong optimized_route (AI route) - chỉ trong ngày đang chọn
         if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
@@ -1069,8 +1202,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               if (act.location?.lat !== undefined && act.location?.lng !== undefined) {
                 const distance = calculateDistanceMeters(newLat, newLng, act.location.lat, act.location.lng);
                 if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
-                  isTooClose = true;
-                  tooCloseName = act.name || 'Địa điểm này';
+                  closePlaceName = act.name || 'Địa điểm này';
+                  closePlaceId = actNorm;
                   break;
                 }
               }
@@ -1079,7 +1212,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         }
 
         // Kiểm tra trong days (custom itinerary) - chỉ trong ngày đang chọn
-        if (!isTooClose && routeData.days && Array.isArray(routeData.days)) {
+        if (!closePlaceId && routeData.days && Array.isArray(routeData.days)) {
           const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
           if (currentDay?.places && Array.isArray(currentDay.places)) {
             for (const place of currentDay.places) {
@@ -1090,8 +1223,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               if (place.location?.lat !== undefined && place.location?.lng !== undefined) {
                 const distance = calculateDistanceMeters(newLat, newLng, place.location.lat, place.location.lng);
                 if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
-                  isTooClose = true;
-                  tooCloseName = place.name || 'Địa điểm này';
+                  closePlaceName = place.name || 'Địa điểm này';
+                  closePlaceId = placeNorm;
                   break;
                 }
               }
@@ -1099,14 +1232,13 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
           }
         }
 
-        if (isTooClose) {
-          setIsUpdatingRoute(false);
+        // Nếu tìm thấy địa điểm gần, chỉ thông báo (không chặn)
+        if (closePlaceId) {
           Alert.alert(
-            'Địa điểm trùng lặp',
-            `"${newName}" quá gần với "${tooCloseName}" (dưới ${MIN_DISTANCE_THRESHOLD_METERS}m, có thể là cùng một địa điểm). Vui lòng chọn địa điểm khác.`,
+            'Thông báo',
+            `"${closePlaceName}" (cách địa điểm bạn chọn dưới 30m) đã có trong ngày ${selectedDay}. Hệ thống vẫn sẽ thực hiện thay đổi.`,
             [{ text: 'OK' }]
           );
-          return;
         }
       }
 
@@ -1517,6 +1649,28 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                               : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
                             </Text>
                           </View>
+
+                          {/* Opening Hours Row */}
+                          {(() => {
+                            const openingHours = (activity as any).openingHours;
+                            if (openingHours?.weekdayDescriptions) {
+                              const today = new Date().getDay();
+                              const dayIndex = today === 0 ? 6 : today - 1;
+                              const todayHours = openingHours.weekdayDescriptions[dayIndex];
+                              if (todayHours) {
+                                const hoursText = todayHours.split(': ')[1] || todayHours;
+                                return (
+                                  <View style={styles.cardRow}>
+                                    <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
+                                    <Text style={styles.cardOpeningHours} numberOfLines={1}>
+                                      {hoursText}
+                                    </Text>
+                                  </View>
+                                );
+                              }
+                            }
+                            return null;
+                          })()}
 
                           {/* Loading indicator */}
                           {isEnriching && (
@@ -2105,6 +2259,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: COLORS.textDark,
+  },
+  cardOpeningHours: {
+    fontSize: 11,
+    fontWeight: '400',
+    color: COLORS.textSecondary,
   },
   cardRating: {
     fontSize: 12,
