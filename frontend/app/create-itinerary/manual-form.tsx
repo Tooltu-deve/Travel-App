@@ -220,9 +220,9 @@ const ManualFormScreen: React.FC = () => {
   const proceedToManualPreview = () => {
     const durationDays = calculateDurationDays();
     
-    // Navigate to manual preview screen
+    // Navigate to manual route screen (new implementation with ItineraryViewScreen)
     router.push({
-      pathname: '/create-itinerary/manual-preview' as any,
+      pathname: '/create-itinerary/manual-route' as any,
       params: {
         startDate: startDate!.toISOString(),
         endDate: endDate!.toISOString(),

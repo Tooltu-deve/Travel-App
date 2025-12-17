@@ -34,6 +34,14 @@ export default function CreateItineraryLayout() {
       <Stack.Screen
         name="manual-preview"
         options={{
+          title: 'Xem trước lộ trình thủ công (Legacy)',
+          presentation: 'card',
+          animation: 'slide_from_bottom',
+        }}
+      />
+      <Stack.Screen
+        name="manual-route"
+        options={{
           title: 'Xem trước lộ trình thủ công',
           presentation: 'card',
           animation: 'slide_from_bottom',

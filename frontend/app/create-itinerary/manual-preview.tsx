@@ -700,8 +700,8 @@ export default function ManualPreviewScreen() {
     setIsBottomSheetExpanded(!isBottomSheetExpanded);
   };
 
-  // Save itinerary via backend API
-  const handleSaveItinerary = async () => {
+  // Save itinerary - Navigate to manual-route.tsx for final preview with opening hours
+  const handleSaveItinerary = () => {
     // Check if there are any places
     const totalPlaces = itinerary.reduce((sum, day) => sum + day.places.length, 0);
     if (totalPlaces === 0) {
@@ -709,84 +709,24 @@ export default function ManualPreviewScreen() {
       return;
     }
 
-    setIsSaving(true);
-    try {
-      // Import AsyncStorage dynamically to avoid import issues
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      const token = await AsyncStorage.getItem('userToken');
-      if (!token) {
-        Alert.alert('Lỗi', 'Bạn cần đăng nhập để lưu lộ trình.');
-        router.replace('/(auth)/login');
-        return;
-      }
-
-      // Prepare payload for backend API
-      const payload = {
+    // Navigate to manual-route screen with itinerary data
+    router.push({
+      pathname: '/create-itinerary/manual-route' as any,
+      params: {
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
         destination: destination,
-        start_date: startDate.toISOString(),
-        end_date: endDate.toISOString(),
-        optimize: false,
-        startLocationText: currentLocationText,
-        days: itinerary.map((day) => {
-          // Calculate start location for each day:
-          // Day 1: Use current location text
-          // Other days: Use last place of previous day, or fallback to current location
-          let dayStartLocation = currentLocationText;
-          if (day.day > 1) {
-            const previousDay = itinerary[day.day - 2];
-            if (previousDay && previousDay.places.length > 0) {
-              const lastPlace = previousDay.places[previousDay.places.length - 1];
-              dayStartLocation = lastPlace.address || currentLocationText;
-            }
-          }
-
-          return {
-          dayNumber: day.day,
-            travelMode: travelModes[day.day] || 'driving', // Get travelMode for this specific day
-            startLocation: dayStartLocation,
-          places: day.places.map((place) => ({
-            placeId: place.placeId,
-            name: place.name,
-            address: place.address,
-        })),
-          };
-        }),
-      };
-
-      // Call backend API to calculate routes and save
-      const result = await calculateRoutesAPI(payload, token);
-
-      // Kiểm tra cảnh báo thời tiết từ backend custom-itinerary
-      const alerts = result?.alerts;
-      if (Array.isArray(alerts) && alerts.length > 0) {
-        const firstAlert = alerts[0];
-        setWeatherSeverity(firstAlert.severity === 'danger' ? 'danger' : firstAlert.severity === 'warning' ? 'warning' : 'normal');
-        setWeatherAlert(firstAlert.message || firstAlert.title || 'Có cảnh báo thời tiết');
-        setPendingRouteData(result);
-        setWeatherModalVisible(true);
-        setIsSaving(false);
-        return;
-      }
-
-      // Check if route_id exists in response
-      if (result && result.route_id) {
-        // Save route_id and show input title modal
-        setRouteIdToConfirm(result.route_id);
-        setItineraryTitle(result.title || `Lộ trình ${destination}`);
-        setShowTitleInputModal(true);
-      } else {
-        // Fallback: show error
-        Alert.alert('Lỗi', 'Không thể lưu lộ trình. Vui lòng thử lại.');
-      }
-    } catch (error: any) {
-      console.error('Save itinerary error:', error);
-      Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình. Vui lòng thử lại.');
-    } finally {
-      setIsSaving(false);
-    }
+        durationDays: durationDays.toString(),
+        currentLocationText: currentLocationText,
+        itineraryData: JSON.stringify(itinerary),
+        travelModes: JSON.stringify(travelModes),
+      },
+    });
   };
 
+  // LEGACY: Function moved to manual-route.tsx
   // Handle confirm title and update status
+  /*
   const handleConfirmTitle = async () => {
     if (!routeIdToConfirm || !itineraryTitle.trim()) {
       Alert.alert('Thông báo', 'Vui lòng nhập tên lộ trình.');
@@ -834,7 +774,9 @@ export default function ManualPreviewScreen() {
     }
   };
 
+  // LEGACY: Functions moved to manual-route.tsx
   // Xử lý khi người dùng chọn "Tiếp tục" trong modal warning
+  /*
   const handleWeatherContinue = async () => {
     setWeatherModalVisible(false);
     // Sử dụng route data đã được lưu trước đó
@@ -851,6 +793,7 @@ export default function ManualPreviewScreen() {
     setWeatherModalVisible(false);
     setPendingRouteData(null);
   };
+  */
 
   // Cleanup search timer on unmount
   useEffect(() => {
@@ -1439,101 +1382,7 @@ export default function ManualPreviewScreen() {
         </View>
       </Modal>
 
-      {/* Input Title Modal */}
-      <Modal
-        visible={showTitleInputModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => {
-          if (!isConfirming) {
-            setShowTitleInputModal(false);
-            setRouteIdToConfirm(null);
-            setItineraryTitle('');
-          }
-        }}
-      >
-        <View style={styles.titleModalOverlay}>
-          <View style={[styles.titleModalContent, { paddingBottom: insets.bottom + SPACING.lg }]}>
-            {/* Modal Header */}
-            <View style={styles.titleModalHeader}>
-              <Text style={styles.titleModalTitle}>Đặt tên lộ trình</Text>
-              {!isConfirming && (
-                <TouchableOpacity
-                  style={styles.titleModalCloseButton}
-                  onPress={() => {
-                    setShowTitleInputModal(false);
-                    setRouteIdToConfirm(null);
-                    setItineraryTitle('');
-                  }}
-                >
-                  <FontAwesome name="times" size={24} color={COLORS.textSecondary} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* Input Field */}
-            <View style={styles.titleInputContainer}>
-              <Text style={styles.titleInputLabel}>Tên lộ trình</Text>
-              <TextInput
-                style={styles.titleInput}
-                placeholder="Nhập tên lộ trình..."
-                placeholderTextColor={COLORS.textSecondary}
-                value={itineraryTitle}
-                onChangeText={setItineraryTitle}
-                autoFocus
-                editable={!isConfirming}
-                maxLength={100}
-              />
-              <Text style={styles.titleInputHint}>
-                {itineraryTitle.length}/100 ký tự
-              </Text>
-            </View>
-
-            {/* Action Buttons */}
-            <View style={styles.titleModalActions}>
-              {!isConfirming && (
-                <TouchableOpacity
-                  style={[styles.titleModalButton, styles.titleModalCancelButton]}
-                  onPress={() => {
-                    setShowTitleInputModal(false);
-                    setRouteIdToConfirm(null);
-                    setItineraryTitle('');
-                  }}
-                >
-                  <Text style={styles.titleModalCancelText}>Hủy</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[
-                  styles.titleModalButton,
-                  styles.titleModalConfirmButton,
-                  (!itineraryTitle.trim() || isConfirming) && styles.titleModalConfirmButtonDisabled,
-                ]}
-                onPress={handleConfirmTitle}
-                disabled={!itineraryTitle.trim() || isConfirming}
-              >
-                {isConfirming ? (
-                  <ActivityIndicator size="small" color={COLORS.textWhite} />
-                ) : (
-                  <>
-                    <FontAwesome name="check" size={16} color={COLORS.textWhite} />
-                    <Text style={styles.titleModalConfirmText}>Xác nhận</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Weather Warning Modal */}
-      <WeatherWarningModal
-        visible={weatherModalVisible}
-        severity={weatherSeverity}
-        alertMessage={weatherAlert}
-        onContinue={handleWeatherContinue}
-        onGoBack={handleWeatherGoBack}
-      />
+      {/* LEGACY: Title Input Modal and Weather Warning Modal moved to manual-route.tsx */}
     </View>
   );
 }
