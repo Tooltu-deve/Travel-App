@@ -26,4 +26,9 @@ export class PlaceSeedDto {
   type: string;
   types?: string[];
   opening_hours?: OpeningHours;
+  
+  // POI Function Classification Fields
+  function?: string;
+  functionPriority?: number;
+  includeInDailyRoute?: boolean;
 }
