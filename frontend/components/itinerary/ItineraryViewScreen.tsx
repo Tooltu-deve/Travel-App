@@ -1534,11 +1534,29 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const coord = toMapCoordinate(activity.location || activity.place?.location);
                 if (!coord) return null;
 
+                // Check for duplicate coordinates and apply offset
+                const duplicateIndex = activities.slice(0, index).findIndex((prevActivity, prevIndex) => {
+                  const prevCoord = toMapCoordinate(prevActivity.location || prevActivity.place?.location);
+                  return prevCoord && 
+                         Math.abs(prevCoord.latitude - coord.latitude) < 0.00001 && 
+                         Math.abs(prevCoord.longitude - coord.longitude) < 0.00001;
+                });
+                
+                // Apply small offset if duplicate found (shift by ~10 meters)
+                const offsetCoord = duplicateIndex >= 0 
+                  ? {
+                      latitude: coord.latitude + (index - duplicateIndex) * 0.0001,
+                      longitude: coord.longitude + (index - duplicateIndex) * 0.0001
+                    }
+                  : coord;
+
                 const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
+                const placeId = activity.place?.placeID || activity.placeID || `activity-${index}`;
+                
                 return (
                   <Marker 
-                    key={`marker-${selectedDay}-${index}`} 
-                    coordinate={coord}
+                    key={`marker-${selectedDay}-${placeId}-${index}`} 
+                    coordinate={offsetCoord}
                     anchor={{ x: 0.5, y: 1 }}
                   >
                     <View style={styles.markerContainer}>
