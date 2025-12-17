@@ -178,6 +178,9 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   // Animation state for visit button
   const [animatingButtons, setAnimatingButtons] = useState<Set<string>>(new Set());
 
+  // Track expanded opening hours
+  const [expandedOpeningHours, setExpandedOpeningHours] = useState<Set<string>>(new Set());
+
   // Track enriched activities to avoid re-enriching - use ref to avoid dependency loop
   const enrichedActivitiesRef = useRef<Set<string>>(new Set());
   const enrichingInProgressRef = useRef<Set<string>>(new Set());
@@ -1071,6 +1074,250 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     setIsReplacePOIModalVisible(true);
   };
 
+  // Handle delete POI
+  const handleDeletePOI = async (activity: any, dayIndex: number, activityIndex: number, event: any) => {
+    event?.stopPropagation();
+    Alert.alert(
+      'Xóa địa điểm',
+      `Bạn có chắc chắn muốn xóa "${activity.name || 'địa điểm này'}" khỏi lộ trình?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            if (!routeDetails) return;
+
+            try {
+              setIsUpdatingRoute(true);
+              
+              const token = await AsyncStorage.getItem('userToken');
+              if (!token) {
+                Alert.alert('Lỗi', 'Bạn cần đăng nhập để xóa địa điểm.');
+                setIsUpdatingRoute(false);
+                return;
+              }
+
+              // Deep clone routeData (giữ nguyên destination, duration_days, start_datetime, metadata)
+              const routeData = (routeDetails as any).route_data_json || routeDetails;
+              const updatedRoute = JSON.parse(JSON.stringify(routeData));
+
+              // Xóa POI trong optimized_route (AI route)
+              if (updatedRoute.optimized_route && Array.isArray(updatedRoute.optimized_route)) {
+                updatedRoute.optimized_route.forEach((day: any, idx: number) => {
+                  if (day.day === dayIndex && day.activities) {
+                    day.activities.splice(activityIndex, 1);
+                  }
+                  // Ensure required fields
+                  if (!day.travel_mode) day.travel_mode = 'driving';
+                  if (!day.day_start_time) day.day_start_time = '09:00:00';
+                  if (day.day === undefined) day.day = idx + 1;
+                });
+              }
+
+              // Xóa POI trong days (custom itinerary)
+              if (updatedRoute.days && Array.isArray(updatedRoute.days)) {
+                updatedRoute.days.forEach((day: any) => {
+                  const dayNum = day.day ?? day.dayNumber;
+                  if (dayNum === dayIndex && day.places) {
+                    day.places.splice(activityIndex, 1);
+                  }
+                });
+              }
+
+              // Call API
+              const response = await fetch(`${API_BASE_URL}/api/v1/itineraries/custom-route`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                  route: {
+                    route_id: (routeDetails as any).route_id,
+                    start_location:
+                      (routeDetails as any).start_location ||
+                      routeData.start_location ||
+                      routeData.metadata?.start_location ||
+                      undefined,
+                    route_data_json: updatedRoute,
+                  },
+                  message: 'Xóa địa điểm khỏi lộ trình',
+                }),
+              });
+
+              if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: 'Network error' }));
+                throw new Error(errorData.message || 'Không thể cập nhật lộ trình');
+              }
+
+              const result = await response.json();
+              if (result.route) {
+                const mergedRoute = {
+                  ...result.route,
+                  start_location:
+                    result.route.start_location ||
+                    (routeDetails as any)?.start_location ||
+                    routeData.start_location ||
+                    null,
+                };
+                
+                // Reset enrich state
+                enrichedActivitiesRef.current = new Set();
+                enrichingInProgressRef.current = new Set();
+                setRefreshEnrichKey(k => k + 1);
+                
+                setRouteDetails(mergedRoute);
+                Alert.alert('Thành công', 'Đã xóa địa điểm khỏi lộ trình');
+              }
+            } catch (error: any) {
+              console.error('❌ Error deleting POI:', error);
+              Alert.alert('Lỗi', error.message || 'Không thể xóa địa điểm');
+            } finally {
+              setIsUpdatingRoute(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Handle move POI up/down
+  const handleMovePOI = async (dayIndex: number, activityIndex: number, direction: 'up' | 'down', event: any) => {
+    event?.stopPropagation();
+    if (!routeDetails) return;
+
+    const newIndex = direction === 'up' ? activityIndex - 1 : activityIndex + 1;
+
+    // ✅ CRITICAL: Check bounds BEFORE any processing
+    const routeData = (routeDetails as any).route_data_json || routeDetails;
+    let activitiesCount = 0;
+    
+    // Get activities count for the current day
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      const currentDay = routeData.optimized_route.find((d: any) => d.day === dayIndex);
+      activitiesCount = currentDay?.activities?.length || 0;
+    } else if (routeData.days && Array.isArray(routeData.days)) {
+      const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === dayIndex);
+      activitiesCount = currentDay?.places?.length || 0;
+    }
+    
+    // Early return if out of bounds
+    if (newIndex < 0 || newIndex >= activitiesCount) {
+      console.log(`⚠️ Cannot move: newIndex ${newIndex} out of bounds (0-${activitiesCount - 1})`);
+      return;
+    }
+
+    try {
+      setIsUpdatingRoute(true);
+      
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để thay đổi thứ tự.');
+        setIsUpdatingRoute(false);
+        return;
+      }
+
+      // Deep clone routeData (giữ nguyên destination, duration_days, start_datetime, metadata)
+      const updatedRoute = JSON.parse(JSON.stringify(routeData));
+
+      // Move POI trong optimized_route (AI route)
+      if (updatedRoute.optimized_route && Array.isArray(updatedRoute.optimized_route)) {
+        updatedRoute.optimized_route.forEach((day: any, idx: number) => {
+          if (day.day === dayIndex && day.activities) {
+            // Swap (bounds already checked above)
+            const temp = day.activities[activityIndex];
+            day.activities[activityIndex] = day.activities[newIndex];
+            day.activities[newIndex] = temp;
+          }
+          // Ensure required fields
+          if (!day.travel_mode) day.travel_mode = 'driving';
+          if (!day.day_start_time) day.day_start_time = '09:00:00';
+          if (day.day === undefined) day.day = idx + 1;
+        });
+      }
+
+      // Move POI trong days (custom itinerary)
+      if (updatedRoute.days && Array.isArray(updatedRoute.days)) {
+        updatedRoute.days.forEach((day: any) => {
+          const dayNum = day.day ?? day.dayNumber;
+          if (dayNum === dayIndex && day.places) {
+            // Swap (bounds already checked above)
+            const temp = day.places[activityIndex];
+            day.places[activityIndex] = day.places[newIndex];
+            day.places[newIndex] = temp;
+          }
+        });
+      }
+
+      // Call API
+      const response = await fetch(`${API_BASE_URL}/api/v1/itineraries/custom-route`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          route: {
+            route_id: (routeDetails as any).route_id,
+            start_location:
+              (routeDetails as any).start_location ||
+              routeData.start_location ||
+              routeData.metadata?.start_location ||
+              undefined,
+            route_data_json: updatedRoute,
+          },
+          message: 'Thay đổi thứ tự địa điểm',
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Network error' }));
+        throw new Error(errorData.message || 'Không thể cập nhật lộ trình');
+      }
+
+      const result = await response.json();
+      if (result.route) {
+        const mergedRoute = {
+          ...result.route,
+          start_location:
+            result.route.start_location ||
+            (routeDetails as any)?.start_location ||
+            routeData.start_location ||
+            null,
+        };
+        
+        // Reset enrich state
+        enrichedActivitiesRef.current = new Set();
+        enrichingInProgressRef.current = new Set();
+        setRefreshEnrichKey(k => k + 1);
+        
+        setRouteDetails(mergedRoute);
+        
+        // ✅ Success feedback
+        Alert.alert('Thành công', 'Đã thay đổi thứ tự địa điểm');
+      }
+    } catch (error: any) {
+      console.error('❌ Error moving POI:', error);
+      Alert.alert('Lỗi', error.message || 'Không thể thay đổi thứ tự');
+    } finally {
+      setIsUpdatingRoute(false);
+    }
+  };
+
+  // Toggle opening hours expansion
+  const toggleOpeningHours = (activityKey: string) => {
+    setExpandedOpeningHours(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(activityKey)) {
+        newSet.delete(activityKey);
+      } else {
+        newSet.add(activityKey);
+      }
+      return newSet;
+    });
+  };
+
   // Handle select new POI from autocomplete
   const handleSelectNewPOI = async (suggestion: any) => {
     if (!replacingPOI || !routeDetails) {
@@ -1551,7 +1798,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   : coord;
 
                 const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
-                const placeId = activity.place?.placeID || activity.placeID || `activity-${index}`;
+                const placeId = activity.google_place_id || `activity-${index}`;
                 
                 return (
                   <Marker 
@@ -1761,21 +2008,48 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           {/* Opening Hours Row */}
                           {(() => {
                             const openingHours = (activity as any).openingHours;
+                            const activityKey = `${selectedDay}-${index}`;
+                            const isExpanded = expandedOpeningHours.has(activityKey);
+                            
                             if (openingHours?.weekdayDescriptions) {
                               const today = new Date().getDay();
                               const dayIndex = today === 0 ? 6 : today - 1;
                               const todayHours = openingHours.weekdayDescriptions[dayIndex];
-                              if (todayHours) {
-                                const hoursText = todayHours.split(': ')[1] || todayHours;
-                                return (
-                                  <View style={styles.cardRow}>
-                                    <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
-                                    <Text style={styles.cardOpeningHours} numberOfLines={1}>
-                                      {hoursText}
-                                    </Text>
-                                  </View>
-                                );
-                              }
+                              
+                              return (
+                                <View style={styles.openingHoursContainer}>
+                                  {/* Today's hours */}
+                                  {todayHours && (
+                                    <TouchableOpacity 
+                                      style={styles.cardRow}
+                                      onPress={() => toggleOpeningHours(activityKey)}
+                                      activeOpacity={0.7}
+                                    >
+                                      <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
+                                      <Text style={styles.cardOpeningHours} numberOfLines={1}>
+                                        {todayHours.split(': ')[1] || todayHours}
+                                      </Text>
+                                      <FontAwesome 
+                                        name={isExpanded ? "chevron-up" : "chevron-down"} 
+                                        size={10} 
+                                        color={COLORS.textSecondary}
+                                        style={{ marginLeft: 4 }}
+                                      />
+                                    </TouchableOpacity>
+                                  )}
+                                  
+                                  {/* All week hours (when expanded) */}
+                                  {isExpanded && (
+                                    <View style={styles.allHoursContainer}>
+                                      {openingHours.weekdayDescriptions.map((dayHours: string, idx: number) => (
+                                        <Text key={idx} style={styles.dayHoursText}>
+                                          {dayHours}
+                                        </Text>
+                                      ))}
+                                    </View>
+                                  )}
+                                </View>
+                              );
                             }
                             return null;
                           })()}
@@ -1790,15 +2064,47 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           )}
                         </View>
 
-                        {/* Right: Replace POI Button - Only show for draft routes */}
+                        {/* Right: Action Buttons - Only show for draft routes */}
                         {status === 'DRAFT' && (
-                          <TouchableOpacity
-                            style={styles.cardReplaceButton}
-                            onPress={(e) => handleReplacePOI(activity, e)}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.cardReplaceButtonText}>Thay đổi</Text>
-                          </TouchableOpacity>
+                          <View style={styles.cardActionButtons}>
+                            {/* Move Up */}
+                            <TouchableOpacity
+                              style={[styles.cardActionButton, index === 0 && styles.cardActionButtonDisabled]}
+                              onPress={(e) => handleMovePOI(selectedDay, index, 'up', e)}
+                              disabled={index === 0}
+                              activeOpacity={0.7}
+                            >
+                              <FontAwesome name="chevron-up" size={14} color={index === 0 ? COLORS.textSecondary : COLORS.primary} />
+                            </TouchableOpacity>
+                            
+                            {/* Move Down */}
+                            <TouchableOpacity
+                              style={[styles.cardActionButton, index === activities.length - 1 && styles.cardActionButtonDisabled]}
+                              onPress={(e) => handleMovePOI(selectedDay, index, 'down', e)}
+                              disabled={index === activities.length - 1}
+                              activeOpacity={0.7}
+                            >
+                              <FontAwesome name="chevron-down" size={14} color={index === activities.length - 1 ? COLORS.textSecondary : COLORS.primary} />
+                            </TouchableOpacity>
+                            
+                            {/* Replace */}
+                            <TouchableOpacity
+                              style={styles.cardActionButton}
+                              onPress={(e) => handleReplacePOI(activity, e)}
+                              activeOpacity={0.7}
+                            >
+                              <FontAwesome name="exchange" size={14} color={COLORS.primary} />
+                            </TouchableOpacity>
+                            
+                            {/* Delete */}
+                            <TouchableOpacity
+                              style={styles.cardActionButton}
+                              onPress={(e) => handleDeletePOI(activity, selectedDay, index, e)}
+                              activeOpacity={0.7}
+                            >
+                              <FontAwesome name="trash-o" size={14} color={COLORS.error} />
+                            </TouchableOpacity>
+                          </View>
                         )}
 
                         {/* Right: Visit Check Button - Only show for main routes */}
@@ -2347,6 +2653,40 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '400',
     color: COLORS.textSecondary,
+    flex: 1,
+  },
+  openingHoursContainer: {
+    width: '100%',
+  },
+  allHoursContainer: {
+    marginTop: SPACING.xs,
+    paddingLeft: SPACING.md,
+    paddingTop: SPACING.xs,
+    borderLeftWidth: 2,
+    borderLeftColor: COLORS.border,
+  },
+  dayHoursText: {
+    fontSize: 10,
+    color: COLORS.textSecondary,
+    marginBottom: 2,
+  },
+  cardActionButtons: {
+    flexDirection: 'row',
+    gap: SPACING.xs / 2,
+    alignItems: 'center',
+  },
+  cardActionButton: {
+    width: 30,
+    height: 30,
+    borderRadius: SPACING.sm,
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardActionButtonDisabled: {
+    opacity: 0.3,
   },
   cardRating: {
     fontSize: 12,
