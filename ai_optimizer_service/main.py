@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from copy import deepcopy
 import time
 import numpy as np
+import heapq
 from sklearn.cluster import KMeans
 
 # --- 1. KHỞI TẠO VÀ CẤU HÌNH ---
@@ -625,41 +626,294 @@ async def optimize_for_chatbot(request: OptimizerRequest):
     candidates = sorted(high_score_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
     print(f"Bước 4: Sắp xếp theo ECS...")
 
-    # BƯỚC 5: Phân bổ POI đều cho các ngày (đơn giản và hiệu quả)
-    print(f"Bước 5: Phân bổ {len(candidates)} POI cho {request.duration_days} ngày...")
+    # BƯỚC 5: Phân bổ POI đều cho các ngày với SMART ALLOCATION
+    print(f"Bước 5: Smart allocation cho {len(candidates)} POI...")
     
-    # Lọc ra POI không phải nhà hàng
-    non_restaurant_pois = []
-    restaurants_removed = []
+    # Lọc POI theo includeInDailyRoute (từ classification script)
+    # CHÚ Ý: Chỉ lấy POI đã được classified VÀ có includeInDailyRoute=True
+    daily_pois = []
+    not_classified = 0
+    excluded_accommodation = 0
+    
     for p in candidates:
-        if is_restaurant_poi(p):
-            restaurants_removed.append(p.get('name', 'Unknown'))
-        else:
-            non_restaurant_pois.append(p)
+        func = p.get('function')
+        if not func:
+            # POI chưa được classify → skip
+            not_classified += 1
+            continue
+        
+        # Loại ACCOMMODATION (khách sạn/nhà nghỉ)
+        if func == 'ACCOMMODATION':
+            excluded_accommodation += 1
+            continue
+        
+        # Loại RESORT nếu là nơi lưu trú (check types có 'lodging' hoặc 'hotel')
+        if func == 'RESORT':
+            poi_types = get_poi_types(p)
+            if 'lodging' in poi_types or 'hotel' in poi_types or 'motel' in poi_types:
+                excluded_accommodation += 1
+                continue
+            
+        if p.get('includeInDailyRoute', False):
+            daily_pois.append(p)
     
-    print(f"  → {len(non_restaurant_pois)} POI (loại {len(restaurants_removed)} nhà hàng)")
+    print(f"  → {len(daily_pois)} POI phù hợp")
+    print(f"  → Loại {not_classified} POI chưa classified")
+    print(f"  → Loại {excluded_accommodation} ACCOMMODATION")
+    print(f"  → Loại {len(candidates) - len(daily_pois) - not_classified - excluded_accommodation} POI khác")
     
-    if not non_restaurant_pois:
-        print(f"❌ Không có POI nào sau khi loại nhà hàng")
+    if not daily_pois:
+        print(f"❌ Không có POI nào phù hợp cho lộ trình")
         return {"optimized_route": []}
 
-    # Kiểm tra số lượng POI tối thiểu
-    MIN_POIS_PER_DAY = 3
-    required_pois = MIN_POIS_PER_DAY * request.duration_days
+    # === DYNAMIC CONSTRAINTS dựa trên duration ===
+    def get_constraints(duration: int, total_pois: int) -> Dict[str, int]:
+        """Điều chỉnh constraints linh hoạt theo số ngày và số POI"""
+        avg_pois_available = total_pois // max(duration, 1)
+        
+        if duration == 1:
+            # 1 ngày: tối đa 5-6 POI (8 tiếng du lịch)
+            return {'core_min': 2, 'core_max': 3, 'activity_max': 1, 'resort_max': 1, 'fb_max': 1}
+        elif duration <= 3:
+            # Ngắn ngày: cân bằng
+            return {'core_min': 2, 'core_max': 3, 'activity_max': 2, 'resort_max': 1, 'fb_max': 1}
+        else:
+            # Dài ngày: giảm tải
+            return {'core_min': 2, 'core_max': 2, 'activity_max': 1, 'resort_max': 1, 'fb_max': 1}
     
-    if len(non_restaurant_pois) < required_pois:
-        print(f"⚠️  Chỉ có {len(non_restaurant_pois)}/{required_pois} POI (cần {MIN_POIS_PER_DAY}/ngày)")
+    constraints = get_constraints(request.duration_days, len(daily_pois))
     
-    # Phân bổ đều POI cho các ngày (round-robin)
+    # === GEOGRAPHIC CLUSTERING (nhóm POI theo khoảng cách) ===
+    def cluster_by_distance(pois: List[Dict[str, Any]], n_clusters: int) -> List[List[Dict[str, Any]]]:
+        """Nhóm POI theo khoảng cách địa lý bằng simple K-means"""
+        if len(pois) <= n_clusters:
+            return [[p] for p in pois]
+        
+        # Lấy tọa độ
+        coords = []
+        valid_pois = []
+        for p in pois:
+            loc = p.get('location', {})
+            lat, lng = loc.get('lat'), loc.get('lng')
+            if lat is not None and lng is not None:
+                coords.append([lat, lng])
+                valid_pois.append(p)
+        
+        if len(coords) < n_clusters:
+            return [[p] for p in valid_pois]
+        
+        # Simple K-means
+        from sklearn.cluster import KMeans
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(np.array(coords))
+        
+        clusters = [[] for _ in range(n_clusters)]
+        for poi, label in zip(valid_pois, labels):
+            clusters[label].append(poi)
+        
+        return clusters
+    
+    # Phân loại POI theo function
+    pois_by_function = {
+        'CORE_ATTRACTION': [],
+        'ACTIVITY': [],
+        'RESORT': [],
+        'FOOD_BEVERAGE': [],
+        'DINING': [],
+        'OTHER': []
+    }
+    
+    for poi in daily_pois:
+        func = poi.get('function', 'OTHER')
+        if func in pois_by_function:
+            pois_by_function[func].append(poi)
+        else:
+            pois_by_function['OTHER'].append(poi)
+    
+    print(f"  → CORE: {len(pois_by_function['CORE_ATTRACTION'])}, ACTIVITY: {len(pois_by_function['ACTIVITY'])}, RESORT: {len(pois_by_function['RESORT'])}, F&B: {len(pois_by_function['FOOD_BEVERAGE']) + len(pois_by_function['DINING'])}")
+    
+    # === MOOD-AWARE SCORING (tính điểm riêng cho từng mood) ===
+    moods_list = request.user_mood if isinstance(request.user_mood, list) else [request.user_mood]
+    if not moods_list:
+        moods_list = ['']
+    
+    def score_for_mood(poi: Dict[str, Any], mood_idx: int) -> float:
+        """Tính ECS score cho mood cụ thể"""
+        if mood_idx >= len(moods_list):
+            return poi.get('ecs_score', 0)
+        mood = moods_list[mood_idx]
+        weights = MOOD_WEIGHTS.get(mood, {})
+        tags = poi.get('emotional_tags', {})
+        score = sum(tags.get(tag, 0) * weight for tag, weight in weights.items())
+        return score
+    
+    # === GEOGRAPHIC-BASED ALLOCATION ===
+    # Nhóm CORE_ATTRACTION theo khoảng cách
+    core_clusters = cluster_by_distance(pois_by_function['CORE_ATTRACTION'], request.duration_days)
+    
+    # Khởi tạo daily groups
     daily_poi_groups: List[List[Dict[str, Any]]] = [[] for _ in range(request.duration_days)]
+    used_poi_ids = set()
     
-    for idx, poi in enumerate(non_restaurant_pois):
-        day_idx = idx % request.duration_days
+    def add_poi_to_day(poi: Dict[str, Any], day_idx: int) -> bool:
+        """Thêm POI vào ngày nếu chưa được sử dụng"""
+        pid = get_poi_id(poi)
+        if pid in used_poi_ids:
+            return False
         daily_poi_groups[day_idx].append(poi)
+        used_poi_ids.add(pid)
+        return True
     
-    # Kiểm tra và cảnh báo cho từng ngày
-    for day_idx, day_pois in enumerate(daily_poi_groups, start=1):
-        pass
+    # === BƯỚC 1: Phân bổ CORE_ATTRACTION theo cluster địa lý ===
+    # Mỗi cluster tương ứng với 1 ngày, đảm bảo POI cùng khu vực
+    for day_idx in range(request.duration_days):
+        cluster_idx = day_idx % len(core_clusters)
+        cluster = core_clusters[cluster_idx]
+        
+        # Sắp xếp cluster theo mood của ngày (xen kẽ mood)
+        mood_idx = day_idx % len(moods_list)
+        cluster.sort(key=lambda p: score_for_mood(p, mood_idx), reverse=True)
+        
+        # Lấy 2-3 CORE cho ngày này
+        count = 0
+        for poi in cluster:
+            if count >= constraints['core_max']:
+                break
+            if add_poi_to_day(poi, day_idx):
+                count += 1
+    
+    # Phân bổ CORE còn lại (nếu có) cho ngày thiếu
+    remaining_core = [p for p in pois_by_function['CORE_ATTRACTION'] if get_poi_id(p) not in used_poi_ids]
+    remaining_core.sort(key=lambda p: p.get('ecs_score', 0), reverse=True)
+    
+    # Dùng heap để luôn thêm vào ngày có ít CORE nhất
+    day_core_count = [(sum(1 for p in daily_poi_groups[i] if p.get('function') == 'CORE_ATTRACTION'), i) 
+                      for i in range(request.duration_days)]
+    heapq.heapify(day_core_count)
+    
+    for poi in remaining_core:
+        count, day_idx = heapq.heappop(day_core_count)
+        if count < constraints['core_max'] + 1:  # Cho phép vượt 1
+            add_poi_to_day(poi, day_idx)
+            count += 1
+        heapq.heappush(day_core_count, (count, day_idx))
+    
+    # === BƯỚC 2: Phân bổ RESORT (max 1/ngày, ưu tiên ngày có ít POI) ===
+    resort_pois = [p for p in pois_by_function['RESORT'] if get_poi_id(p) not in used_poi_ids]
+    resort_pois.sort(key=lambda p: p.get('ecs_score', 0), reverse=True)
+    
+    # Dùng heap để cân bằng
+    day_poi_count = [(len(daily_poi_groups[i]), i) for i in range(request.duration_days)]
+    heapq.heapify(day_poi_count)
+    
+    for poi in resort_pois[:request.duration_days]:  # Max 1 resort/ngày
+        _, day_idx = heapq.heappop(day_poi_count)
+        add_poi_to_day(poi, day_idx)
+        heapq.heappush(day_poi_count, (len(daily_poi_groups[day_idx]), day_idx))
+    
+    # === BƯỚC 3: Phân bổ ACTIVITY (max 2/ngày, cân bằng địa lý) ===
+    activity_pois = [p for p in pois_by_function['ACTIVITY'] if get_poi_id(p) not in used_poi_ids]
+    
+    for day_idx in range(request.duration_days):
+        # Lấy vị trí trung tâm của ngày hiện tại
+        day_lats = [p.get('location', {}).get('lat', 0) for p in daily_poi_groups[day_idx] if p.get('location')]
+        day_lngs = [p.get('location', {}).get('lng', 0) for p in daily_poi_groups[day_idx] if p.get('location')]
+        
+        if day_lats and day_lngs:
+            center_lat = sum(day_lats) / len(day_lats)
+            center_lng = sum(day_lngs) / len(day_lngs)
+            
+            # Sắp xếp ACTIVITY theo khoảng cách đến center của ngày
+            activity_pois.sort(key=lambda p: (
+                haversine_km(
+                    p.get('location', {}).get('lat', 0),
+                    p.get('location', {}).get('lng', 0),
+                    center_lat, center_lng
+                ) - p.get('ecs_score', 0) * 5  # ECS bonus
+            ))
+        
+        count = 0
+        for poi in activity_pois[:]:
+            if count >= constraints['activity_max']:
+                break
+            if add_poi_to_day(poi, day_idx):
+                activity_pois.remove(poi)
+                count += 1
+    
+    # === BƯỚC 4: Phân bổ F&B/DINING (max 1/ngày, gần cluster) ===
+    fb_dining = [p for p in (pois_by_function['FOOD_BEVERAGE'] + pois_by_function['DINING']) 
+                 if get_poi_id(p) not in used_poi_ids]
+    
+    for day_idx in range(request.duration_days):
+        if not fb_dining:
+            break
+            
+        # Tìm F&B gần nhất với các POI đã chọn trong ngày
+        day_lats = [p.get('location', {}).get('lat', 0) for p in daily_poi_groups[day_idx] if p.get('location')]
+        day_lngs = [p.get('location', {}).get('lng', 0) for p in daily_poi_groups[day_idx] if p.get('location')]
+        
+        if day_lats and day_lngs:
+            center_lat = sum(day_lats) / len(day_lats)
+            center_lng = sum(day_lngs) / len(day_lngs)
+            
+            # Chọn F&B gần nhất
+            fb_dining.sort(key=lambda p: haversine_km(
+                p.get('location', {}).get('lat', 0),
+                p.get('location', {}).get('lng', 0),
+                center_lat, center_lng
+            ))
+        
+        if fb_dining and add_poi_to_day(fb_dining[0], day_idx):
+            fb_dining.pop(0)
+    
+    # === BƯỚC 5: Phân bổ OTHER cho ngày thiếu POI (heap-based, với constraint check) ===
+    other_pois = [p for p in pois_by_function['OTHER'] if get_poi_id(p) not in used_poi_ids]
+    other_pois.sort(key=lambda p: p.get('ecs_score', 0), reverse=True)
+    
+    # Target POI per day (dynamic)
+    target_per_day = max(3, min(6, len(daily_pois) // request.duration_days))
+    
+    # Helper function để check constraints của ngày
+    def day_violates_constraints(day_pois: List[Dict[str, Any]]) -> bool:
+        """Check xem ngày có vi phạm constraints về số lượng POI mỗi loại không"""
+        fb_count = sum(1 for p in day_pois if p.get('function') in ['FOOD_BEVERAGE', 'DINING'])
+        resort_count = sum(1 for p in day_pois if p.get('function') == 'RESORT')
+        activity_count = sum(1 for p in day_pois if p.get('function') == 'ACTIVITY')
+        
+        # Enforce constraints (soft limits + 1 để linh hoạt)
+        if fb_count > constraints['fb_max'] + 1:  # Max 2 F&B per day
+            return True
+        if resort_count > constraints['resort_max'] + 1:  # Max 2 RESORT per day
+            return True
+        if activity_count > constraints['activity_max'] + 1:  # Max 3 ACTIVITY per day
+            return True
+        return False
+    
+    day_poi_count = [(len(daily_poi_groups[i]), i) for i in range(request.duration_days)]
+    heapq.heapify(day_poi_count)
+    
+    for poi in other_pois:
+        count, day_idx = heapq.heappop(day_poi_count)
+        if count < target_per_day:
+            # Check xem thêm POI này có vi phạm constraints không
+            test_pois = daily_poi_groups[day_idx] + [poi]
+            if not day_violates_constraints(test_pois):
+                add_poi_to_day(poi, day_idx)
+        heapq.heappush(day_poi_count, (len(daily_poi_groups[day_idx]), day_idx))
+    
+    # === KIỂM TRA VÀ CÂN BẰNG CUỐI ===
+    for day_idx in range(request.duration_days):
+        day_pois = daily_poi_groups[day_idx]
+        core_count = sum(1 for p in day_pois if p.get('function') == 'CORE_ATTRACTION')
+        activity_count = sum(1 for p in day_pois if p.get('function') == 'ACTIVITY')
+        resort_count = sum(1 for p in day_pois if p.get('function') == 'RESORT')
+        fb_count = sum(1 for p in day_pois if p.get('function') in ['FOOD_BEVERAGE', 'DINING'])
+        other_count = sum(1 for p in day_pois if p.get('function') == 'OTHER')
+        
+        if core_count < constraints['core_min'] and len(day_pois) > 0:
+            print(f"⚠️  Ngày {day_idx+1}: chỉ có {core_count} CORE (cần ≥{constraints['core_min']})")
+        
+        print(f"  📅 Ngày {day_idx+1}: {len(day_pois)} POI (CORE:{core_count}, ACT:{activity_count}, RESORT:{resort_count}, F&B:{fb_count}, OTHER:{other_count})")
 
     # Hàm helper để tính ETA giữa 2 POI
     def eta_between(a_id: str, b_id: str, fallback_list: Optional[List[Dict[str, Any]]] = None) -> float:
@@ -825,10 +1079,9 @@ async def optimize_with_kmeans(request: OptimizerRequest):
             result.append(types_field.lower())
         return list({t for t in result if t})
 
-    def is_restaurant_poi(poi: Dict[str, Any]) -> bool:
-        types = get_poi_types(poi)
-        restaurant_keywords = {'restaurant', 'food', 'dining', 'cafe', 'coffee', 'bakery'}
-        return any(keyword in types for keyword in restaurant_keywords)
+    def should_include_in_route(poi: Dict[str, Any]) -> bool:
+        """Kiểm tra POI có nên được thêm vào lộ trình ngày không (dựa vào function)"""
+        return poi.get('includeInDailyRoute', True)
 
     def within_start_radius(poi: Dict[str, Any], max_distance_km: float) -> bool:
         location = poi.get('location', {}) or {}
@@ -923,17 +1176,17 @@ async def optimize_with_kmeans(request: OptimizerRequest):
     cluster_mood_rank: Dict[int, Dict[str, List[Dict[str, Any]]]] = {}
     cluster_mood_ptr: Dict[int, Dict[str, int]] = {}
     for cluster_id, cluster_pois in sorted_clusters:
-        non_restaurant_pois = [p for p in cluster_pois if not is_restaurant_poi(p)]
-        if not non_restaurant_pois:
+        route_pois = [p for p in cluster_pois if should_include_in_route(p)]
+        if not route_pois:
             continue
-        sorted_list = sorted(non_restaurant_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
+        sorted_list = sorted(route_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
         cluster_sequences.append((cluster_id, sorted_list))
         # Sắp xếp theo từng mood để lấy POI phù hợp nhất cho mood đó
         cluster_mood_rank[cluster_id] = {}
         cluster_mood_ptr[cluster_id] = {}
         for mood in moods_list:
             ranked = sorted(
-                non_restaurant_pois,
+                route_pois,
                 key=lambda p: calculate_ecs_score_single(p, str(mood)),
                 reverse=True,
             )
@@ -944,7 +1197,7 @@ async def optimize_with_kmeans(request: OptimizerRequest):
     # BƯỚC 5: Phân bổ POI theo ngày từ clusters
 
     pois_per_day = request.poi_per_day or 3
-    base_pool = [p for p in pois_within_radius if not is_restaurant_poi(p)]
+    base_pool = [p for p in pois_within_radius if should_include_in_route(p)]
 
     # Global pool sắp xếp theo từng mood
     global_pool_rank: Dict[str, List[Dict[str, Any]]] = {}
