@@ -247,30 +247,29 @@ def fetch_distance_matrix_minutes(origin: Dict[str, float], destinations: List[D
 
 def parse_iso_datetime(dt_str: Optional[str]) -> Optional[datetime]:
     """
-    Parse ISO datetime string và convert sang Vietnam timezone (UTC+7).
-    Frontend gửi datetime theo local time nhưng .toISOString() convert sang UTC.
-    Backend cần convert lại sang Vietnam time để check opening hours chính xác.
+    Parse ISO datetime string trực tiếp như Vietnam time.
+    Frontend gửi thời gian local (Vietnam time) dạng YYYY-MM-DDTHH:mm:ss (không có Z).
+    Backend pass through, AI optimizer parse trực tiếp không cần convert timezone.
     """
     if not dt_str:
         return None
     dt_candidate = dt_str.strip()
     if not dt_candidate:
         return None
+    # Nếu có Z hoặc +00:00 thì loại bỏ (legacy support)
     if dt_candidate.endswith('Z'):
-        dt_candidate = dt_candidate[:-1] + '+00:00'
+        dt_candidate = dt_candidate[:-1]
+    if '+' in dt_candidate:
+        dt_candidate = dt_candidate.split('+')[0]
     try:
-        dt_utc = datetime.fromisoformat(dt_candidate)
-        # Convert UTC sang Vietnam timezone (UTC+7)
-        vietnam_offset = timedelta(hours=7)
-        dt_vietnam = dt_utc + vietnam_offset
-        print(f"  🕐 Parse datetime: UTC {dt_utc.isoformat()} → Vietnam {dt_vietnam.isoformat()}")
+        # Parse trực tiếp như Vietnam time, không cần convert
+        dt_vietnam = datetime.fromisoformat(dt_candidate)
+        print(f"  🕐 Parse datetime: {dt_candidate} → Vietnam {dt_vietnam.isoformat()}")
         return dt_vietnam
     except ValueError:
         try:
-            dt_utc = datetime.fromisoformat(dt_candidate.replace(' ', 'T'))
-            vietnam_offset = timedelta(hours=7)
-            dt_vietnam = dt_utc + vietnam_offset
-            print(f"  🕐 Parse datetime: UTC {dt_utc.isoformat()} → Vietnam {dt_vietnam.isoformat()}")
+            dt_vietnam = datetime.fromisoformat(dt_candidate.replace(' ', 'T'))
+            print(f"  🕐 Parse datetime: {dt_candidate} → Vietnam {dt_vietnam.isoformat()}")
             return dt_vietnam
         except ValueError:
             print(f"⚠️  Không thể parse datetime từ chuỗi: {dt_str}")
@@ -991,6 +990,7 @@ async def optimize_for_chatbot(request: OptimizerRequest):
                 continue
 
             poi_with_timing = deepcopy(poi)
+            # Return Vietnam time trực tiếp (frontend sẽ parse trực tiếp)
             poi_with_timing['estimated_arrival'] = arrival_time.isoformat()
 
             # Sử dụng hàm mới để tính visit_duration dựa trên place_type
@@ -1341,6 +1341,7 @@ async def optimize_with_kmeans(request: OptimizerRequest):
             if not is_poi_open_at_datetime(poi, arrival):
                 continue
             poi_copy = deepcopy(poi)
+            # Return Vietnam time directly
             poi_copy['estimated_arrival'] = arrival.isoformat()
             duration = poi.get('visit_duration_minutes', DEFAULT_VISIT_DURATION_MINUTES)
             departure = arrival + timedelta(minutes=duration)
