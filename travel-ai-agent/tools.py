@@ -1782,6 +1782,275 @@ def get_time_based_activity_suggestions(
             "activities": ["Nghỉ ngơi", "Ăn uống", "Tham quan"]
         }
 
+@tool
+def get_itinerary_details(itinerary_data: Dict) -> Dict:
+    """
+    Lấy thông tin chi tiết về itinerary của user.
+    
+    Args:
+        itinerary_data: Dictionary chứa thông tin itinerary từ frontend/backend
+        
+    Returns:
+        Dict: Thông tin chi tiết về lộ trình bao gồm:
+        - title: Tiêu đề lộ trình
+        - destination: Điểm đến
+        - duration_days: Số ngày
+        - route_data: Dữ liệu chi tiết từng ngày và địa điểm
+    """
+    try:
+        if not itinerary_data:
+            return {"error": "No itinerary data provided"}
+        
+        # Parse itinerary structure
+        result = {
+            "route_id": itinerary_data.get("route_id", ""),
+            "title": itinerary_data.get("title", ""),
+            "destination": itinerary_data.get("destination", ""),
+            "duration_days": itinerary_data.get("duration_days", 0),
+            "start_datetime": itinerary_data.get("start_datetime"),
+            "total_places": 0,
+            "days": []
+        }
+        
+        # Extract route data
+        route_data = itinerary_data.get("route_data_json", {})
+        days = route_data.get("days", [])
+        
+        for day in days:
+            day_info = {
+                "day_number": day.get("day", 0),
+                "date": day.get("date"),
+                "places": []
+            }
+            
+            activities = day.get("activities", [])
+            for activity in activities:
+                place = activity.get("place", {})
+                place_info = {
+                    "place_id": place.get("place_id", ""),
+                    "name": place.get("name", ""),
+                    "type": place.get("type", ""),
+                    "address": place.get("address", ""),
+                    "rating": place.get("rating", 0),
+                    "description": place.get("description", ""),
+                    "location": place.get("location", {}),
+                    "time": activity.get("time", ""),
+                    "duration": activity.get("duration", "")
+                }
+                day_info["places"].append(place_info)
+                result["total_places"] += 1
+            
+            result["days"].append(day_info)
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error in get_itinerary_details: {e}")
+        return {"error": str(e)}
+
+
+@tool
+def get_place_from_itinerary(itinerary_data: Dict, place_name: str = None, day_number: int = None) -> List[Dict]:
+    """
+    Lấy thông tin chi tiết về một hoặc nhiều địa điểm trong itinerary.
+    
+    Args:
+        itinerary_data: Dictionary chứa thông tin itinerary
+        place_name: Tên địa điểm cần tìm (tìm kiếm không phân biệt hoa thường)
+        day_number: Số ngày trong lộ trình (1, 2, 3...)
+        
+    Returns:
+        List[Dict]: Danh sách địa điểm matching với search criteria
+    """
+    try:
+        if not itinerary_data:
+            return []
+        
+        route_data = itinerary_data.get("route_data_json", {})
+        days = route_data.get("days", [])
+        
+        matching_places = []
+        
+        for day in days:
+            # Filter by day if specified
+            if day_number and day.get("day") != day_number:
+                continue
+            
+            activities = day.get("activities", [])
+            for activity in activities:
+                place = activity.get("place", {})
+                
+                # Filter by place name if specified
+                if place_name:
+                    place_name_lower = place_name.lower()
+                    current_place_name = place.get("name", "").lower()
+                    if place_name_lower not in current_place_name:
+                        continue
+                
+                # Build place info
+                place_info = {
+                    "day": day.get("day"),
+                    "date": day.get("date"),
+                    "place_id": place.get("place_id", ""),
+                    "name": place.get("name", ""),
+                    "type": place.get("type", ""),
+                    "address": place.get("address", ""),
+                    "rating": place.get("rating", 0),
+                    "description": place.get("description", ""),
+                    "location": place.get("location", {}),
+                    "opening_hours": place.get("opening_hours", {}),
+                    "time": activity.get("time", ""),
+                    "duration": activity.get("duration", ""),
+                    "emotional_tags": place.get("emotional_tags", []),
+                    "price_level": place.get("price_level", "")
+                }
+                matching_places.append(place_info)
+        
+        return matching_places
+        
+    except Exception as e:
+        print(f"Error in get_place_from_itinerary: {e}")
+        return []
+
+
+@tool
+def add_place_to_itinerary_backend(route_id: str, place_id: str, day_number: int, time: str = "TBD", duration: str = "2 hours") -> Dict:
+    """
+    Thêm địa điểm mới vào itinerary thông qua Backend API.
+    
+    Args:
+        route_id: ID của route/itinerary
+        place_id: Google Place ID của địa điểm cần thêm
+        day_number: Ngày muốn thêm địa điểm (1, 2, 3...)
+        time: Thời gian dự kiến (VD: "09:00", "14:30")
+        duration: Thời gian dự kiến ở địa điểm (VD: "2 hours", "1.5 hours")
+        
+    Returns:
+        Dict: Kết quả từ API backend
+    """
+    try:
+        # Get backend URL from env
+        backend_url = os.getenv("BACKEND_API_URL", "http://localhost:3000")
+        
+        # Note: This requires authentication token which should be passed from frontend
+        # For now, this is a placeholder - actual implementation needs token management
+        
+        response = {
+            "success": False,
+            "message": "This feature requires authentication. Please use the frontend to add places to your itinerary.",
+            "route_id": route_id,
+            "place_id": place_id,
+            "day_number": day_number
+        }
+        
+        # TODO: Implement actual API call when authentication flow is ready
+        # url = f"{backend_url}/itineraries/{route_id}/add-place"
+        # headers = {"Authorization": f"Bearer {token}"}
+        # payload = {
+        #     "place_id": place_id,
+        #     "day_number": day_number,
+        #     "time": time,
+        #     "duration": duration
+        # }
+        # response = requests.post(url, json=payload, headers=headers)
+        
+        return response
+        
+    except Exception as e:
+        print(f"Error in add_place_to_itinerary_backend: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@tool  
+def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[Dict]:
+    """
+    Gợi ý các địa điểm bổ sung phù hợp với itinerary hiện tại.
+    
+    Args:
+        itinerary_data: Dictionary chứa thông tin itinerary hiện tại
+        preferences: Dictionary chứa preferences của user:
+            - category: Loại địa điểm (restaurant, cafe, museum...)
+            - emotional_tags: Tags cảm xúc mong muốn
+            - day_number: Ngày muốn thêm địa điểm
+            - near_place: Tìm gần địa điểm nào trong itinerary
+            
+    Returns:
+        List[Dict]: Danh sách địa điểm gợi ý
+    """
+    try:
+        if not itinerary_data:
+            return []
+        
+        # Get destination from itinerary
+        destination = itinerary_data.get("destination", "")
+        
+        # Get existing places to avoid duplicates
+        route_data = itinerary_data.get("route_data_json", {})
+        days = route_data.get("days", [])
+        existing_place_ids = set()
+        
+        for day in days:
+            for activity in day.get("activities", []):
+                place_id = activity.get("place", {}).get("place_id")
+                if place_id:
+                    existing_place_ids.add(place_id)
+        
+        # Build search query
+        category = preferences.get("category", "")
+        emotional_tags = preferences.get("emotional_tags", [])
+        
+        # Search for places
+        query = f"{category} {destination}"
+        if emotional_tags:
+            query += f" {' '.join(emotional_tags)}"
+        
+        suggestions = search_places.invoke({
+            "query": query,
+            "location_filter": destination,
+            "category_filter": category if category else None,
+            "limit": 20
+        })
+        
+        # Filter out existing places
+        new_suggestions = []
+        for place in suggestions:
+            if place.get("place_id") not in existing_place_ids:
+                new_suggestions.append(place)
+        
+        # If near_place specified, sort by distance
+        near_place = preferences.get("near_place")
+        if near_place and new_suggestions:
+            # Find the reference place in itinerary
+            for day in days:
+                for activity in day.get("activities", []):
+                    place = activity.get("place", {})
+                    if place.get("name") == near_place or place.get("place_id") == near_place:
+                        ref_location = place.get("location", {})
+                        if ref_location.get("coordinates"):
+                            ref_lat, ref_lng = ref_location["coordinates"]
+                            
+                            # Calculate distances
+                            for suggestion in new_suggestions:
+                                loc = suggestion.get("location", {})
+                                if loc.get("coordinates"):
+                                    lat, lng = loc["coordinates"]
+                                    distance = _calculate_distance_helper((ref_lat, ref_lng), (lat, lng))
+                                    suggestion["distance_from_reference"] = round(distance, 2)
+                            
+                            # Sort by distance
+                            new_suggestions.sort(key=lambda x: x.get("distance_from_reference", float('inf')))
+                        break
+        
+        return new_suggestions[:10]  # Return top 10 suggestions
+        
+    except Exception as e:
+        print(f"Error in suggest_additional_places: {e}")
+        return []
+
+
 # Export all tools for LangGraph
 TOOLS = [
     search_places,
@@ -1800,6 +2069,11 @@ TOOLS = [
     get_weather_alerts_and_suggestions,
     get_smart_directions,
     get_time_based_activity_suggestions,
+    # NEW: Itinerary Integration Tools
+    get_itinerary_details,
+    get_place_from_itinerary,
+    suggest_additional_places,
+    add_place_to_itinerary_backend,
 ]
 
 if __name__ == "__main__":
