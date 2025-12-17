@@ -11,8 +11,10 @@ import {
   Alert,
   ActivityIndicator,
   Modal,
-  FlatList
+  FlatList,
+  Platform
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -66,6 +68,8 @@ const SmartAgentFormScreen: React.FC = () => {
   const [profileMoods, setProfileMoods] = useState<string[]>([]);
   const [currentLocationText, setCurrentLocationText] = useState<string>('');
   const [startDate, setStartDate] = useState<Date | null>(null);
+  const [startTime, setStartTime] = useState<Date>(new Date()); // Time for start date
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isEndDatePickerOpen, setIsEndDatePickerOpen] = useState(false);
@@ -104,10 +108,12 @@ const SmartAgentFormScreen: React.FC = () => {
   const [isDestinationDropdownOpen, setIsDestinationDropdownOpen] = useState(false);
 
   useEffect(() => {
-    // Set default start date to tomorrow
+    // Set default start date to tomorrow at 8:00 AM
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(8, 0, 0, 0);
     setStartDate(tomorrow);
+    setStartTime(tomorrow);
     // Default end date = start date + 2 (3-day trip)
     const end = new Date(tomorrow);
     end.setDate(end.getDate() + 2);
@@ -246,7 +252,18 @@ const SmartAgentFormScreen: React.FC = () => {
         travel_mode: travelMode,
         poi_per_day: parseInt(poiPerDay) || 3,
       };
-      if (startDate) {
+      if (startDate && startTime) {
+        // Combine date and time into single ISO string (local timezone)
+        // Fix: Create date in LOCAL timezone, not UTC
+        const year = startDate.getFullYear();
+        const month = startDate.getMonth();
+        const day = startDate.getDate();
+        const hours = startTime.getHours();
+        const minutes = startTime.getMinutes();
+        
+        const combinedDateTime = new Date(year, month, day, hours, minutes, 0, 0);
+        requestBody.start_datetime = combinedDateTime.toISOString();
+      } else if (startDate) {
         requestBody.start_datetime = startDate.toISOString();
       }
       requestBody.ecs_score_threshold = 0.1;
@@ -367,7 +384,10 @@ const SmartAgentFormScreen: React.FC = () => {
               <Calendar
                 minDate={new Date().toISOString().split('T')[0]}
                 onDayPress={(day: DateData) => {
-                  setStartDate(new Date(day.dateString));
+                  // Fix: Parse date string correctly to avoid timezone issues
+                  const [year, month, dayNum] = day.dateString.split('-').map(Number);
+                  const selectedDate = new Date(year, month - 1, dayNum, 8, 0, 0, 0);
+                  setStartDate(selectedDate);
                 }}
                 markedDates={
                   startDate
@@ -398,12 +418,29 @@ const SmartAgentFormScreen: React.FC = () => {
               />
             </View>
             {startDate && (
-              <View style={styles.selectedDateContainer}>
-                <FontAwesome name="calendar" size={18} color={COLORS.primary} />
-                <Text style={styles.selectedDateText}>
-                  Ngày đi: {formatDate(startDate)}
-                </Text>
-              </View>
+              <>
+                <View style={styles.selectedDateContainer}>
+                  <FontAwesome name="calendar" size={18} color={COLORS.primary} />
+                  <Text style={styles.selectedDateText}>
+                    Ngày đi: {formatDate(startDate)}
+                  </Text>
+                </View>
+                
+                {/* Time Picker */}
+                <View style={styles.timePickerContainer}>
+                  <Text style={styles.timePickerLabel}>⏰ Giờ xuất phát</Text>
+                  <TouchableOpacity
+                    style={styles.timePickerButton}
+                    onPress={() => setShowTimePicker(true)}
+                    activeOpacity={0.7}
+                  >
+                    <FontAwesome name="clock-o" size={20} color={COLORS.primary} />
+                    <Text style={styles.timePickerText}>
+                      {startTime.getHours().toString().padStart(2, '0')}:{startTime.getMinutes().toString().padStart(2, '0')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
             )}
           </View>
         );
@@ -827,6 +864,51 @@ const SmartAgentFormScreen: React.FC = () => {
                   onGoBack={handleWeatherGoBack}
                   onClose={() => setWeatherModalVisible(false)}
                 />
+        
+        {/* Time Picker Modal */}
+        {showTimePicker && (
+          <Modal
+            visible={showTimePicker}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setShowTimePicker(false)}
+          >
+            <TouchableOpacity 
+              style={styles.timePickerModalOverlay}
+              activeOpacity={1}
+              onPress={() => setShowTimePicker(false)}
+            >
+              <View style={styles.timePickerModalContent} onStartShouldSetResponder={() => true}>
+                <Text style={styles.timePickerModalTitle}>Chọn giờ xuất phát</Text>
+                <DateTimePicker
+                  value={startTime}
+                  mode="time"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={(event, selectedTime) => {
+                    if (Platform.OS === 'android') {
+                      setShowTimePicker(false);
+                    }
+                    if (selectedTime) {
+                      setStartTime(selectedTime);
+                    }
+                  }}
+                  locale="vi-VN"
+                  is24Hour={true}
+                />
+                {Platform.OS === 'ios' && (
+                  <TouchableOpacity
+                    style={styles.timePickerConfirmButton}
+                    onPress={() => setShowTimePicker(false)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.timePickerConfirmText}>Xác nhận</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </TouchableOpacity>
+          </Modal>
+        )}
+        
         {/* ...bỏ modal cảnh báo thời tiết... */}
       </View>
     </LinearGradient>
@@ -1500,6 +1582,80 @@ const styles = StyleSheet.create({
   autocompleteSuggestionSecondaryText: {
     fontSize: 13,
     color: COLORS.textSecondary,
+  },
+  timePickerContainer: {
+    marginTop: SPACING.md,
+    gap: SPACING.xs,
+  },
+  timePickerLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: SPACING.xs / 2,
+  },
+  timePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.bgMain,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    borderRadius: 12,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  timePickerText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary,
+    letterSpacing: 0.5,
+  },
+  timePickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timePickerModalContent: {
+    backgroundColor: COLORS.bgMain,
+    borderRadius: 20,
+    padding: SPACING.xl,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    minWidth: 300,
+  },
+  timePickerModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: SPACING.md,
+  },
+  timePickerConfirmButton: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.xl * 2,
+    marginTop: SPACING.md,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  timePickerConfirmText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textWhite,
+    letterSpacing: 0.5,
   },
 });
 
