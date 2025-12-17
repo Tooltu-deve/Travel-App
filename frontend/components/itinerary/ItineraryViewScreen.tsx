@@ -1,87 +1,70 @@
 import React, { useState, useEffect, useRef, ReactNode, useMemo } from 'react';
+import { useFavorites } from '@/contexts/FavoritesContext';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
-  Dimensions,
-  Platform,
   Modal,
   Alert,
-  Image,
+  ActivityIndicator,
+  Dimensions,
   TextInput,
   FlatList,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { COLORS, SPACING } from '../../constants';
-import { TravelRoute, getRouteByIdAPI, enrichPlaceAPI, autocompletePlacesAPI, getLikedPlacesAPI, getPlaceByIdAPI, API_BASE_URL } from '../../services/api';
+import { LinearGradient } from 'expo-linear-gradient';
+import FontAwesome from '@expo/vector-icons/FontAwesome';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { POIDetailBottomSheet } from '../place/POIDetailBottomSheet';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+import { COLORS, SPACING } from '@/constants';
+import {
+  getRouteByIdAPI,
+  enrichPlaceAPI,
+  autocompletePlacesAPI,
+} from '@/services/api';
+import { API_BASE_URL } from '@/services/api';
 
-const ROUTE_COLORS = {
-  glow: 'rgba(0, 163, 255, 0.25)',
-  border: '#4DB8FF',
-  main: COLORS.primary,
-} as const;
 
-const CARD_WIDTH = SCREEN_WIDTH - SPACING.lg * 2;
+// Import POIDetailBottomSheet thật
+import POIDetailBottomSheet from '../place/POIDetailBottomSheet';
 
-// Ngưỡng khoảng cách tối thiểu (mét) - địa điểm gần hơn ngưỡng này được coi là trùng lặp
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 const MIN_DISTANCE_THRESHOLD_METERS = 30;
+const ROUTE_COLORS = { main: '#4DB8FF', transit: '#F44336' };
 
-// Hàm tính khoảng cách giữa 2 tọa độ (Haversine formula) - trả về khoảng cách tính bằng mét
-const calculateDistanceMeters = (
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number
-): number => {
-  const R = 6371000; // Bán kính Trái Đất tính bằng mét
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+// Helper function to calculate distance between two coordinates
+const calculateDistanceMeters = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+  const R = 6371e3; // Earth radius in meters
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lng2 - lng1) * Math.PI) / 180;
+
   const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
   return R * c;
 };
 
-interface Step {
-  travel_mode: string;
-  encoded_polyline: string;
-  instruction: string;
-}
-
+// Types
 interface Activity {
   name: string;
-  location: { lat: number; lng: number };
+  location?: { lat: number; lng: number };
+  place?: { location: { lat: number; lng: number } };
+  google_place_id?: string;
+  encoded_polyline?: string;
+  travel_duration_minutes?: number;
   estimated_arrival?: string;
   estimated_departure?: string;
-  emotional_tags?: Record<string, number>;
-  ecs_score?: number;
-  travel_duration_minutes?: number;
-  encoded_polyline?: string;
-  steps?: Step[];
-  start_encoded_polyline?: string; // polyline từ điểm bắt đầu tới POI đầu tiên (nếu có)
-  start_travel_duration_minutes?: number; // thời gian di chuyển từ điểm bắt đầu tới POI đầu tiên
-  google_place_id?: string;
-  time?: string;
-  activity?: string;
-  place?: {
-    name: string;
-    location?: { coordinates: [number, number] };
-    address?: string;
-  };
+  steps?: any[];
+  start_encoded_polyline?: string;
+  start_travel_duration_minutes?: number;
 }
 
 interface DayPlan {
@@ -90,6 +73,15 @@ interface DayPlan {
   day_start_time?: string;
   startLocationCoordinates?: { lat: number; lng: number };
   travel_mode?: string;
+}
+
+interface TravelRoute {
+  route_id: string;
+  destination: string;
+  status: 'DRAFT' | 'CONFIRMED' | 'MAIN';
+  route_data_json: any;
+  start_location?: { lat: number; lng: number };
+  start_location_text?: string;
 }
 
 // Custom itinerary DTO (partial) to support manual routes
@@ -171,17 +163,26 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   const [autocompleteResults, setAutocompleteResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isUpdatingRoute, setIsUpdatingRoute] = useState(false);
+  const [sessionToken, setSessionToken] = useState<string>('');
   
-  // Favorites state
-  const [favoritesPlaces, setFavoritesPlaces] = useState<any[]>([]);
+  // Favorites from context
+  const { favorites: favoritesPlaces, refreshFavorites } = useFavorites();
   const [isLoadingFavorites, setIsLoadingFavorites] = useState(false);
-  const [isUsingFavorites, setIsUsingFavorites] = useState(false);
+  
+  // Ref to track current search query to prevent stale searches from overriding favorites
+  const currentSearchRef = useRef<string>('');
 
   // Visited activities state for MAIN routes
   const [visitedActivities, setVisitedActivities] = useState<Set<string>>(new Set());
 
   // Animation state for visit button
   const [animatingButtons, setAnimatingButtons] = useState<Set<string>>(new Set());
+
+  // Track enriched activities to avoid re-enriching - use ref to avoid dependency loop
+  const enrichedActivitiesRef = useRef<Set<string>>(new Set());
+  const enrichingInProgressRef = useRef<Set<string>>(new Set());
+  // Trigger enrich when route changes
+  const [refreshEnrichKey, setRefreshEnrichKey] = useState(0);
 
   // Sync custom route data (manual)
   useEffect(() => {
@@ -203,7 +204,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         console.log('   - Last place encoded_polyline:', !!lastPlace?.encoded_polyline);
         console.log('   - Last place travel_duration_minutes:', lastPlace?.travel_duration_minutes);
       }
-      
+      // Reset enrich state and trigger enrich again
+      enrichedActivitiesRef.current = new Set();
+      enrichingInProgressRef.current = new Set();
+      setRefreshEnrichKey(k => k + 1);
       setRouteDetails(customRouteData);
       setIsLoading(false);
       setError(null);
@@ -226,6 +230,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         }
 
         const response = await getRouteByIdAPI(token, routeId);
+        // Reset enrich state and trigger enrich again
+        enrichedActivitiesRef.current = new Set();
+        enrichingInProgressRef.current = new Set();
+        setRefreshEnrichKey(k => k + 1);
         setRouteDetails(response.route);
       } catch (err: any) {
         console.error('Error fetching route details:', err);
@@ -447,6 +455,139 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     () => currentDayData?.activities || [],
     [currentDayData]
   );
+
+  // Auto-enrich all activities of current day to get opening hours
+  useEffect(() => {
+    const enrichCurrentDayActivities = async () => {
+      if (!activities || activities.length === 0 || !routeDetails) return;
+
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        console.log('⚠️ No token, skipping opening hours enrichment');
+        return;
+      }
+
+      // Process all activities in parallel with timeout
+      const enrichPromises = activities.map(async (activity, index) => {
+        const placeId = activity.google_place_id;
+        if (!placeId) return;
+
+        // Create unique key for this activity
+        const enrichKey = `${selectedDay}-${index}-${placeId}`;
+        
+        // Skip if already enriched or currently enriching
+        if (enrichedActivitiesRef.current.has(enrichKey) || enrichingInProgressRef.current.has(enrichKey)) {
+          return;
+        }
+
+        // Skip if already has openingHours
+        if ((activity as any).openingHours) {
+          enrichedActivitiesRef.current.add(enrichKey);
+          return;
+        }
+
+        // Mark as enriching
+        enrichingInProgressRef.current.add(enrichKey);
+
+        try {
+          // Add timeout to prevent hanging (5s)
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 5000)
+          );
+          
+          const enrichPromise = enrichPlaceAPI(token, placeId, false);
+          const response = await Promise.race([enrichPromise, timeoutPromise]) as any;
+          
+          const enrichedData = response?.data || response;
+
+          if (!enrichedData) {
+            enrichedActivitiesRef.current.add(enrichKey);
+            return;
+          }
+
+          // Try to get opening hours from multiple sources
+          let openingHours = enrichedData.openingHours || enrichedData.opening_hours || null;
+          
+          // Fallback to weekdayDescriptions if openingHours is not available
+          if (!openingHours && (enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions)) {
+            openingHours = {
+              weekdayDescriptions: enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions
+            };
+          }
+          
+          if (openingHours) {
+            // Update routeDetails immediately
+            setRouteDetails(prevDetails => {
+              if (!prevDetails) return prevDetails;
+              
+              try {
+                const updatedDetails = JSON.parse(JSON.stringify(prevDetails));
+                const routeDataToUpdate = updatedDetails.route_data_json || updatedDetails;
+                
+                const normalizedPlaceId = placeId.replace(/^places\//, '');
+                const enrichedPlaceId = (enrichedData.googlePlaceId || '').replace(/^places\//, '');
+
+                // Update in optimized_route
+                if (routeDataToUpdate.optimized_route && Array.isArray(routeDataToUpdate.optimized_route)) {
+                  routeDataToUpdate.optimized_route.forEach((day: DayPlan) => {
+                    if (day.day !== selectedDay) return;
+                    if (day.activities && Array.isArray(day.activities)) {
+                      day.activities.forEach((act: Activity) => {
+                        const actPlaceId = (act.google_place_id || '').replace(/^places\//, '');
+                        if (actPlaceId === normalizedPlaceId || actPlaceId === enrichedPlaceId) {
+                          (act as any).openingHours = openingHours;
+                        }
+                      });
+                    }
+                  });
+                }
+
+                // Update in days (custom itinerary)
+                if (routeDataToUpdate.days && Array.isArray(routeDataToUpdate.days)) {
+                  routeDataToUpdate.days.forEach((day: CustomDayWithRoutes) => {
+                    if ((day.day ?? day.dayNumber) !== selectedDay) return;
+                    if (day.places && Array.isArray(day.places)) {
+                      day.places.forEach((place: CustomPlaceWithRoute) => {
+                        const placeIdToMatch = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+                        if (placeIdToMatch === normalizedPlaceId || placeIdToMatch === enrichedPlaceId) {
+                          (place as any).openingHours = openingHours;
+                        }
+                      });
+                    }
+                  });
+                }
+
+                if (updatedDetails.route_data_json) {
+                  updatedDetails.route_data_json = routeDataToUpdate;
+                } else {
+                  Object.assign(updatedDetails, routeDataToUpdate);
+                }
+                
+                return updatedDetails;
+              } catch (updateErr) {
+                console.warn(`⚠️ Error updating route details for ${activity.name}:`, updateErr);
+                return prevDetails; // Return unchanged if update fails
+              }
+            });
+            
+            enrichedActivitiesRef.current.add(enrichKey);
+          } else {
+            enrichedActivitiesRef.current.add(enrichKey); // Mark as enriched even if no opening hours
+          }
+        } catch (err: any) {
+          // Skip silently - mark as enriched to avoid retry
+          enrichedActivitiesRef.current.add(enrichKey);
+        } finally {
+          enrichingInProgressRef.current.delete(enrichKey);
+        }
+      });
+
+      // Wait for all enrichments to complete (or fail gracefully)
+      await Promise.allSettled(enrichPromises);
+    };
+
+    enrichCurrentDayActivities();
+  }, [selectedDay, activities.length, routeDetails?.route_id, refreshEnrichKey]); // Thêm refreshEnrichKey để trigger lại enrich khi route thay đổi
 
   // Convert to map coordinate
   const toMapCoordinate = (point?: { lat: number; lng: number } | { coordinates: [number, number] }) => {
@@ -709,7 +850,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         type: enrichedData.type || '',
         types: enrichedData.types || [],
         location: enrichedData.location || activity.location,
-        openingHours: enrichedData.openingHours || enrichedData.opening_hours || null,
+        openingHours: enrichedData.openingHours || enrichedData.opening_hours || 
+          (enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions ? {
+            weekdayDescriptions: enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions
+          } : null),
         priceLevel: enrichedData.priceLevel || enrichedData.price_level || null,
       };
 
@@ -733,9 +877,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const actPlaceId = (act.google_place_id || '').replace(/^places\//, '');
                 if (actPlaceId === normalizedPlaceId || actPlaceId === enrichedPlaceId) {
                   act.name = enrichedData.name;
-                  if (act.place) {
-                    act.place.name = enrichedData.name;
-                  }
+                  // Lưu thông tin giờ mở cửa vào activity với fallback
+                  (act as any).openingHours = enrichedData.openingHours || enrichedData.opening_hours || 
+                    (enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions ? {
+                      weekdayDescriptions: enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions
+                    } : null);
                 }
               });
             }
@@ -750,6 +896,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const placeIdToMatch = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
                 if (placeIdToMatch === normalizedPlaceId || placeIdToMatch === enrichedPlaceId) {
                   place.name = enrichedData.name;
+                  // Lưu thông tin giờ mở cửa vào place với fallback
+                  (place as any).openingHours = enrichedData.openingHours || enrichedData.opening_hours || 
+                    (enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions ? {
+                      weekdayDescriptions: enrichedData.weekdayDescriptions || enrichedData.weekday_descriptions
+                    } : null);
                 }
               });
             }
@@ -773,48 +924,90 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     }
   };
 
+  // Reset session token khi đóng modal (bắt đầu phiên tìm kiếm mới)
+  useEffect(() => {
+    if (!isReplacePOIModalVisible) {
+      // Reset session token khi đóng modal để bắt đầu phiên mới
+      setSessionToken('');
+      setAutocompleteResults([]);
+      setSearchQuery('');
+    }
+  }, [isReplacePOIModalVisible]);
+
   // Debounced search for autocomplete
   useEffect(() => {
     if (!isReplacePOIModalVisible) {
-      setAutocompleteResults((prev) => prev.length > 0 ? [] : prev);
       return;
     }
 
-    // If favorites mode is on
-    if (isUsingFavorites) {
-      if (!searchQuery.trim()) {
-        // Show all favorites when input is empty
-        setAutocompleteResults(favoritesPlaces);
-        return;
-      } else {
-        // Filter favorites based on search text
-        const filteredFavorites = favoritesPlaces.filter(fav =>
-          fav.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          fav.structuredFormat?.mainText?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          fav.structuredFormat?.secondaryText?.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-        setAutocompleteResults(filteredFavorites);
-        return;
-      }
-    }
+    // Update current search ref
+    currentSearchRef.current = searchQuery;
 
-    // Normal autocomplete mode
+    // Khi xóa hết text → Kết thúc session cũ, tạo session mới, hiển thị favorites NGAY LẬP TỨC
     if (!searchQuery.trim()) {
-      setAutocompleteResults((prev) => prev.length > 0 ? [] : prev);
-      return;
+      // Tạo session token mới (bắt đầu phiên tìm kiếm mới)
+      const newSessionToken = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+      console.log('🆕 Session ended. Created new session token:', newSessionToken);
+      setSessionToken(newSessionToken);
+      
+      // Transform favorites to match autocomplete format
+      const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+        placeId: fav.googlePlaceId || fav.placeId || fav.id,
+        googlePlaceId: fav.googlePlaceId || fav.placeId || fav.id,
+        text: fav.name,
+        name: fav.name,
+        address: fav.address || fav.formatted_address || '',
+        description: fav.address || fav.formatted_address || '',
+        structuredFormat: {
+          mainText: fav.name,
+          secondaryText: fav.address || fav.formatted_address || '',
+        },
+        rating: fav.rating,
+        isFavorite: true,
+      }));
+      
+      console.log('💖 Showing favorites:', transformedFavorites.length, 'items');
+      setAutocompleteResults(transformedFavorites);
+      setIsSearching(false); // Đảm bảo không hiển thị loading
+      return; // QUAN TRỌNG: Return ngay để không chạy debounce và không bị timeout cũ override
     }
 
+    // Khi có nhập, gọi API tìm kiếm và đánh dấu favorites
     const timeoutId = setTimeout(async () => {
+      const searchQuerySnapshot = searchQuery; // Capture search query at the time of API call
       setIsSearching(true);
       try {
         const token = await AsyncStorage.getItem('userToken');
         if (!token) return;
 
-        const response = await autocompletePlacesAPI(searchQuery.trim(), undefined, destination, token);
+        // Sử dụng session token trong API call
+        const response = await autocompletePlacesAPI(
+          searchQuerySnapshot.trim(), 
+          sessionToken || undefined, 
+          destination, 
+          token
+        );
+        
+        // ⚠️ CRITICAL: Check if search query has changed - nếu đã xóa hết thì không update
+        if (currentSearchRef.current !== searchQuerySnapshot) {
+          console.log('⏭️ Search query changed, ignoring stale results');
+          return;
+        }
+        
         const predictionsRaw = Array.isArray(response)
           ? response
           : response.predictions || response.suggestions || [];
+        
         const normalized = (predictionsRaw || []).slice(0, 5).map((p: any) => {
+          const placeId = p.place_id || p.placeId;
+          const normalizedPlaceId = placeId?.replace(/^places\//, '');
+          
+          // Kiểm tra xem placeId có trong favorites không
+          const isFavorite = favoritesPlaces.some(fav => {
+            const favPlaceId = (fav.googlePlaceId || fav.placeId)?.replace(/^places\//, '');
+            return favPlaceId && normalizedPlaceId && favPlaceId === normalizedPlaceId;
+          });
+          
           // Backend returns { description, place_id, structured_formatting }
           if (p.place_id && p.description) {
             return {
@@ -824,6 +1017,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 mainText: p.structured_formatting?.main_text,
                 secondaryText: p.structured_formatting?.secondary_text,
               },
+              isFavorite, // Đánh dấu nếu là favorite
             };
           }
           // Fallback: keep original shape (Google suggestions)
@@ -834,6 +1028,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               mainText: p.structuredFormat?.mainText || p.structured_formatting?.main_text,
               secondaryText: p.structuredFormat?.secondaryText || p.structured_formatting?.secondary_text,
             },
+            isFavorite, // Đánh dấu nếu là favorite
           };
         });
         setAutocompleteResults(normalized);
@@ -846,93 +1041,34 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     }, 300); // 300ms debounce
 
     return () => clearTimeout(timeoutId);
-  }, [searchQuery, isReplacePOIModalVisible, isUsingFavorites, favoritesPlaces]);
+    // ⚠️ KHÔNG thêm sessionToken vào dependency array để tránh infinite loop:
+    // - Nếu thêm sessionToken → useEffect chạy → setSessionToken → sessionToken thay đổi → useEffect chạy lại → vòng lặp!
+    // - Session token chỉ cần được tạo khi searchQuery thay đổi (xóa hết text)
+  }, [searchQuery, isReplacePOIModalVisible, favoritesPlaces, destination]);
 
   // Handle replace POI button press
-  const handleReplacePOI = (activity: Activity, event: any) => {
+  const handleReplacePOI = async (activity: Activity, event: any) => {
     event.stopPropagation();
     setReplacingPOI(activity);
     setSearchQuery('');
-    setAutocompleteResults([]);
-    setIsUsingFavorites(false);
+    // Luôn đồng bộ favorites từ context (có thể gọi refreshFavorites nếu muốn đảm bảo mới nhất)
+    // Transform favorites to match autocomplete format
+    const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+      placeId: fav.googlePlaceId || fav.placeId || fav.id,
+      googlePlaceId: fav.googlePlaceId || fav.placeId || fav.id,
+      text: fav.name,
+      name: fav.name,
+      address: fav.address || fav.formatted_address || '',
+      description: fav.address || fav.formatted_address || '',
+      structuredFormat: {
+        mainText: fav.name,
+        secondaryText: fav.address || fav.formatted_address || '',
+      },
+      rating: fav.rating,
+      isFavorite: true,
+    }));
+    setAutocompleteResults(transformedFavorites);
     setIsReplacePOIModalVisible(true);
-  };
-
-  // Toggle favorites mode for autocomplete
-  const toggleFavoritesMode = async () => {
-    if (isUsingFavorites) {
-      // Turn off favorites mode
-      setIsUsingFavorites(false);
-      setAutocompleteResults([]);
-      setSearchQuery('');
-    } else {
-      // Turn on favorites mode
-      if (favoritesPlaces.length === 0) {
-        // Load favorites if not loaded yet
-        try {
-          setIsLoadingFavorites(true);
-          const token = await AsyncStorage.getItem('userToken');
-          if (!token) {
-            Alert.alert('Lỗi', 'Bạn cần đăng nhập để tải địa điểm yêu thích.');
-            return;
-          }
-
-          const favorites = await getLikedPlacesAPI(token);
-          if (favorites && Array.isArray(favorites)) {
-            // Transform favorites to match autocomplete format
-            const enrichedFavorites = await Promise.all(
-              favorites.map(async (fav, index) => {
-                try {
-                  const placeDetails = await getPlaceByIdAPI(fav.place_id);
-                  return {
-                    placeId: `fav-${fav.place_id}-${index}`,
-                    text: placeDetails.name + (placeDetails.address ? `, ${placeDetails.address}` : ''),
-                    structuredFormat: {
-                      mainText: placeDetails.name,
-                      secondaryText: placeDetails.address || '',
-                    },
-                    isFavorite: true,
-                    rating: placeDetails.rating,
-                    location: placeDetails.location,
-                    originalData: fav,
-                    googlePlaceId: placeDetails.googlePlaceId,
-                  };
-                } catch (error) {
-                  console.warn('Failed to enrich favorite place:', fav.place_id, error);
-                  return {
-                    placeId: `fav-${fav.place_id}-${index}`,
-                    text: `Địa điểm ${fav.place_id}`,
-                    structuredFormat: {
-                      mainText: `Địa điểm ${fav.place_id}`,
-                      secondaryText: '',
-                    },
-                    isFavorite: true,
-                    rating: null,
-                    originalData: fav,
-                  };
-                }
-              })
-            );
-
-            setFavoritesPlaces(enrichedFavorites);
-            setAutocompleteResults(enrichedFavorites);
-            setIsUsingFavorites(true);
-            setSearchQuery('');
-          }
-        } catch (error) {
-          console.error('Load favorites error:', error);
-          Alert.alert('Lỗi', 'Không thể tải địa điểm yêu thích.');
-          return;
-        } finally {
-          setIsLoadingFavorites(false);
-        }
-      } else {
-        // Use already loaded favorites
-        setIsUsingFavorites(true);
-        setAutocompleteResults(favoritesPlaces);
-        setSearchQuery('');
-      }
-    }
   };
 
   // Handle select new POI from autocomplete
@@ -941,10 +1077,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       return;
     }
 
-    // For favorites, use googlePlaceId; for regular autocomplete, use placeId
-    const placeId = suggestion.isFavorite 
-      ? suggestion.googlePlaceId 
-      : (suggestion.placeId || suggestion.place_id);
+    // Lấy placeId từ suggestion (hỗ trợ cả favorites và autocomplete)
+    const placeId = suggestion.googlePlaceId || suggestion.placeId || suggestion.place_id;
     if (!placeId) {
       Alert.alert('Lỗi', 'Không tìm thấy Place ID.');
       return;
@@ -964,51 +1098,90 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       return;
     }
 
-    // Kiểm tra địa điểm mới có tồn tại trong cùng ngày chưa (chỉ kiểm tra trong ngày đang chọn)
+    setIsUpdatingRoute(true);
+    
+    // Tìm index của địa điểm đang được thay thế
     const routeData = (routeDetails as any).route_data_json || routeDetails;
-    let isDuplicate = false;
-    let duplicateName = '';
-
-    // Kiểm tra trong optimized_route (AI route) - chỉ trong ngày đang chọn (selectedDay)
+    let replacingIndex = -1;
+    
+    // Tìm trong optimized_route (AI route)
     if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
       const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
       if (currentDay?.activities && Array.isArray(currentDay.activities)) {
-        for (const act of currentDay.activities) {
+        replacingIndex = currentDay.activities.findIndex((act: any) => {
           const actNorm = (act.google_place_id || '').replace(/^places\//, '');
-          if (actNorm === normalizedNewPlaceId && actNorm !== oldNormalizedPlaceId) {
-            isDuplicate = true;
-            duplicateName = act.name || 'Địa điểm này';
-            break;
-          }
-        }
+          return actNorm === oldNormalizedPlaceId;
+        });
       }
     }
-
-    // Kiểm tra trong days (custom itinerary) - chỉ trong ngày đang chọn (selectedDay)
-    if (!isDuplicate && routeData.days && Array.isArray(routeData.days)) {
+    
+    // Tìm trong days (custom itinerary)
+    if (replacingIndex === -1 && routeData.days && Array.isArray(routeData.days)) {
       const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
       if (currentDay?.places && Array.isArray(currentDay.places)) {
-        for (const place of currentDay.places) {
+        replacingIndex = currentDay.places.findIndex((place: any) => {
           const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
-          if (placeNorm === normalizedNewPlaceId && placeNorm !== oldNormalizedPlaceId) {
-            isDuplicate = true;
-            duplicateName = place.name || 'Địa điểm này';
+          return placeNorm === oldNormalizedPlaceId;
+        });
+      }
+    }
+    
+    // Kiểm tra địa điểm mới có trùng place_id với địa điểm khác không (chỉ kiểm tra trong ngày đang chọn)
+    let existingPlaceName = '';
+    let existingPlaceId = '';
+    let existingPlaceIndex = -1;
+
+    // Kiểm tra trùng place_id trong optimized_route (AI route)
+    if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+      const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
+      if (currentDay?.activities && Array.isArray(currentDay.activities)) {
+        for (let i = 0; i < currentDay.activities.length; i++) {
+          const act = currentDay.activities[i];
+          const actNorm = (act.google_place_id || '').replace(/^places\//, '');
+          if (actNorm === normalizedNewPlaceId && actNorm !== oldNormalizedPlaceId) {
+            existingPlaceName = act.name || 'Địa điểm này';
+            existingPlaceId = actNorm;
+            existingPlaceIndex = i;
             break;
           }
         }
       }
     }
 
-    if (isDuplicate) {
-      Alert.alert(
-        'Địa điểm trùng lặp',
-        `"${duplicateName}" đã có trong ngày ${selectedDay}. Vui lòng chọn địa điểm khác.`,
-        [{ text: 'OK' }]
-      );
-      return;
+    // Kiểm tra trùng place_id trong days (custom itinerary)
+    if (!existingPlaceId && routeData.days && Array.isArray(routeData.days)) {
+      const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
+      if (currentDay?.places && Array.isArray(currentDay.places)) {
+        for (let i = 0; i < currentDay.places.length; i++) {
+          const place = currentDay.places[i];
+          const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+          if (placeNorm === normalizedNewPlaceId && placeNorm !== oldNormalizedPlaceId) {
+            existingPlaceName = place.name || 'Địa điểm này';
+            existingPlaceId = placeNorm;
+            existingPlaceIndex = i;
+            break;
+          }
+        }
+      }
     }
 
-    setIsUpdatingRoute(true);
+    // Nếu đã tìm thấy trùng place_id, kiểm tra xem có cạnh nhau không
+    if (existingPlaceId) {
+      const isAdjacent = Math.abs(existingPlaceIndex - replacingIndex) <= 1;
+      
+      if (isAdjacent) {
+        // Cạnh nhau → CHẶN, bắt người dùng chọn lại
+        Alert.alert(
+          'Địa điểm trùng lặp',
+          `"${existingPlaceName}" đã có ở vị trí kế bên trong ngày ${selectedDay}. Vui lòng chọn địa điểm khác.`,
+          [{ text: 'OK' }]
+        );
+        setIsUpdatingRoute(false);
+        return;
+      }
+      // Không cạnh nhau → Cho phép, chỉ thông báo
+      console.log(`ℹ️ Địa điểm "${existingPlaceName}" đã có trong ngày nhưng không cạnh nhau (index ${existingPlaceIndex} vs ${replacingIndex}), vẫn cho phép.`);
+    }
     try {
       const token = await AsyncStorage.getItem('userToken');
       if (!token) {
@@ -1054,14 +1227,16 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
       // Kiểm tra địa điểm quá gần với các địa điểm khác trong cùng ngày (khác place_id nhưng cùng vị trí)
       if (newLat !== undefined && newLng !== undefined) {
-        let isTooClose = false;
-        let tooCloseName = '';
+        let closePlaceName = '';
+        let closePlaceId = '';
+        let closePlaceIndex = -1;
 
         // Kiểm tra trong optimized_route (AI route) - chỉ trong ngày đang chọn
         if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
           const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
           if (currentDay?.activities && Array.isArray(currentDay.activities)) {
-            for (const act of currentDay.activities) {
+            for (let i = 0; i < currentDay.activities.length; i++) {
+              const act = currentDay.activities[i];
               // Bỏ qua địa điểm đang thay thế
               const actNorm = (act.google_place_id || '').replace(/^places\//, '');
               if (actNorm === oldNormalizedPlaceId) continue;
@@ -1069,8 +1244,9 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               if (act.location?.lat !== undefined && act.location?.lng !== undefined) {
                 const distance = calculateDistanceMeters(newLat, newLng, act.location.lat, act.location.lng);
                 if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
-                  isTooClose = true;
-                  tooCloseName = act.name || 'Địa điểm này';
+                  closePlaceName = act.name || 'Địa điểm này';
+                  closePlaceId = actNorm;
+                  closePlaceIndex = i;
                   break;
                 }
               }
@@ -1079,10 +1255,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         }
 
         // Kiểm tra trong days (custom itinerary) - chỉ trong ngày đang chọn
-        if (!isTooClose && routeData.days && Array.isArray(routeData.days)) {
+        if (!closePlaceId && routeData.days && Array.isArray(routeData.days)) {
           const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
           if (currentDay?.places && Array.isArray(currentDay.places)) {
-            for (const place of currentDay.places) {
+            for (let i = 0; i < currentDay.places.length; i++) {
+              const place = currentDay.places[i];
               // Bỏ qua địa điểm đang thay thế
               const placeNorm = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
               if (placeNorm === oldNormalizedPlaceId) continue;
@@ -1090,8 +1267,9 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               if (place.location?.lat !== undefined && place.location?.lng !== undefined) {
                 const distance = calculateDistanceMeters(newLat, newLng, place.location.lat, place.location.lng);
                 if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
-                  isTooClose = true;
-                  tooCloseName = place.name || 'Địa điểm này';
+                  closePlaceName = place.name || 'Địa điểm này';
+                  closePlaceId = placeNorm;
+                  closePlaceIndex = i;
                   break;
                 }
               }
@@ -1099,14 +1277,22 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
           }
         }
 
-        if (isTooClose) {
-          setIsUpdatingRoute(false);
-          Alert.alert(
-            'Địa điểm trùng lặp',
-            `"${newName}" quá gần với "${tooCloseName}" (dưới ${MIN_DISTANCE_THRESHOLD_METERS}m, có thể là cùng một địa điểm). Vui lòng chọn địa điểm khác.`,
-            [{ text: 'OK' }]
-          );
-          return;
+        // Nếu tìm thấy địa điểm gần, kiểm tra xem có cạnh nhau không
+        if (closePlaceId) {
+          const isAdjacent = Math.abs(closePlaceIndex - replacingIndex) <= 1;
+          
+          if (isAdjacent) {
+            // Cạnh nhau → CHẶN, bắt người dùng chọn lại
+            Alert.alert(
+              'Địa điểm quá gần',
+              `"${closePlaceName}" (cách địa điểm bạn chọn dưới 30m) đã có ở vị trí kế bên trong ngày ${selectedDay}. Vui lòng chọn địa điểm khác.`,
+              [{ text: 'OK' }]
+            );
+            setIsUpdatingRoute(false);
+            return;
+          }
+          // Không cạnh nhau → Cho phép, chỉ log
+          console.log(`ℹ️ Địa điểm "${closePlaceName}" cách dưới 30m nhưng không cạnh nhau (index ${closePlaceIndex} vs ${replacingIndex}), vẫn cho phép.`);
         }
       }
 
@@ -1120,16 +1306,20 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       if (updatedRoute.optimized_route && Array.isArray(updatedRoute.optimized_route)) {
         updatedRoute.optimized_route.forEach((day: DayPlan, dayIndex: number) => {
           if (day.activities && Array.isArray(day.activities)) {
-            day.activities.forEach((act: Activity) => {
-              const actNorm = (act.google_place_id || '').replace(/^places\//, '');
-              if (actNorm === oldNormalizedPlaceId) {
-                act.google_place_id = placeIdForSend;
-                act.name = newName;
-                if (coords && Array.isArray(coords) && coords.length === 2) {
-                  act.location = { lat: coords[1], lng: coords[0] };
+            // Chỉ thay thế POI tại đúng ngày và đúng index
+            if (day.day === selectedDay) {
+              day.activities.forEach((act: Activity, actIndex: number) => {
+                const actNorm = (act.google_place_id || '').replace(/^places\//, '');
+                // Kiểm tra đúng index để tránh thay thế nhiều POI cùng place_id
+                if (actNorm === oldNormalizedPlaceId && actIndex === replacingIndex) {
+                  act.google_place_id = placeIdForSend;
+                  act.name = newName;
+                  if (coords && Array.isArray(coords) && coords.length === 2) {
+                    act.location = { lat: coords[1], lng: coords[0] };
+                  }
                 }
-              }
-            });
+              });
+            }
             // Ensure travel_mode, day_start_time, day are present
             if (!day.travel_mode) day.travel_mode = 'driving';
             if (!day.day_start_time) day.day_start_time = '09:00:00';
@@ -1142,23 +1332,35 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       if (updatedRoute.days && Array.isArray(updatedRoute.days)) {
         updatedRoute.days.forEach((day: CustomDayWithRoutes) => {
           if (day.places && Array.isArray(day.places)) {
-            day.places.forEach((place: CustomPlaceWithRoute) => {
-              const currentPlaceId = (place.google_place_id || place.placeId || '').replace(/^places\//, '');
-              if (currentPlaceId === oldNormalizedPlaceId) {
-                place.google_place_id = placeIdForSend;
-                place.placeId = placeIdForSend;
-                place.name = newName;
-                if (coords && Array.isArray(coords) && coords.length === 2) {
-                  place.location = { lat: coords[1], lng: coords[0] };
+            // Chỉ thay thế POI tại đúng ngày và đúng index
+            const dayNum = day.day ?? day.dayNumber;
+            if (dayNum === selectedDay) {
+              day.places.forEach((place: CustomPlaceWithRoute, placeIndex: number) => {
+                const currentPlaceId = (place.google_place_id || place.placeId || '').replace(/^places\//, '');
+                // Kiểm tra đúng index để tránh thay thế nhiều POI cùng place_id
+                if (currentPlaceId === oldNormalizedPlaceId && placeIndex === replacingIndex) {
+                  place.google_place_id = placeIdForSend;
+                  place.placeId = placeIdForSend;
+                  place.name = newName;
+                  if (coords && Array.isArray(coords) && coords.length === 2) {
+                    place.location = { lat: coords[1], lng: coords[0] };
+                  }
                 }
-              }
-            });
+              });
+            }
           }
         });
       }
 
       // Call API to update route
       const routeId = (routeDetails as any).route_id;
+      
+      console.log('🔄 Updating route:', {
+        routeId,
+        apiUrl: `${API_BASE_URL}/api/v1/itineraries/custom-route`,
+        hasToken: !!token,
+      });
+      
       const response = await fetch(`${API_BASE_URL}/api/v1/itineraries/custom-route`, {
         method: 'POST',
         headers: {
@@ -1179,12 +1381,17 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         }),
       });
 
+      console.log('📡 Response status:', response.status);
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Không thể cập nhật lộ trình');
+        const errorData = await response.json().catch(() => ({ message: 'Network error' }));
+        console.error('❌ API Error:', errorData);
+        throw new Error(errorData.message || `HTTP ${response.status}: Không thể cập nhật lộ trình`);
       }
 
       const result = await response.json();
+      console.log('✅ Update successful:', result);
+      
       if (result.route) {
         // Giữ lại start_location nếu response không có
         const mergedRoute = {
@@ -1196,19 +1403,34 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             routeData.metadata?.start_location ||
             null,
         };
-
+        // Reset enrich state and trigger enrich again
+        enrichedActivitiesRef.current = new Set();
+        enrichingInProgressRef.current = new Set();
+        setRefreshEnrichKey(k => k + 1);
         setRouteDetails(mergedRoute);
         setIsReplacePOIModalVisible(false);
         setReplacingPOI(null);
         setSearchQuery('');
+        // Reset session token
+        setSessionToken('');
         // Reset về ngày 1 và fit lại map
         setSelectedDay(1);
         setTimeout(() => handleFitToMarkers(), 0);
         Alert.alert('Thành công', 'Địa điểm đã được cập nhật.');
       }
     } catch (error: any) {
-      console.error('Error updating route:', error);
-      Alert.alert('Lỗi', error.message || 'Không thể cập nhật địa điểm.');
+      console.error('❌ Error updating route:', error);
+      
+      // Hiển thị lỗi chi tiết hơn
+      let errorMessage = 'Không thể cập nhật địa điểm.';
+      
+      if (error.message.includes('Network request failed')) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      Alert.alert('Lỗi', errorMessage);
     } finally {
       setIsUpdatingRoute(false);
     }
@@ -1312,11 +1534,29 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const coord = toMapCoordinate(activity.location || activity.place?.location);
                 if (!coord) return null;
 
+                // Check for duplicate coordinates and apply offset
+                const duplicateIndex = activities.slice(0, index).findIndex((prevActivity, prevIndex) => {
+                  const prevCoord = toMapCoordinate(prevActivity.location || prevActivity.place?.location);
+                  return prevCoord && 
+                         Math.abs(prevCoord.latitude - coord.latitude) < 0.00001 && 
+                         Math.abs(prevCoord.longitude - coord.longitude) < 0.00001;
+                });
+                
+                // Apply small offset if duplicate found (shift by ~10 meters)
+                const offsetCoord = duplicateIndex >= 0 
+                  ? {
+                      latitude: coord.latitude + (index - duplicateIndex) * 0.0001,
+                      longitude: coord.longitude + (index - duplicateIndex) * 0.0001
+                    }
+                  : coord;
+
                 const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
+                const placeId = activity.place?.placeID || activity.placeID || `activity-${index}`;
+                
                 return (
                   <Marker 
-                    key={`marker-${selectedDay}-${index}`} 
-                    coordinate={coord}
+                    key={`marker-${selectedDay}-${placeId}-${index}`} 
+                    coordinate={offsetCoord}
                     anchor={{ x: 0.5, y: 1 }}
                   >
                     <View style={styles.markerContainer}>
@@ -1436,8 +1676,8 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               </View>
             ) : (
               activities.map((activity, index) => {
-                const activityName = activity.name || activity.place?.name || 'Hoạt động';
-                const arrival = activity.estimated_arrival || activity.time;
+                const activityName = activity.name || 'Hoạt động';
+                const arrival = activity.estimated_arrival;
                 const departure = activity.estimated_departure;
                 const duration = calculateDuration(arrival, departure);
                 // travel_duration_minutes của activity hiện tại là thời gian di chuyển từ điểm trước đó đến nó
@@ -1447,7 +1687,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const showTravelIndicator =
                   travelTime != null && (!startLocation ? true : index > 0);
                 const hasPhoto = activity.google_place_id; // Sẽ fetch ảnh khi click
-                const rating = activity.ecs_score;
+                const rating = (activity as any).ecs_score || (activity as any).rating;
                 const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
 
                 return (
@@ -1517,6 +1757,28 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                               : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
                             </Text>
                           </View>
+
+                          {/* Opening Hours Row */}
+                          {(() => {
+                            const openingHours = (activity as any).openingHours;
+                            if (openingHours?.weekdayDescriptions) {
+                              const today = new Date().getDay();
+                              const dayIndex = today === 0 ? 6 : today - 1;
+                              const todayHours = openingHours.weekdayDescriptions[dayIndex];
+                              if (todayHours) {
+                                const hoursText = todayHours.split(': ')[1] || todayHours;
+                                return (
+                                  <View style={styles.cardRow}>
+                                    <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
+                                    <Text style={styles.cardOpeningHours} numberOfLines={1}>
+                                      {hoursText}
+                                    </Text>
+                                  </View>
+                                );
+                              }
+                            }
+                            return null;
+                          })()}
 
                           {/* Loading indicator */}
                           {isEnriching && (
@@ -1638,30 +1900,11 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             )}
 
             <View style={styles.searchInputContainer}>
-              {/* Favorites Toggle Button */}
-              <TouchableOpacity
-                style={[
-                  styles.favoritesToggleButton,
-                  isUsingFavorites && styles.favoritesToggleButtonActive
-                ]}
-                onPress={toggleFavoritesMode}
-                disabled={isLoadingFavorites}
-                activeOpacity={0.7}
-              >
-                {isLoadingFavorites ? (
-                  <ActivityIndicator size="small" color={COLORS.primary} />
-                ) : (
-                  <FontAwesome 
-                    name={isUsingFavorites ? "heart" : "heart-o"} 
-                    size={18} 
-                    color={isUsingFavorites ? COLORS.textWhite : COLORS.primary} 
-                  />
-                )}
-              </TouchableOpacity>
-
+              <FontAwesome name="search" size={18} color={COLORS.textSecondary} />
+              
               <TextInput
                 style={styles.searchInput}
-                placeholder={isUsingFavorites ? "Tìm trong danh sách yêu thích..." : "Tìm kiếm địa điểm thay thế..."}
+                placeholder="Tìm kiếm địa điểm thay thế..."
                 placeholderTextColor={COLORS.textSecondary}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -1672,16 +1915,6 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               )}
             </View>
 
-            {/* Status hint */}
-            {isUsingFavorites && (
-              <View style={styles.searchHintContainer}>
-                <FontAwesome name="info-circle" size={14} color={COLORS.primary} />
-                <Text style={styles.searchHintText}>
-                  Đang tìm kiếm trong {favoritesPlaces.length} địa điểm yêu thích
-                </Text>
-              </View>
-            )}
-
             <FlatList
               data={autocompleteResults}
               keyExtractor={(item, index) => item.placeId || item.place_id || `suggestion-${index}`}
@@ -1691,25 +1924,25 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   onPress={() => handleSelectNewPOI(item)}
                   disabled={isUpdatingRoute}
                 >
-                  <View style={styles.autocompleteItemIcon}>
+                  <View style={[styles.autocompleteItemIcon, item.isFavorite && styles.autocompleteItemIconFavorite]}>
                     {item.isFavorite ? (
-                      <FontAwesome name="heart" size={16} color="#E53E3E" />
+                      <FontAwesome name="heart" size={20} color="#E91E63" />
                     ) : (
-                      <FontAwesome name="map-marker" size={16} color={COLORS.primary} />
+                      <FontAwesome name="map-marker" size={20} color={COLORS.primary} />
                     )}
                   </View>
                   <View style={styles.autocompleteItemContent}>
                     <Text style={styles.autocompleteItemName} numberOfLines={1}>
-                      {item.text?.text || item.text || item.description || 'Không có tên'}
+                      {item.name || item.text?.text || item.text || item.description || 'Không có tên'}
                     </Text>
-                    {item.structuredFormat?.secondaryText && (
+                    {(item.address || item.structuredFormat?.secondaryText || item.description) && (
                       <Text style={styles.autocompleteItemAddress} numberOfLines={1}>
-                        {item.structuredFormat.secondaryText}
+                        {item.address || item.structuredFormat?.secondaryText || item.description}
                       </Text>
                     )}
                     {item.rating && (
                       <View style={styles.ratingContainer}>
-                        <FontAwesome name="star" size={12} color="#F59E0B" />
+                        <FontAwesome name="star" size={14} color="#FFB800" />
                         <Text style={styles.ratingText}>{item.rating}</Text>
                       </View>
                     )}
@@ -1717,12 +1950,16 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 </TouchableOpacity>
               )}
               ListEmptyComponent={
-                !isSearching && (isUsingFavorites || searchQuery.trim()) ? (
+                !isSearching && searchQuery.trim() ? (
                   <View style={styles.noResultsContainer}>
                     <Text style={styles.noResultsText}>
-                      {isUsingFavorites 
-                        ? 'Không tìm thấy địa điểm yêu thích phù hợp'
-                        : 'Không tìm thấy kết quả'}
+                      Không tìm thấy kết quả
+                    </Text>
+                  </View>
+                ) : !isSearching && favoritesPlaces.length === 0 ? (
+                  <View style={styles.noResultsContainer}>
+                    <Text style={styles.noResultsText}>
+                      Chưa có địa điểm yêu thích
                     </Text>
                   </View>
                 ) : null
@@ -2106,6 +2343,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: COLORS.textDark,
   },
+  cardOpeningHours: {
+    fontSize: 11,
+    fontWeight: '400',
+    color: COLORS.textSecondary,
+  },
   cardRating: {
     fontSize: 12,
     fontWeight: '600',
@@ -2259,6 +2501,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: SPACING.md,
+  },
+  autocompleteItemIconFavorite: {
+    backgroundColor: '#FCE4EC',
   },
   autocompleteItemContent: {
     flex: 1,

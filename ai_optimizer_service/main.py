@@ -16,6 +16,9 @@ from sklearn.cluster import KMeans
 load_dotenv()
 app = FastAPI(title="AI Optimizer Service")
 
+# Debug logging config (set to False to reduce logs)
+DEBUG_LOGGING = False
+
 GOOGLE_DISTANCE_MATRIX_API_KEY = os.getenv("GOOGLE_DISTANCE_MATRIX_API_KEY", "")
 GOOGLE_GEOCODING_API_KEY = os.getenv("GOOGLE_GEOCODING_API_KEY", "") or os.getenv("GOOGLE_DISTANCE_MATRIX_API_KEY", "")
 
@@ -242,6 +245,11 @@ def fetch_distance_matrix_minutes(origin: Dict[str, float], destinations: List[D
 
 
 def parse_iso_datetime(dt_str: Optional[str]) -> Optional[datetime]:
+    """
+    Parse ISO datetime string và convert sang Vietnam timezone (UTC+7).
+    Frontend gửi datetime theo local time nhưng .toISOString() convert sang UTC.
+    Backend cần convert lại sang Vietnam time để check opening hours chính xác.
+    """
     if not dt_str:
         return None
     dt_candidate = dt_str.strip()
@@ -250,10 +258,19 @@ def parse_iso_datetime(dt_str: Optional[str]) -> Optional[datetime]:
     if dt_candidate.endswith('Z'):
         dt_candidate = dt_candidate[:-1] + '+00:00'
     try:
-        return datetime.fromisoformat(dt_candidate)
+        dt_utc = datetime.fromisoformat(dt_candidate)
+        # Convert UTC sang Vietnam timezone (UTC+7)
+        vietnam_offset = timedelta(hours=7)
+        dt_vietnam = dt_utc + vietnam_offset
+        print(f"  🕐 Parse datetime: UTC {dt_utc.isoformat()} → Vietnam {dt_vietnam.isoformat()}")
+        return dt_vietnam
     except ValueError:
         try:
-            return datetime.fromisoformat(dt_candidate.replace(' ', 'T'))
+            dt_utc = datetime.fromisoformat(dt_candidate.replace(' ', 'T'))
+            vietnam_offset = timedelta(hours=7)
+            dt_vietnam = dt_utc + vietnam_offset
+            print(f"  🕐 Parse datetime: UTC {dt_utc.isoformat()} → Vietnam {dt_vietnam.isoformat()}")
+            return dt_vietnam
         except ValueError:
             print(f"⚠️  Không thể parse datetime từ chuỗi: {dt_str}")
             return None
@@ -290,6 +307,7 @@ def parse_time_string(time_str: str) -> Optional[int]:
 
 
 def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime) -> bool:
+    poi_name = poi.get('name', 'Unknown POI')
     opening_data = poi.get('opening_hours')
     if not opening_data or not isinstance(opening_data, dict):
         opening_data = poi.get('regularOpeningHours') or poi.get('openingHours')
@@ -300,7 +318,86 @@ def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime) -> bool:
     arrival_minutes = minutes_since_midnight(arrival_dt)
     arrival_day = arrival_dt.weekday()
 
-    periods = opening_data.get('periods') or opening_data.get('regularPeriods')
+    # ✅ BƯỚC 1: Ưu tiên kiểm tra weekdayDescriptions trước
+    weekday_descriptions = opening_data.get('weekdayDescriptions') or opening_data.get('weekdayDescriptionsText')
+    if isinstance(weekday_descriptions, list) and weekday_descriptions:
+        # Map tiếng Anh và tiếng Việt
+        arrival_day_name_en = arrival_dt.strftime('%A').lower()  # monday, tuesday...
+        arrival_day_name_vi_map = {
+            'monday': 'thứ hai', 'tuesday': 'thứ ba', 'wednesday': 'thứ tư',
+            'thursday': 'thứ năm', 'friday': 'thứ sáu', 'saturday': 'thứ bảy',
+            'sunday': 'chủ nhật'
+        }
+        arrival_day_name_vi = arrival_day_name_vi_map.get(arrival_day_name_en, arrival_day_name_en)
+        
+        for desc in weekday_descriptions:
+            if not isinstance(desc, str) or ':' not in desc:
+                continue
+            
+            # Split "Monday: 8:00 AM – 5:00 PM" thành ["Monday", "8:00 AM – 5:00 PM"]
+            parts = desc.split(':', 1)
+            if len(parts) != 2:
+                continue
+            
+            day_part = parts[0].strip().lower()
+            hours_part = parts[1].strip()
+            
+            # Kiểm tra khớp ngày (hỗ trợ cả EN và VI)
+            if day_part not in [arrival_day_name_en, arrival_day_name_vi]:
+                continue
+            
+            # Format 1: "Closed" → đóng cửa
+            if not hours_part or hours_part.lower() == 'closed':
+                return False
+            
+            # Format 2: "Open 24 hours" → mở cửa cả ngày
+            if 'open 24 hours' in hours_part.lower() or '24 hours' in hours_part.lower():
+                return True
+            
+            # Format 3: "8:00 AM – 5:00 PM" hoặc nhiều khoảng thời gian "8:00 AM – 12:00 PM, 2:00 PM – 5:00 PM"
+            # Thay thế các dấu gạch ngang khác nhau
+            normalized_hours = hours_part.replace('–', '-').replace('—', '-').replace('−', '-')
+            
+            # Split theo dấu phẩy để xử lý nhiều khoảng thời gian
+            intervals = [segment.strip() for segment in normalized_hours.split(',') if segment.strip()]
+            
+            for interval in intervals:
+                if '-' not in interval:
+                    continue
+                
+                # Split "8:00 AM - 5:00 PM" thành ["8:00 AM", "5:00 PM"]
+                time_parts = interval.split('-', 1)
+                if len(time_parts) != 2:
+                    continue
+                
+                start_str = time_parts[0].strip()
+                end_str = time_parts[1].strip()
+                
+                start_minutes = parse_time_string(start_str)
+                end_minutes = parse_time_string(end_str)
+                
+                if start_minutes is None or end_minutes is None:
+                    print(f"    ⚠️  Không parse được: '{interval}'")
+                    continue
+                
+                # Kiểm tra xem arrival_minutes có nằm trong khoảng [start, end) không
+                if end_minutes <= start_minutes:
+                    # Qua nửa đêm (ví dụ: 10:00 PM - 2:00 AM)
+                    if arrival_minutes >= start_minutes or arrival_minutes < end_minutes:
+                        print(f"    ✅ Mở cửa (qua đêm): {start_str} - {end_str}")
+                        return True
+                else:
+                    # Trong ngày (ví dụ: 8:00 AM - 5:00 PM)
+                    if start_minutes <= arrival_minutes < end_minutes:
+                        print(f"    ✅ Mở cửa: {start_str} - {end_str}")
+                        return True
+            
+            # Đã tìm thấy mô tả ngày nhưng không match giờ → đóng cửa
+            return False
+        
+        # Không tìm thấy mô tả cho ngày này → không xác định → cho phép
+    # ✅ BƯỚC 2: Fallback sang periods nếu không có weekdayDescriptions
+    periods = opening_data.get('periods')or opening_data.get('regularPeriods')
     if isinstance(periods, list) and periods:
         for period in periods:
             if not isinstance(period, dict):
@@ -334,48 +431,24 @@ def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime) -> bool:
 
             if close_day == open_day:
                 if arrival_day == open_day and open_minutes <= arrival_minutes < close_minutes:
+                    print(f"    ✅ Mở cửa (periods): {open_hour}:{open_minute:02d} - {close_hour}:{close_minute:02d}")
                     return True
             else:
                 # Thời gian vượt qua nửa đêm
                 if arrival_day == open_day and arrival_minutes >= open_minutes:
+                    print(f"    ✅ Mở cửa (qua đêm - open day): từ {open_hour}:{open_minute:02d}")
                     return True
                 if arrival_day == close_day and arrival_minutes < close_minutes:
+                    print(f"    ✅ Mở cửa (qua đêm - close day): đến {close_hour}:{close_minute:02d}")
                     return True
                 # Trường hợp mở nhiều ngày liên tiếp (ví dụ open thứ 6, đóng thứ 7)
                 span = (close_day - open_day) % 7
                 diff = (arrival_day - open_day) % 7
                 if span > 1 and diff < span:
+                    print(f"    ✅ Mở cửa (nhiều ngày liên tiếp)")
                     return True
-
-    weekday_descriptions = opening_data.get('weekdayDescriptions') or opening_data.get('weekdayDescriptionsText')
-    if isinstance(weekday_descriptions, list) and weekday_descriptions:
-        arrival_day_name = arrival_dt.strftime('%A').lower()
-        for desc in weekday_descriptions:
-            if not isinstance(desc, str) or ':' not in desc:
-                continue
-            day_part, hours_part = desc.split(':', 1)
-            if day_part.strip().lower() != arrival_day_name:
-                continue
-            hours_text = hours_part.strip()
-            if not hours_text or hours_text.lower() == 'closed':
-                continue
-            intervals = [segment.strip() for segment in hours_text.replace('–', '-').split(',') if segment.strip()]
-            for interval in intervals:
-                if '-' not in interval:
-                    continue
-                start_str, end_str = [p.strip() for p in interval.split('-', 1)]
-                start_minutes = parse_time_string(start_str)
-                end_minutes = parse_time_string(end_str)
-                if start_minutes is None or end_minutes is None:
-                    continue
-                if end_minutes <= start_minutes:
-                    # Qua nửa đêm
-                    if arrival_minutes >= start_minutes or arrival_minutes < end_minutes:
-                        return True
-                else:
-                    if start_minutes <= arrival_minutes < end_minutes:
-                        return True
-    # Không xác định được giờ mở cửa → giả định có thể tới
+    
+    # ❗ NẾU có opening_hours nhưng không có periods/weekdayDescriptions → không xác định → cho phép
     return True
 
 
@@ -515,31 +588,31 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         return 0.0
 
     # BƯỚC 1: Lọc POIs đang mở cửa tại thời điểm khởi hành (TỐI ƯU: lọc TRƯỚC khi tính ECS để giảm số lượng POI cần tính)
-    print(f"Bước 1: Lọc POI đang mở cửa tại thời điểm khởi hành ({start_datetime.isoformat()})...")
     open_pois = []
     for poi in request.poi_list:
         # Sử dụng hàm is_poi_open_at_datetime để kiểm tra giờ mở cửa tại thời điểm khởi hành
         if is_poi_open_at_datetime(poi, start_datetime):
             open_pois.append(poi)
-    print(f"  → Còn lại {len(open_pois)} POI sau khi lọc mở cửa (từ {len(request.poi_list)} POI)")
+    filtered_count = len(request.poi_list) - len(open_pois)
+    print(f"Bước 1: Lọc giờ mở cửa → Giữ {len(open_pois)}, loại {filtered_count} POI")
 
     # BƯỚC 2: Tính ECS cho các POI đã lọc (sau khi lọc mở cửa - ít POI hơn)
-    print(f"Bước 2: Tính ECS cho {len(open_pois)} POI với mood {request.user_mood}...")
+    print(f"Bước 2: Tính ECS (mood: {request.user_mood})...")
     scored_pois: List[Dict[str, Any]] = []
     for poi in open_pois:
         ecs_score = calculate_ecs_score(poi, request.user_mood)
         poi_with_score = poi.copy()
         poi_with_score['ecs_score'] = ecs_score
         scored_pois.append(poi_with_score)
-    print(f"  → Đã tính ECS cho {len(scored_pois)} POI")
+    print(f"  → {len(scored_pois)} POI đã tính ECS")
 
     # BƯỚC 3: Lọc POI có ecs_score >= threshold (đổi từ > thành >= để bao gồm threshold=0.0)
-    print(f"Bước 3: Lọc POI có ecs_score >= {request.ecs_score_threshold}...")
+    print(f"Bước 3: Lọc ECS >= {request.ecs_score_threshold}...")
     high_score_pois: List[Dict[str, Any]] = []
     for poi in scored_pois:
         if poi.get('ecs_score', 0) >= request.ecs_score_threshold:
             high_score_pois.append(poi)
-    print(f"  → Còn lại {len(high_score_pois)} POI sau khi lọc theo ECS threshold")
+    print(f"  → {len(high_score_pois)} POI đạt threshold")
 
     # Nếu thiếu eta_from_current, tính bằng Distance Matrix (sau khi lọc ECS)
     # Dùng travel mode mặc định driving (có thể mở rộng lấy từ request nếu cần)
@@ -550,10 +623,10 @@ async def optimize_for_chatbot(request: OptimizerRequest):
 
     # BƯỚC 4: Sắp xếp theo điểm ECS (giảm dần) để ưu tiên POI phù hợp nhất
     candidates = sorted(high_score_pois, key=lambda p: p.get('ecs_score', 0), reverse=True)
-    print(f"Bước 4: Sắp xếp {len(candidates)} POI theo ECS score...")
+    print(f"Bước 4: Sắp xếp theo ECS...")
 
     # BƯỚC 5: Phân bổ POI đều cho các ngày (đơn giản và hiệu quả)
-    print(f"Bước 5: Phân bổ {len(candidates)} POI đều cho {request.duration_days} ngày...")
+    print(f"Bước 5: Phân bổ {len(candidates)} POI cho {request.duration_days} ngày...")
     
     # Lọc ra POI không phải nhà hàng
     non_restaurant_pois = []
@@ -564,16 +637,10 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         else:
             non_restaurant_pois.append(p)
     
-    print(f"  → {len(non_restaurant_pois)} POI sau khi loại nhà hàng (loại {len(restaurants_removed)} POI)")
-    if restaurants_removed:
-        print(f"  → Nhà hàng đã loại: {', '.join(restaurants_removed[:3])}...")
+    print(f"  → {len(non_restaurant_pois)} POI (loại {len(restaurants_removed)} nhà hàng)")
     
     if not non_restaurant_pois:
-        print(f"❌ Không có POI nào sau khi loại nhà hàng. Tất cả {len(candidates)} POI đều là nhà hàng.")
-        # Debug: in ra types của một vài POI
-        for poi in candidates[:3]:
-            types = get_poi_types(poi)
-            print(f"  → POI '{poi.get('name')}' có types: {types}")
+        print(f"❌ Không có POI nào sau khi loại nhà hàng")
         return {"optimized_route": []}
 
     # Kiểm tra số lượng POI tối thiểu
@@ -581,9 +648,7 @@ async def optimize_for_chatbot(request: OptimizerRequest):
     required_pois = MIN_POIS_PER_DAY * request.duration_days
     
     if len(non_restaurant_pois) < required_pois:
-        print(f"⚠️  Cảnh báo: Chỉ có {len(non_restaurant_pois)} POI cho {request.duration_days} ngày")
-        print(f"  → Cần tối thiểu {required_pois} POI ({MIN_POIS_PER_DAY} POI/ngày)")
-        print(f"  → Backend cần lọc với bán kính lớn hơn hoặc giảm ECS threshold")
+        print(f"⚠️  Chỉ có {len(non_restaurant_pois)}/{required_pois} POI (cần {MIN_POIS_PER_DAY}/ngày)")
     
     # Phân bổ đều POI cho các ngày (round-robin)
     daily_poi_groups: List[List[Dict[str, Any]]] = [[] for _ in range(request.duration_days)]
@@ -594,8 +659,7 @@ async def optimize_for_chatbot(request: OptimizerRequest):
     
     # Kiểm tra và cảnh báo cho từng ngày
     for day_idx, day_pois in enumerate(daily_poi_groups, start=1):
-        status = "✅" if len(day_pois) >= MIN_POIS_PER_DAY else "⚠️"
-        print(f"  {status} Ngày {day_idx}: {len(day_pois)} POI được phân bổ")
+        pass
 
     # Hàm helper để tính ETA giữa 2 POI
     def eta_between(a_id: str, b_id: str, fallback_list: Optional[List[Dict[str, Any]]] = None) -> float:
@@ -665,13 +729,11 @@ async def optimize_for_chatbot(request: OptimizerRequest):
                 travel_minutes = eta_between(get_poi_id(previous_poi), get_poi_id(poi), candidates)
 
             if travel_minutes >= 9999.0:
-                print(f"  ⚠️  Không xác định được ETA tới POI {get_poi_id(poi)}. Bỏ qua POI này.")
                 continue
 
             arrival_time = current_time + timedelta(minutes=travel_minutes)
 
             if not is_poi_open_at_datetime(poi, arrival_time):
-                print(f"  ⚠️  POI {get_poi_id(poi)} đóng cửa tại {arrival_time.isoformat()}. Bỏ qua.")
                 continue
 
             poi_with_timing = deepcopy(poi)
@@ -691,7 +753,7 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         return schedule
 
     # BƯỚC 7: Tối ưu thứ tự thăm cho từng ngày
-    print(f"Bước 7: Tối ưu thứ tự thăm cho từng ngày bằng Nearest Neighbor heuristic...")
+    print(f"Bước 6: Tối ưu thứ tự POI...")
     daily_plan: List[Dict[str, Any]] = []
     
     for day_idx, day_pois in enumerate(daily_poi_groups, start=1):
@@ -712,8 +774,7 @@ async def optimize_for_chatbot(request: OptimizerRequest):
             )
 
     total_pois = sum(len(day.get('activities', [])) for day in daily_plan)
-    print(f"✅ Hoàn tất! Tạo lộ trình {len(daily_plan)} ngày với tổng {total_pois} POI")
-    print(f"  → Backend sẽ enrich với Directions API sau khi nhận kết quả này")
+    print(f"✅ Tạo lộ trình: {len(daily_plan)} ngày, {total_pois} POI")
     
     return {"optimized_route": daily_plan}
 
@@ -733,8 +794,7 @@ async def optimize_with_kmeans(request: OptimizerRequest):
     Chatbot dùng /optimize (fast, round-robin)
     Frontend route preview dùng /optimize-route (K-Means, quality)
     """
-    print(f"🔬 K-Means Optimization: Nhận yêu cầu cho {request.duration_days} ngày")
-    print(f"  → Nhận được {len(request.poi_list)} POI")
+    print(f"🔬 K-Means: {request.duration_days} ngày, {len(request.poi_list)} POI")
     
     start_datetime = parse_iso_datetime(request.start_datetime)
     if not start_datetime:
@@ -800,9 +860,9 @@ async def optimize_with_kmeans(request: OptimizerRequest):
         return 0.0
 
     # BƯỚC 1: Lọc mở cửa
-    print(f"Bước 1: Lọc POI mở cửa...")
     open_pois = [poi for poi in request.poi_list if is_poi_open_at_datetime(poi, start_datetime)]
-    print(f"  → {len(open_pois)} POI mở cửa")
+    filtered_count = len(request.poi_list) - len(open_pois)
+    print(f"Bước 1: Lọc giờ mở cửa → Giữ {len(open_pois)}, loại {filtered_count} POI")
 
     # BƯỚC 2: Tính ECS
     print(f"Bước 2: Tính ECS...")
@@ -813,9 +873,8 @@ async def optimize_with_kmeans(request: OptimizerRequest):
         scored_pois.append(poi_copy)
 
     # BƯỚC 3: Lọc theo threshold
-    print(f"Bước 3: Lọc ECS >= {request.ecs_score_threshold}...")
     high_score_pois = [p for p in scored_pois if p.get('ecs_score', 0) >= request.ecs_score_threshold]
-    print(f"  → {len(high_score_pois)} POI đạt threshold")
+    print(f"→ {len(high_score_pois)} POI đạt threshold")
 
     eta_from_current = request.eta_from_current or fetch_distance_matrix_minutes(
         request.current_location, high_score_pois
@@ -845,7 +904,7 @@ async def optimize_with_kmeans(request: OptimizerRequest):
         return {"optimized_route": []}
 
     num_clusters = min(max(request.duration_days, 1), len(poi_coordinates))
-    print(f"  → Chạy K-Means với {num_clusters} clusters...")
+
     kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
     cluster_labels = kmeans.fit_predict(np.array(poi_coordinates))
 
@@ -880,10 +939,10 @@ async def optimize_with_kmeans(request: OptimizerRequest):
             )
             cluster_mood_rank[cluster_id][str(mood)] = ranked
             cluster_mood_ptr[cluster_id][str(mood)] = 0
-        print(f"  → Cluster {cluster_id}: {len(sorted_list)} POI")
+        pass
 
     # BƯỚC 5: Phân bổ POI theo ngày từ clusters
-    print(f"Bước 5: Phân bổ POI theo ngày từ K-Means clusters...")
+
     pois_per_day = request.poi_per_day or 3
     base_pool = [p for p in pois_within_radius if not is_restaurant_poi(p)]
 
@@ -972,7 +1031,7 @@ async def optimize_with_kmeans(request: OptimizerRequest):
                 used_poi_ids.add(pid)
 
         daily_poi_groups.append(day_pois)
-        print(f"  → Ngày {day + 1}: {len(day_pois)} POI")
+        pass
 
     # Helper functions
     def eta_between(a_id: str, b_id: str) -> float:
@@ -1002,7 +1061,7 @@ async def optimize_with_kmeans(request: OptimizerRequest):
         return haversine_km(cur_lat, cur_lng, plat, plng) * 2.0
 
     # BƯỚC 6: Tối ưu thứ tự trong ngày
-    print(f"Bước 6: Tối ưu thứ tự POI cho từng ngày...")
+
     
     def optimize_day(day_pois, day_num, day_start):
         if not day_pois:
@@ -1048,10 +1107,10 @@ async def optimize_with_kmeans(request: OptimizerRequest):
                 "activities": optimized,
                 "day_start_time": day_start.isoformat()
             })
-            print(f"  → Ngày {day_idx}: {len(optimized)} POI (optimized)")
+            pass
 
     total = sum(len(d.get('activities', [])) for d in daily_plan)
-    print(f"✅ K-Means done! {len(daily_plan)} ngày, {total} POI total")
+    print(f"✅ K-Means: {len(daily_plan)} ngày, {total} POI")
     return {"optimized_route": daily_plan}
 
 
