@@ -253,18 +253,19 @@ const SmartAgentFormScreen: React.FC = () => {
         poi_per_day: parseInt(poiPerDay) || 3,
       };
       if (startDate && startTime) {
-        // Combine date and time into single ISO string (local timezone)
-        // Fix: Create date in LOCAL timezone, not UTC
+        // Combine date and time - format as local time YYYY-MM-DDTHH:mm:ss
         const year = startDate.getFullYear();
-        const month = startDate.getMonth();
-        const day = startDate.getDate();
-        const hours = startTime.getHours();
-        const minutes = startTime.getMinutes();
+        const month = String(startDate.getMonth() + 1).padStart(2, '0');
+        const day = String(startDate.getDate()).padStart(2, '0');
+        const hours = String(startTime.getHours()).padStart(2, '0');
+        const minutes = String(startTime.getMinutes()).padStart(2, '0');
         
-        const combinedDateTime = new Date(year, month, day, hours, minutes, 0, 0);
-        requestBody.start_datetime = combinedDateTime.toISOString();
+        requestBody.start_datetime = `${year}-${month}-${day}T${hours}:${minutes}:00`;
       } else if (startDate) {
-        requestBody.start_datetime = startDate.toISOString();
+        const year = startDate.getFullYear();
+        const month = String(startDate.getMonth() + 1).padStart(2, '0');
+        const day = String(startDate.getDate()).padStart(2, '0');
+        requestBody.start_datetime = `${year}-${month}-${day}T08:00:00`;
       }
       requestBody.ecs_score_threshold = 0.1;
       console.log('📤 Generating route with:', requestBody);

@@ -1338,6 +1338,12 @@ export class ItineraryService {
       },
       opening_hours: openingHours,
       visit_duration_minutes: 90, // Mặc định
+      // POI Classification Fields
+      function: poi.function,
+      functionPriority: poi.functionPriority,
+      includeInDailyRoute: poi.includeInDailyRoute,
+      type: poi.type,
+      types: poi.types,
     };
   }
 
