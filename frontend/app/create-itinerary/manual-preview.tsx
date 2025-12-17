@@ -19,9 +19,10 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '@/constants/colors';
 import { SPACING, BORDER_RADIUS } from '@/constants/spacing';
-import { calculateRoutesAPI, autocompletePlacesAPI, updateCustomItineraryStatusAPI } from '../../services/api';
+import { calculateRoutesAPI, autocompletePlacesAPI, updateCustomItineraryStatusAPI, getLikedPlacesAPI, getPlaceByIdAPI } from '../../services/api';
 import WeatherWarningModal, { WeatherSeverity } from '../../components/WeatherWarningModal';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -83,6 +84,9 @@ export default function ManualPreviewScreen() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [sessionToken, setSessionToken] = useState<string>('');
+  const [favoritesPlaces, setFavoritesPlaces] = useState<any[]>([]);
+  const [isLoadingFavorites, setIsLoadingFavorites] = useState(false);
+  const [isUsingFavorites, setIsUsingFavorites] = useState(false);
   
   // Multi-select delete mode
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
@@ -361,7 +365,7 @@ export default function ManualPreviewScreen() {
       const token = await AsyncStorage.getItem('userToken');
       
       // Use backend autocomplete API with token
-      const data = await autocompletePlacesAPI(query, sessionToken, token || undefined);
+      const data = await autocompletePlacesAPI(query, sessionToken, undefined, token || undefined);
 
       // Backend returns array directly, not wrapped in predictions
       if (data && Array.isArray(data)) {
@@ -386,7 +390,25 @@ export default function ManualPreviewScreen() {
       clearTimeout(searchTimerRef.current);
     }
 
-    // Reset session token if input is cleared
+    // If favorites mode is on
+    if (isUsingFavorites) {
+      if (!text.trim()) {
+        // Show all favorites when input is empty
+        setSearchResults(favoritesPlaces);
+        return;
+      } else {
+        // Filter favorites based on search text
+        const filteredFavorites = favoritesPlaces.filter(fav =>
+          fav.description.toLowerCase().includes(text.toLowerCase()) ||
+          fav.structured_formatting?.main_text?.toLowerCase().includes(text.toLowerCase()) ||
+          fav.structured_formatting?.secondary_text?.toLowerCase().includes(text.toLowerCase())
+        );
+        setSearchResults(filteredFavorites);
+        return;
+      }
+    }
+
+    // Normal autocomplete mode
     if (!text.trim()) {
       setSearchResults([]);
       setSessionToken(generateSessionToken());
@@ -399,6 +421,89 @@ export default function ManualPreviewScreen() {
     }, AUTOCOMPLETE_DELAY);
   };
 
+  // Toggle favorites mode for autocomplete
+  const toggleFavoritesMode = async () => {
+    if (isUsingFavorites) {
+      // Turn off favorites mode
+      setIsUsingFavorites(false);
+      setSearchResults([]);
+      setSearchQuery('');
+    } else {
+      // Turn on favorites mode
+      if (favoritesPlaces.length === 0) {
+        // Load favorites if not loaded yet
+        try {
+          setIsLoadingFavorites(true);
+          const token = await AsyncStorage.getItem('userToken');
+          if (!token) {
+            Alert.alert('Lỗi', 'Bạn cần đăng nhập để tải địa điểm yêu thích.');
+            return;
+          }
+
+          const favorites = await getLikedPlacesAPI(token);
+          if (favorites && Array.isArray(favorites)) {
+            // Transform favorites to match autocomplete format
+            // Enrich with full place details
+            const enrichedFavorites = await Promise.all(
+              favorites.map(async (fav, index) => {
+                try {
+                  const placeDetails = await getPlaceByIdAPI(fav.place_id);
+                  return {
+                    description: placeDetails.name + (placeDetails.address ? `, ${placeDetails.address}` : ''),
+                    place_id: `fav-${fav.place_id}-${index}`,
+                    structured_formatting: {
+                      main_text: placeDetails.name,
+                      secondary_text: placeDetails.address || '',
+                    },
+                    // Add marker to identify as favorite
+                    isFavorite: true,
+                    rating: placeDetails.rating,
+                    // Store location for map display
+                    location: placeDetails.location,
+                    // Store original data for later use
+                    originalData: fav,
+                  };
+                } catch (error) {
+                  console.warn('Failed to enrich favorite place:', fav.place_id, error);
+                  // Fallback to basic info
+                  return {
+                    description: `Địa điểm ${fav.place_id}`,
+                    place_id: `fav-${fav.place_id}-${index}`,
+                    structured_formatting: {
+                      main_text: `Địa điểm ${fav.place_id}`,
+                      secondary_text: '',
+                    },
+                    isFavorite: true,
+                    rating: null,
+                    originalData: fav,
+                  };
+                }
+              })
+            );
+            
+            setFavoritesPlaces(enrichedFavorites);
+            setSearchResults(enrichedFavorites);
+            setIsUsingFavorites(true);
+            // Reset search query to trigger display of all favorites
+            setSearchQuery('');
+          }
+        } catch (error) {
+          console.error('Load favorites error:', error);
+          Alert.alert('Lỗi', 'Không thể tải địa điểm yêu thích.');
+          return;
+        } finally {
+          setIsLoadingFavorites(false);
+        }
+      } else {
+        // Use already loaded favorites
+        setIsUsingFavorites(true);
+        setSearchResults(favoritesPlaces);
+        // Reset search query to trigger display of all favorites
+        setSearchQuery('');
+      }
+    }
+  };
+
   // Get place details and add to itinerary
   const handleSelectPlace = async (prediction: any) => {
     const apiKey = process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
@@ -406,36 +511,65 @@ export default function ManualPreviewScreen() {
     try {
       setIsLoading(true);
       
-      // Extract name and address from prediction
-      const mainText = prediction.structured_formatting?.main_text || prediction.description;
-      const fullAddress = prediction.description;
-      
+      let mainText: string;
+      let fullAddress: string;
+      let placeId: string;
       let latitude = 0;
       let longitude = 0;
       
-      // Try to get coordinates for map display (optional, backend will geocode accurately when saving)
-      if (apiKey && prediction.place_id) {
-        try {
-          const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${prediction.place_id}&key=${apiKey}`;
-          const response = await fetch(geocodeUrl);
-          const data = await response.json();
-          
-          if (data.status === 'OK' && data.results?.[0]?.geometry?.location) {
-            latitude = data.results[0].geometry.location.lat;
-            longitude = data.results[0].geometry.location.lng;
+      if (prediction.isFavorite) {
+        // Handle favorite place - data already enriched
+        mainText = prediction.structured_formatting?.main_text || prediction.description.split(',')[0].trim();
+        fullAddress = prediction.structured_formatting?.secondary_text || prediction.description;
+        placeId = prediction.place_id;
+        
+        // Use coordinates from enriched data if available, otherwise geocode
+        if (prediction.location?.coordinates) {
+          longitude = prediction.location.coordinates[0];
+          latitude = prediction.location.coordinates[1];
+        } else if (apiKey && fullAddress) {
+          try {
+            const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(fullAddress)}&key=${apiKey}`;
+            const response = await fetch(geocodeUrl);
+            const data = await response.json();
+            
+            if (data.status === 'OK' && data.results?.[0]?.geometry?.location) {
+              latitude = data.results[0].geometry.location.lat;
+              longitude = data.results[0].geometry.location.lng;
+            }
+          } catch (geoError) {
+            console.warn('Geocoding for favorite place failed:', geoError);
           }
-        } catch (geoError) {
-          console.warn('Geocoding for display failed, will use 0,0 for map:', geoError);
+        }
+      } else {
+        // Handle autocomplete prediction
+        mainText = prediction.structured_formatting?.main_text || prediction.description;
+        fullAddress = prediction.description;
+        placeId = prediction.place_id;
+        
+        // Try to get coordinates for map display
+        if (apiKey && prediction.place_id) {
+          try {
+            const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${prediction.place_id}&key=${apiKey}`;
+            const response = await fetch(geocodeUrl);
+            const data = await response.json();
+            
+            if (data.status === 'OK' && data.results?.[0]?.geometry?.location) {
+              latitude = data.results[0].geometry.location.lat;
+              longitude = data.results[0].geometry.location.lng;
+            }
+          } catch (geoError) {
+            console.warn('Geocoding for display failed, will use 0,0 for map:', geoError);
+          }
         }
       }
       
       // Add place to itinerary
-      // Backend will geocode accurately when saving, these coords are just for map display
       const newPlace: PlaceItem = {
-        id: `${prediction.place_id}-${Date.now()}`,
+        id: `${placeId}-${Date.now()}`,
         name: mainText,
         address: fullAddress,
-        placeId: prediction.place_id,
+        placeId: placeId,
         location: {
           lat: latitude,
           lng: longitude,
@@ -1114,6 +1248,7 @@ export default function ManualPreviewScreen() {
                   setIsAddPlaceModalVisible(false);
                   setSearchQuery('');
                   setSearchResults([]);
+                  setIsUsingFavorites(false);
                 }}
               >
                 <FontAwesome name="times" size={24} color={COLORS.textSecondary} />
@@ -1122,6 +1257,27 @@ export default function ManualPreviewScreen() {
 
             {/* Search Input */}
             <View style={styles.searchInputContainer}>
+              {/* Favorites Toggle Button */}
+              <TouchableOpacity
+                style={[
+                  styles.favoritesToggleButton,
+                  isUsingFavorites && styles.favoritesToggleButtonActive
+                ]}
+                onPress={toggleFavoritesMode}
+                disabled={isLoadingFavorites}
+                activeOpacity={0.7}
+              >
+                {isLoadingFavorites ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                  <FontAwesome 
+                    name={isUsingFavorites ? "heart" : "heart-o"} 
+                    size={18} 
+                    color={isUsingFavorites ? COLORS.textWhite : COLORS.primary} 
+                  />
+                )}
+              </TouchableOpacity>
+              
               <FontAwesome name="search" size={18} color={COLORS.textSecondary} />
               <TextInput
                 style={styles.searchInput}
@@ -1144,6 +1300,16 @@ export default function ManualPreviewScreen() {
               )}
             </View>
 
+            {/* Status hint */}
+            {isUsingFavorites && (
+              <View style={styles.searchHintContainer}>
+                <FontAwesome name="info-circle" size={14} color={COLORS.primary} />
+                <Text style={styles.searchHintText}>
+                  Đang tìm kiếm trong {favoritesPlaces.length} địa điểm yêu thích
+                </Text>
+              </View>
+            )}
+
             {/* Search Results */}
             {isSearching ? (
               <View style={styles.searchLoadingContainer}>
@@ -1162,7 +1328,11 @@ export default function ManualPreviewScreen() {
                     onPress={() => handleSelectPlace(item)}
                     activeOpacity={0.7}
                   >
-                    <FontAwesome name="map-marker" size={20} color={COLORS.primary} />
+                    {item.isFavorite ? (
+                      <FontAwesome name="heart" size={20} color="#E53E3E" />
+                    ) : (
+                      <FontAwesome name="map-marker" size={20} color={COLORS.primary} />
+                    )}
                     <View style={styles.searchResultInfo}>
                       <Text style={styles.searchResultName} numberOfLines={1}>
                         {item.structured_formatting?.main_text || item.description}
@@ -1170,6 +1340,12 @@ export default function ManualPreviewScreen() {
                       <Text style={styles.searchResultAddress} numberOfLines={1}>
                         {item.structured_formatting?.secondary_text || ''}
                       </Text>
+                      {item.rating && (
+                        <View style={styles.ratingContainer}>
+                          <FontAwesome name="star" size={12} color="#F59E0B" />
+                          <Text style={styles.ratingText}>{item.rating}</Text>
+                        </View>
+                      )}
                     </View>
                   </TouchableOpacity>
                 )}
@@ -1970,6 +2146,17 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 2,
   },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    marginTop: 2,
+  },
+  ratingText: {
+    fontSize: 12,
+    color: '#F59E0B',
+    fontWeight: '600',
+  },
   noResultsContainer: {
     alignItems: 'center',
     paddingVertical: SPACING.xl,
@@ -1977,17 +2164,6 @@ const styles = StyleSheet.create({
   noResultsText: {
     fontSize: 14,
     color: COLORS.textSecondary,
-  },
-  searchHintContainer: {
-    alignItems: 'center',
-    paddingVertical: SPACING.xl,
-    paddingHorizontal: SPACING.lg,
-    gap: SPACING.sm,
-  },
-  searchHintText: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -2147,6 +2323,44 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
+  favoritesToggleButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.bgLightBlue,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SPACING.sm,
+  },
+  favoritesToggleButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+  loadFavoritesButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    backgroundColor: COLORS.bgLightBlue,
+    borderRadius: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    marginTop: SPACING.sm,
+  },
+  loadFavoritesButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+  loadFavoritesText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  loadFavoritesTextActive: {
+    color: COLORS.textWhite,
+  },
   titleModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2218,6 +2432,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.textWhite,
+  },
+  searchHintText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginLeft: SPACING.sm,
+    flex: 1,
+  },
+  searchHintContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.md,
   },
 });
 

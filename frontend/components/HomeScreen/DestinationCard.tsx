@@ -1,10 +1,13 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useRef } from 'react';
-import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { COLORS, SPACING } from '../../constants';
 import { useFavorites } from '@/contexts/FavoritesContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { enrichPlaceAPI } from '../../services/api';
+import { POIDetailBottomSheet } from '../place/POIDetailBottomSheet';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH; // Full width - chiều rộng toàn màn hình
@@ -36,6 +39,11 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
   const placeId = destination.googlePlaceId || destination.id;
   const isFavorite = isLiked(placeId);
 
+  // Bottom sheet state
+  const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
+  const [selectedPlaceData, setSelectedPlaceData] = useState<any>(null);
+  const [isEnriching, setIsEnriching] = useState(false);
+
   const handleFavoritePress = () => {
     // Tắt auto-scroll khi người dùng bấm nút tim
     if (onInteraction) {
@@ -62,14 +70,95 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
     });
   };
 
-  return (
-    <TouchableOpacity style={styles.destinationCard} activeOpacity={0.9}>
-      <Image source={destination.image} style={styles.image} resizeMode="cover" />
+  const handleCardPress = async () => {
+    // Tắt auto-scroll khi người dùng nhấp vào card
+    if (onInteraction) {
+      onInteraction();
+    }
+
+    if (!destination.googlePlaceId) {
+      Alert.alert('Thông báo', 'Địa điểm này chưa có Google Place ID.');
+      return;
+    }
+
+    setIsEnriching(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để xem chi tiết địa điểm.');
+        return;
+      }
+
+      // Gọi enrich API để cập nhật thông tin POI
+      const response = await enrichPlaceAPI(token, destination.googlePlaceId, false);
       
-      <LinearGradient
-        colors={['transparent', 'transparent', 'rgba(0, 0, 0, 0.4)', 'rgba(0, 0, 0, 0.8)']}
-        style={styles.fullOverlay}
-      >
+      // Map dữ liệu từ enriched response sang format mà bottom sheet hiểu
+      const enrichedData = response?.data || response;
+      const mappedPlaceData = {
+        _id: enrichedData.googlePlaceId,
+        googlePlaceId: enrichedData.googlePlaceId,
+        name: enrichedData.name,
+        address: enrichedData.address,
+        formatted_address: enrichedData.address,
+        description: enrichedData.description || enrichedData.editorialSummary,
+        editorialSummary: enrichedData.editorialSummary,
+        rating: enrichedData.rating,
+        user_ratings_total: enrichedData.reviews?.length || 0,
+        contactNumber: enrichedData.contactNumber,
+        phone: enrichedData.contactNumber,
+        websiteUri: enrichedData.websiteUri,
+        website: enrichedData.websiteUri,
+        photos: enrichedData.photos || [],
+        reviews: enrichedData.reviews?.map((review: any) => {
+          // Lấy tên tác giả từ authorAttributions
+          let authorName = 'Người dùng ẩn danh';
+          if (review.authorAttributions) {
+            const attributions = Array.isArray(review.authorAttributions) ? review.authorAttributions : [review.authorAttributions];
+            const firstAttribution = attributions[0];
+            if (firstAttribution && firstAttribution.displayName) {
+              authorName = firstAttribution.displayName;
+            }
+          }
+          
+          return {
+            authorName,
+            rating: review.rating,
+            text: review.text,
+            relativePublishTimeDescription: review.relativePublishTimeDescription,
+            publishTime: review.relativePublishTimeDescription,
+            authorAttributions: review.authorAttributions,
+          };
+        }) || [],
+        type: enrichedData.type,
+        types: enrichedData.types,
+        location: enrichedData.location,
+        openingHours: enrichedData.openingHours,
+        emotionalTags: enrichedData.emotionalTags,
+        budgetRange: enrichedData.budgetRange,
+      };
+
+      setSelectedPlaceData(mappedPlaceData);
+      setIsBottomSheetVisible(true);
+    } catch (error: any) {
+      console.error('❌ Error enriching POI:', error);
+      Alert.alert(
+        'Lỗi',
+        error.message || 'Không thể tải thông tin chi tiết địa điểm. Vui lòng thử lại.'
+      );
+    } finally {
+      setIsEnriching(false);
+    }
+  };
+
+  return (
+    <>
+      <TouchableOpacity style={styles.destinationCard} activeOpacity={0.9} onPress={handleCardPress}>
+        <Image source={destination.image} style={styles.image} resizeMode="cover" />
+        
+        <LinearGradient
+          colors={['transparent', 'transparent', 'rgba(0, 0, 0, 0.4)', 'rgba(0, 0, 0, 0.8)']}
+          style={styles.fullOverlay}
+        >
         <View style={{ flex: 0.3 }} />
         
         <View style={styles.bottomContent}>
@@ -121,7 +210,17 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({ destination, o
         </View>
       </LinearGradient>
     </TouchableOpacity>
-  );
+
+    {/* POI Detail Bottom Sheet */}
+    <POIDetailBottomSheet
+      visible={isBottomSheetVisible}
+      placeData={selectedPlaceData}
+      onClose={() => {
+        setIsBottomSheetVisible(false);
+        setSelectedPlaceData(null);
+      }}
+    />
+  </>);
 };
 
 const styles = StyleSheet.create({

@@ -27,6 +27,11 @@ export class PlaceWithRouteDto {
   }; // Tọa độ được geocoding từ address
   
   // snake_case để nhất quán với route_id, user_id, created_at... trong các module khác
+  // Route từ START location đến POI đầu tiên (chỉ có ở POI đầu tiên)
+  start_encoded_polyline?: string | null;
+  start_travel_duration_minutes?: number | null;
+  
+  // Route từ POI trước đó đến POI này (không có ở POI đầu tiên)
   encoded_polyline: string | null;
   travel_duration_minutes: number | null;
   steps?: any[];

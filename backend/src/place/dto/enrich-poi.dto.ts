@@ -58,6 +58,11 @@ export class EnrichedPoiResponseDto {
     coordinates: number[]; // [lon, lat]
   };
   emotionalTags?: Record<string, number>;
+  
+  // POI Function Classification Fields
+  function?: string;
+  functionPriority?: number;
+  includeInDailyRoute?: boolean;
 }
 
 

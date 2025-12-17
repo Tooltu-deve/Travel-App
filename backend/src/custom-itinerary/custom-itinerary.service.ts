@@ -70,15 +70,24 @@ export class CustomItineraryService {
    * This method calls Directions API for each segment between consecutive places
    * @param places Array of places for this day
    * @param travelMode Travel mode for this specific day (driving, walking, bicycling, transit)
+   * @param startLocationCoordinates Start location coordinates for this day
    * @param optimize Whether to optimize waypoints order
    * @returns Array of places with route information (polyline, duration)
    */
-  private async calculateRoutesForDay(places: PlaceDto[], travelMode: string, optimize?: boolean): Promise<PlaceWithRouteDto[]> {
+  private async calculateRoutesForDay(
+    places: PlaceDto[], 
+    travelMode: string, 
+    startLocationCoordinates?: { lat: number; lng: number },
+    optimize?: boolean
+  ): Promise<PlaceWithRouteDto[]> {
     if (!travelMode) {
       throw new BadRequestException('travelMode is required for each day and must be provided by the frontend');
     }
     
-    this.logger.debug(`Calculating routes for day with travelMode: ${travelMode}, ${places.length} places`);
+    this.logger.debug(`🚀 Calculating routes for day with travelMode: ${travelMode}, ${places.length} places`);
+    if (startLocationCoordinates) {
+      this.logger.debug(`   Start location: ${JSON.stringify(startLocationCoordinates)}`);
+    }
     
     const result: PlaceWithRouteDto[] = [];
     
@@ -93,55 +102,106 @@ export class CustomItineraryService {
       })
     );
     
-    // For each place, calculate route to next place using this day's travelMode
+    // Initialize all places first
     for (let i = 0; i < placesWithLocation.length; i++) {
       const currentPlace = placesWithLocation[i];
-      let placeWithRoute: PlaceWithRouteDto;
-      
-      if (i < placesWithLocation.length - 1) {
-        // Not the last place - calculate route to next place
-        const nextPlace = placesWithLocation[i + 1];
-        
-        this.logger.debug(
-          `Calling Directions API: ${currentPlace.name} -> ${nextPlace.name} with mode: ${travelMode}`
-        );
-        
-        // Call Directions API with this day's specific travelMode
-        // Use itineraryService.fetchDirectionsInfo for robust fallback (Drive -> Bike -> Transit -> Walk -> Ports)
-        const directionsData = await this.itineraryService.fetchDirectionsInfo(
-          currentPlace.location,
-          nextPlace.location,
-          travelMode
-        );
-        
-        placeWithRoute = {
-          placeId: currentPlace.placeId,
-          name: currentPlace.name,
-          address: currentPlace.address,
-          location: currentPlace.location,
-          encoded_polyline: directionsData.encoded_polyline,
-          travel_duration_minutes: directionsData.travel_duration_minutes ? Math.round(directionsData.travel_duration_minutes) : null,
-          steps: directionsData.steps,
-        };
-        
-        this.logger.debug(
-          `Route calculated: ${currentPlace.name} -> ${nextPlace.name}, duration: ${placeWithRoute.travel_duration_minutes} minutes`
-        );
-      } else {
-        // Last place - no route to calculate
-        placeWithRoute = {
-          placeId: currentPlace.placeId,
-          name: currentPlace.name,
-          address: currentPlace.address,
-          location: currentPlace.location,
-          encoded_polyline: null,
-          travel_duration_minutes: null,
-        };
-      }
-      result.push(placeWithRoute);
+      result.push({
+        placeId: currentPlace.placeId,
+        name: currentPlace.name,
+        address: currentPlace.address,
+        location: currentPlace.location,
+        encoded_polyline: null,
+        travel_duration_minutes: null,
+      });
     }
     
-    this.logger.debug(`Completed route calculation for day with travelMode: ${travelMode}`);
+    // Calculate routes and assign to the DESTINATION POI
+    // travel_duration_minutes của POI = thời gian đi TỪ POI TRƯỚC đến POI này
+    
+    // 1. Route từ START → POI đầu tiên
+    if (startLocationCoordinates && placesWithLocation.length > 0) {
+      const firstPOI = placesWithLocation[0];
+      this.logger.debug(
+        `📍 [POI 0 - ${firstPOI.name}] Calculating route from START to first POI...`
+      );
+      this.logger.debug(
+        `   Origin (START): ${startLocationCoordinates.lat},${startLocationCoordinates.lng}`
+      );
+      this.logger.debug(
+        `   Destination: ${firstPOI.location.lat},${firstPOI.location.lng}`
+      );
+      
+      const startDirectionsData = await this.itineraryService.fetchDirectionsInfo(
+        startLocationCoordinates,
+        firstPOI.location,
+        travelMode
+      );
+      
+      // Gán cho POI đầu tiên
+      result[0].start_encoded_polyline = startDirectionsData.encoded_polyline;
+      result[0].start_travel_duration_minutes = startDirectionsData.travel_duration_minutes 
+        ? Math.round(startDirectionsData.travel_duration_minutes) 
+        : null;
+      
+      this.logger.debug(
+        `   ✅ start_encoded_polyline: ${startDirectionsData.encoded_polyline ? 'YES' : 'NO'}`
+      );
+      this.logger.debug(
+        `   ✅ start_travel_duration_minutes: ${result[0].start_travel_duration_minutes ?? 'null'}`
+      );
+    }
+    
+    // 2. Routes giữa các POI (POI i → POI i+1)
+    for (let i = 0; i < placesWithLocation.length - 1; i++) {
+      const currentPlace = placesWithLocation[i];
+      const nextPlace = placesWithLocation[i + 1];
+      
+      this.logger.debug(
+        `📍 [POI ${i} → POI ${i+1}] Calculating route: ${currentPlace.name} → ${nextPlace.name}...`
+      );
+      this.logger.debug(
+        `   Origin: ${currentPlace.location.lat},${currentPlace.location.lng}`
+      );
+      this.logger.debug(
+        `   Destination: ${nextPlace.location.lat},${nextPlace.location.lng}`
+      );
+      
+      const directionsData = await this.itineraryService.fetchDirectionsInfo(
+        currentPlace.location,
+        nextPlace.location,
+        travelMode
+      );
+      
+      // Gán cho POI TIẾP THEO (i+1), không phải POI hiện tại (i)
+      result[i + 1].encoded_polyline = directionsData.encoded_polyline;
+      result[i + 1].travel_duration_minutes = directionsData.travel_duration_minutes 
+        ? Math.round(directionsData.travel_duration_minutes) 
+        : null;
+      result[i + 1].steps = directionsData.steps;
+      
+      this.logger.debug(
+        `   ✅ Assigned to POI ${i+1} (${nextPlace.name}):`
+      );
+      this.logger.debug(
+        `      - encoded_polyline: ${directionsData.encoded_polyline ? 'YES' : 'NO'}`
+      );
+      this.logger.debug(
+        `      - travel_duration_minutes: ${result[i + 1].travel_duration_minutes ?? 'null'}`
+      );
+    }
+    
+    this.logger.debug(`✅ Completed route calculation for day with travelMode: ${travelMode}`);
+    this.logger.debug(`   Summary:`);
+    result.forEach((place, idx) => {
+      this.logger.debug(`   POI ${idx} (${place.name}):`);
+      if ('start_encoded_polyline' in place) {
+        this.logger.debug(`      - start_encoded_polyline: ${place.start_encoded_polyline ? 'YES' : 'NO'}`);
+        this.logger.debug(`      - start_travel_duration_minutes: ${place.start_travel_duration_minutes ?? 'null'}`);
+      }
+      this.logger.debug(`      - encoded_polyline: ${place.encoded_polyline ? 'YES' : 'NO'}`);
+      this.logger.debug(`      - travel_duration_minutes: ${place.travel_duration_minutes ?? 'null'}`);
+    });
+    
     return result;
   }
 
@@ -176,7 +236,13 @@ export class CustomItineraryService {
         
         // Call Directions API for this day with its specific travelMode
         // calculateRoutesForDay will call getDirections for each place-to-place segment using day.travelMode
-        const processedPlaces = await this.calculateRoutesForDay(day.places, day.travelMode, itineraryData.optimize);
+        // AND calculate route from startLocation to first POI
+        const processedPlaces = await this.calculateRoutesForDay(
+          day.places, 
+          day.travelMode, 
+          startLocationCoordinates, // Truyền start location để tính route đến POI đầu tiên
+          itineraryData.optimize
+        );
         
         this.logger.log(`Completed day ${day.dayNumber} with ${processedPlaces.length} places`);
         

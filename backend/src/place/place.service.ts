@@ -62,6 +62,13 @@ export class PlaceService {
                     weekdayDescriptions: restData.opening_hours.weekdayDescriptions,
                 }
                 : undefined,
+            
+            // POI Classification Fields (từ classify-poi-functions.ts)
+            function: placeData.function,
+            functionPriority: placeData.functionPriority,
+            includeInDailyRoute: placeData.includeInDailyRoute !== undefined 
+                ? placeData.includeInDailyRoute 
+                : true, // Default true
         };
 
         // Tìm và cập nhật (nếu tồn tại) hoặc tạo mới (nếu không)
@@ -267,6 +274,9 @@ export class PlaceService {
       openingHours: place.openingHours,
       location: place.location,
       emotionalTags: emotionalTagsObject,
+      function: place.function,
+      functionPriority: place.functionPriority,
+      includeInDailyRoute: place.includeInDailyRoute,
     };
   }
 

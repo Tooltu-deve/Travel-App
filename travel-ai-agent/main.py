@@ -1,10 +1,11 @@
 """
-FastAPI Server for Travel AI Agent
-=================================
-REST API endpoint for NestJS backend to interact with the AI Agent
+FastAPI Server for Travel AI Agent - Companion Mode
+=================================================
+REST API endpoint for NestJS backend to interact with the AI Companion
+Focus on real-time travel assistance during trips.
 
 Endpoints:
-- POST /chat - Main chat interface
+- POST /chat - Real-time travel companion chat
 - POST /reset - Reset conversation
 - GET /health - Health check
 """
@@ -18,7 +19,7 @@ import uvicorn
 import logging
 from datetime import datetime
 
-from agent import TravelAgent
+from agent_new import TravelCompanion
 
 
 # =====================================
@@ -38,9 +39,9 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Travel AI Agent API",
-    description="Intelligent travel itinerary planning agent",
-    version="1.0.0",
+    title="Travel AI Companion API",
+    description="Real-time travel companion for on-trip assistance",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -53,8 +54,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize the AI agent
-travel_agent = TravelAgent()
+# Initialize the travel companion
+companion = TravelCompanion()
 
 # In-memory conversation storage (in production, use Redis or database)
 conversations: Dict[str, Dict] = {}
@@ -68,16 +69,12 @@ class ChatRequest(BaseModel):
     message: str
     user_id: str
     session_id: Optional[str] = None
-    context: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None  # Contains: current_location, active_place_id, itinerary
 
 class ChatResponse(BaseModel):
     """Response model for chat endpoint"""
     response: str
     session_id: str
-    stage: str
-    preferences: Dict[str, Any]
-    itinerary: List[Dict[str, Any]]
-    suggestions: List[str] = []
     metadata: Dict[str, Any] = {}
 
 class ResetRequest(BaseModel):
@@ -104,41 +101,6 @@ def get_conversation_key(user_id: str, session_id: str) -> str:
     """Get conversation storage key"""
     return f"{user_id}:{session_id}"
 
-def extract_suggestions(stage: str, preferences: Dict) -> List[str]:
-    """Generate context-aware suggestions for next user actions"""
-    suggestions = []
-    
-    if stage == "profiling":
-        if not preferences.get("travel_style"):
-            suggestions.append("Bạn thích du lịch kiểu gì? (chill, phiêu lưu, văn hóa, ẩm thực)")
-        if not preferences.get("group_type"):
-            suggestions.append("Bạn đi một mình hay cùng ai? (solo, cặp đôi, gia đình, bạn bè)")
-        if not preferences.get("duration"):
-            suggestions.append("Bạn có bao nhiều thời gian? (nửa ngày, cả ngày, 2-3 ngày)")
-    
-    elif stage == "planning":
-        suggestions.extend([
-            "Tôi muốn thay đổi một địa điểm",
-            "Có thể điều chỉnh thời gian không?",
-            "Thêm hoạt động ăn uống"
-        ])
-    
-    elif stage == "optimizing":
-        suggestions.extend([
-            "Kiểm tra thời tiết ngày đó",
-            "Tính chi phí ước tính",
-            "Có phương án thay thế không?"
-        ])
-    
-    elif stage == "complete":
-        suggestions.extend([
-            "Tạo lộ trình mới",
-            "Thay đổi ngân sách",
-            "Xuất lịch trình PDF"
-        ])
-    
-    return suggestions
-
 # =====================================
 # API ENDPOINTS
 # =====================================
@@ -149,13 +111,13 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now().isoformat(),
-        version="1.0.0"
+        version="2.0.0"
     )
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat_with_agent(request: ChatRequest):
+async def chat_with_companion(request: ChatRequest):
     """
-    Main chat endpoint for interacting with the travel agent
+    Main chat endpoint for real-time travel companion
     """
     try:
         # Generate session ID if not provided
@@ -165,76 +127,54 @@ async def chat_with_agent(request: ChatRequest):
         # Get existing conversation state
         conversation_state = conversations.get(conversation_key)
         
-        # Debug logging
-        if conversation_state:
-            logging.info(f"📋 Found existing conversation: {conversation_key} with {len(conversation_state.get('messages', []))} messages")
-            # Handle UserPreferences object (has attributes, not dict keys)
-            prefs = conversation_state.get('user_preferences')
-            if prefs:
-                if hasattr(prefs, 'start_location'):
-                    # Pydantic model
-                    logging.info(f"   📍 Preserved: location={prefs.start_location}, group={prefs.group_type}")
-                elif isinstance(prefs, dict):
-                    # Dict
-                    logging.info(f"   📍 Preserved: location={prefs.get('start_location')}, group={prefs.get('group_type')}")
-        else:
-            logging.info(f"🆕 Creating new conversation: {conversation_key}")
-            if request.session_id:
-                # User provided session_id but no state found
-                logging.warning(f"   ⚠️  Session ID provided but no state found! Available sessions: {list(conversations.keys())[:5]}")
-            else:
-                logging.info(f"   ℹ️  No session_id provided, generating new one")
+        # Extract context data
+        current_location = None
+        active_place_id = None
+        itinerary = None
         
-        # Update state with context from backend (e.g., itinerary_id, current_location)
-        if request.context and conversation_state:
-            if request.context.get('itinerary_id'):
-                conversation_state['itinerary_id'] = request.context['itinerary_id']
-                logging.info(f"   🔗 Updated state with itinerary_id from context: {request.context['itinerary_id']}")
+        if request.context:
             if request.context.get('current_location'):
-                conversation_state['current_location'] = request.context['current_location']
-                logging.info(f"   📍 Updated state with current_location from context: {request.context['current_location']}")
+                current_location = request.context['current_location']
+                logging.info(f"   📍 Location from context: {current_location}")
+            
             if request.context.get('active_place_id'):
-                conversation_state['active_place_id'] = request.context['active_place_id']
-                logging.info(f"   🏛️ Updated state with active_place_id from context: {request.context['active_place_id']}")
-            if request.context.get('itinerary_status'):
-                conversation_state['itinerary_status'] = request.context['itinerary_status']
-                logging.info(f"   ✅ Updated state with itinerary_status from context: {request.context['itinerary_status']}")
-        elif request.context and not conversation_state:
-            # New conversation - create initial state with context
-            conversation_state = {
-                'messages': [],
-                'user_preferences': {},
-                'current_itinerary': [],
-                'optimization_applied': False,
-                'weather_checked': False,
-                'budget_calculated': False,
-                'session_stage': 'profiling',
-                'user_location': None,
-                'travel_date': None,
-                'intent': None,
-                'itinerary_status': None,
-                'itinerary_id': request.context.get('itinerary_id'),
-                'current_location': request.context.get('current_location'),
-                'active_place_id': request.context.get('active_place_id')
-            }
-            logging.info(f"   🆕 Created new state with context: location={conversation_state.get('current_location')}, place_id={conversation_state.get('active_place_id')}")
+                active_place_id = request.context['active_place_id']
+                logging.info(f"   🏛️ Place from context: {active_place_id}")
+            
+            if request.context.get('itinerary'):
+                itinerary = request.context['itinerary']
+                logging.info(f"   📋 Itinerary from context: {len(itinerary)} places")
         
-        # Call the AI agent
-        result = travel_agent.chat(request.message, conversation_state)
+        # Call the companion
+        result = companion.chat(
+            request.message,
+            conversation_state=conversation_state,
+            current_location=current_location,
+            active_place_id=active_place_id,
+            itinerary=itinerary
+        )
         
         # Update conversation storage
         conversations[conversation_key] = result["state"]
         logging.info(f"💾 Saved conversation state: {conversation_key} (total: {len(conversations)} conversations)")
         
-        # Debug: Verify state was saved
-        saved_state = conversations.get(conversation_key)
-        if saved_state:
-            logging.info(f"   ✅ Verification: State saved with {len(saved_state.get('messages', []))} messages")
-        else:
-            logging.error(f"   ❌ Verification FAILED: State not found after save!")
+        # Parse action markers from response
+        response_text = result["response"]
+        action_data = None
         
-        # Generate suggestions
-        suggestions = extract_suggestions(result["stage"], result["preferences"])
+        # Check for [ACTION:TYPE:DATA] markers
+        import re
+        action_match = re.search(r'\[ACTION:(\w+):(.+?)\]', response_text)
+        if action_match:
+            action_type = action_match.group(1)
+            action_value = action_match.group(2)
+            action_data = {
+                "type": action_type,
+                "value": action_value
+            }
+            # Remove marker from response text
+            response_text = re.sub(r'\[ACTION:(\w+):(.+?)\]\n?', '', response_text)
+            logging.info(f"   🎬 Action detected: {action_type} -> {action_value[:50]}...")
         
         # Prepare metadata
         metadata = {
@@ -242,25 +182,24 @@ async def chat_with_agent(request: ChatRequest):
             "user_id": request.user_id,
             "session_id": session_id,
             "message_length": len(request.message),
-            "response_length": len(result["response"]),
-            "optimization_applied": result["state"].get("optimization_applied", False),
-            "weather_checked": result["state"].get("weather_checked", False),
-            "budget_calculated": result["state"].get("budget_calculated", False),
-            "itinerary_id": result["state"].get("itinerary_id")  # Include itinerary_id for modifications
+            "response_length": len(response_text),
+            "status": result.get("status", "success")
         }
         
+        # Add action to metadata if exists
+        if action_data:
+            metadata["action"] = action_data
+        
         return ChatResponse(
-            response=result["response"],
+            response=response_text,
             session_id=session_id,
-            stage=result["stage"],
-            preferences=result["preferences"],
-            itinerary=result["itinerary"],
-            suggestions=suggestions,
             metadata=metadata
         )
         
     except Exception as e:
         logging.error(f"Error in chat endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/reset")
@@ -287,41 +226,7 @@ async def reset_conversation(request: ResetRequest):
         logging.error(f"Error in reset endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.post("/update-state")
-async def update_conversation_state(request: dict):
-    """
-    Update conversation state with external data (e.g., itinerary_id from backend)
-    """
-    try:
-        user_id = request.get("user_id")
-        session_id = request.get("session_id")
-        state_updates = request.get("state_updates", {})
-        
-        if not user_id or not session_id:
-            raise HTTPException(status_code=400, detail="user_id and session_id are required")
-        
-        conversation_key = get_conversation_key(user_id, session_id)
-        
-        if conversation_key not in conversations:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        # Update state with provided fields
-        current_state = conversations[conversation_key]
-        for key, value in state_updates.items():
-            current_state[key] = value
-            logging.info(f"Updated state {conversation_key}: {key}={value}")
-        
-        return {
-            "message": "State updated successfully",
-            "conversation_key": conversation_key,
-            "updates": state_updates
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in update-state endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 
 @app.get("/conversations/{user_id}")
 async def get_user_conversations(user_id: str):
@@ -336,9 +241,7 @@ async def get_user_conversations(user_id: str):
             if key.startswith(prefix):
                 session_id = key[len(prefix):]
                 user_conversations[session_id] = {
-                    "stage": state.get("session_stage", "unknown"),
-                    "preferences": state.get("user_preferences", {}).dict() if hasattr(state.get("user_preferences", {}), 'dict') else {},
-                    "last_activity": datetime.now().isoformat(),  # In real app, track this properly
+                    "last_activity": datetime.now().isoformat(),
                     "message_count": len(state.get("messages", []))
                 }
         
@@ -348,55 +251,20 @@ async def get_user_conversations(user_id: str):
         logging.error(f"Error getting conversations: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/debug/database")
-async def debug_database_connection():
-    """
-    Debug endpoint to check database connectivity
-    """
-    try:
-        from tools import places_collection
-        
-        # Test MongoDB connection
-        count = places_collection.count_documents({})
-        sample_places = list(places_collection.find({}).limit(3))
-        
-        return {
-            "database_status": "connected",
-            "total_places": count,
-            "sample_places": [
-                {
-                    "name": place.get("name", "Unknown"),
-                    "type": place.get("type", "Unknown"),
-                    "address": place.get("address", place.get("formatted_address", "Unknown"))
-                }
-                for place in sample_places
-            ]
-        }
-        
-    except Exception as e:
-        logging.error(f"Database connection error: {str(e)}")
-        return {
-            "database_status": "error",
-            "error": str(e),
-            "total_places": 0,
-            "sample_places": []
-        }
-
 # =====================================
 
 if __name__ == "__main__":
-    print("🚀 Starting Travel AI Agent API server...")
+    print("🚀 Starting Travel AI Companion API server...")
     print("📋 Available endpoints:")
-    print("   - POST /chat - Main chat interface")
+    print("   - POST /chat - Real-time travel companion chat")
     print("   - POST /reset - Reset conversation")
     print("   - GET /health - Health check")
-    print("   - GET /debug/database - Debug database connection")
     print("   - GET /conversations/{user_id} - Get user conversations")
     
     uvicorn.run(
-        "main:app",  # Import string format để enable reload
+        "main:app",
         host="0.0.0.0",
-        port=8001,  # Changed from 8000 to avoid conflict
-        reload=False,  # Disabled to ensure code is loaded correctly
+        port=8001,
+        reload=False,
         log_level="info"
     )

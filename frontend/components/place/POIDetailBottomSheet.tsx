@@ -22,9 +22,6 @@ import { COLORS, SPACING } from '../../constants';
 import { getPlaceByIdAPI, chatWithAIAPI, API_BASE_URL } from '@/services/api';
 import { useFavorites } from '@/contexts/FavoritesContext';
 
-// API Base URL - imported from services/api.ts
-// const API_BASE_URL = 'http://localhost:3000';
-
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const BOTTOM_SHEET_HEIGHT = SCREEN_HEIGHT * 0.75; // 3/4 màn hình
 const DRAG_THRESHOLD = 50; // Ngưỡng kéo để đóng
@@ -353,7 +350,9 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
   };
 
   const handlePhonePress = (phone: string) => {
-    Linking.openURL(`tel:${phone}`);
+    // Remove spaces and special characters from phone number
+    const cleanPhone = phone.replace(/\s+/g, '');
+    Linking.openURL(`tel:${cleanPhone}`);
   };
 
   const handleWebsitePress = (url: string) => {
@@ -573,9 +572,12 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
                 style={styles.favoriteButton}
                 onPress={async () => {
                   try {
-                    const id = place.googlePlaceId || place._id?.toString() || placeId;
-                    if (id) {
-                      await toggleLike(id);
+                    // CRITICAL: Always use googlePlaceId for like/unlike (not MongoDB _id)
+                    const googleId = place.googlePlaceId || place.google_place_id;
+                    if (googleId) {
+                      await toggleLike(googleId);
+                    } else {
+                      console.error('No googlePlaceId found for place:', place);
                     }
                   } catch (e) {
                     console.error('Failed to toggle like', e);
@@ -584,9 +586,9 @@ export const POIDetailBottomSheet: React.FC<POIDetailBottomSheetProps> = ({
               >
                 <BlurView intensity={80} tint="light" style={styles.favoriteButtonBlur}>
                   <FontAwesome
-                    name={isLiked(place.googlePlaceId || place._id?.toString() || placeId || '') ? 'heart' : 'heart-o'}
+                    name={isLiked(place.googlePlaceId || place.google_place_id || '') ? 'heart' : 'heart-o'}
                     size={24}
-                    color={isLiked(place.googlePlaceId || place._id?.toString() || placeId || '') ? COLORS.favoriteActive : COLORS.textMain}
+                    color={isLiked(place.googlePlaceId || place.google_place_id || '') ? COLORS.favoriteActive : COLORS.textMain}
                   />
                 </BlurView>
               </TouchableOpacity>

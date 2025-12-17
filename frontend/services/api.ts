@@ -12,7 +12,7 @@
  * 🔧 THAY ĐỔI URL TẠI ĐÂY:
  * 
  * Nếu cùng mạng WiFi:
- *   const API_BASE_URL = 'http://192.168.1.255:3000';
+ *   const API_BASE_URL = 'http://192.168.1.178:3000';
  * 
  * Nếu dùng Ngrok (không cùng mạng):
  *   const API_BASE_URL = 'https://a1b2c3d4.ngrok.io';
@@ -22,7 +22,8 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Android emulator: 10.0.2.2:3000)
+const API_BASE_URL = 'https://travel-app-vfcj.onrender.com'; // ⬅️ Local URL (Simulator only)
+// const API_BASE_URL = 'http://192.168.1.178:3000'; // ⬅️ WiFi IP (cho điện thoại thật)
 // ============================================
 // TYPES
 // ============================================
@@ -175,7 +176,12 @@ const makeRequest = async <T>(
 
     // Get response text first to debug
     const text = await response.text();
-    console.log('📄 Response Text:', text.substring(0, 200));
+    console.log('📄 Response Status:', response.status, response.statusText);
+    console.log('📄 Response Headers:', JSON.stringify(Object.fromEntries(response.headers.entries())));
+    console.log('📄 Response Text (first 500 chars):', text.substring(0, 500));
+    if (text.length > 500) {
+      console.log('📄 Response Text (full):', text);
+    }
 
     // Handle 204 No Content - no response body to parse
     if (response.status === 204) {
@@ -580,18 +586,20 @@ export const likePlaceAPI = async (
 export const getLikedPlacesAPI = async (
   token: string,
 ): Promise<Array<{
-  id: string;
-  name: string;
-  address: string;
-  mood: string;
-  rating: number | null;
+  place_id: string;
+  google_place_id: string;
+  type: string;
+  opening_hours: any;
+  is_stub: boolean;
 }>> => {
-  return makeRequest<Array<{
-    id: string;
+  const response = await makeRequest<Array<{
+    place_id: string;
+    google_place_id: string;
     name: string;
     address: string;
-    mood: string;
-    rating: number | null;
+    type: string;
+    opening_hours: any;
+    is_stub: boolean;
   }>>(
     '/api/v1/favorites/liked-places',
     {
@@ -601,6 +609,18 @@ export const getLikedPlacesAPI = async (
       },
     },
   );
+  
+  // Backend returns the correct structure, just pass it through with all fields
+  return response.map(place => ({
+    place_id: place.place_id,
+    google_place_id: place.google_place_id,
+    type: place.type || '',
+    opening_hours: place.opening_hours || {},
+    is_stub: place.is_stub || false,
+    // Preserve additional fields for convenience (to avoid extra API calls)
+    name: place.name,
+    address: place.address,
+  } as any)); // Cast to any to allow extra fields beyond the interface
 };
 
 /**

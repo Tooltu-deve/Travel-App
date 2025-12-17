@@ -127,6 +127,16 @@ export class Place {
 
     @Prop({ type: Date, default: null })
     lastEnrichedAt?: Date;
+
+    // POI Function Classification Fields (từ classify-poi-functions.ts)
+    @Prop({ type: String }) // CORE_ATTRACTION, ACTIVITY, RESORT, FOOD_BEVERAGE, DINING, ACCOMMODATION, NIGHTLIFE, SUPPORT
+    function?: string;
+
+    @Prop({ type: Number }) // Priority: 1 (cao nhất) -> 5 (thấp nhất), 0 (không ưu tiên)
+    functionPriority?: number;
+
+    @Prop({ type: Boolean, default: true }) // Có nên đưa vào lộ trình hàng ngày không?
+    includeInDailyRoute?: boolean;
 }
 
 export const PlaceSchema = SchemaFactory.createForClass(Place);

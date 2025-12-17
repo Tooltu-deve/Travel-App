@@ -1,10 +1,6 @@
 import { IsNotEmpty, IsString, IsNumber, IsObject, IsOptional, Min, IsArray, IsIn } from 'class-validator';
 
 export class GenerateRouteDto {
-  @IsNotEmpty({ message: 'budget không được để trống' })
-  @IsString({ message: 'budget phải là chuỗi' })
-  budget: string;
-
   @IsNotEmpty({ message: 'destination không được để trống' })
   @IsString({ message: 'destination phải là chuỗi' })
   destination: string;
