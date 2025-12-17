@@ -282,51 +282,63 @@ export default function ManualRouteScreen() {
 
   return (
     <>
-      <ItineraryViewScreen
-        visible
-        routeId={routeIdToConfirm || ''}
-        customRouteData={customRouteData}
-        isManual={true}
-        onClose={() => router.back()}
-        footerContent={footerButtons}
-        overlayContent={
-          isNameModalVisible && (
-            <View style={styles.inlineModalOverlay} pointerEvents="box-none">
-              <View style={styles.modalBackdrop} />
-              <View style={styles.inlineModalContent}>
-                <Text style={styles.modalTitle}>Đặt tên lộ trình</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Nhập tên lộ trình"
-                  value={routeTitle}
-                  onChangeText={setRouteTitle}
-                  autoFocus
-                />
-                <View style={styles.modalActions}>
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.modalCancel]}
-                    onPress={() => setIsNameModalVisible(false)}
-                    disabled={isSaving}
-                  >
-                    <Text style={styles.modalCancelText}>Hủy</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.modalConfirm]}
-                    onPress={handleSaveConfirm}
-                    disabled={isSaving}
-                  >
-                    {isSaving ? (
-                      <ActivityIndicator size="small" color={COLORS.textWhite} />
-                    ) : (
-                      <Text style={styles.modalConfirmText}>Lưu</Text>
-                    )}
-                  </TouchableOpacity>
+      {/* Only show ItineraryViewScreen when we have customRouteData (after save) */}
+      {customRouteData ? (
+        <ItineraryViewScreen
+          visible
+          routeId={routeIdToConfirm || ''}
+          customRouteData={customRouteData}
+          isManual={true}
+          onClose={() => router.back()}
+          footerContent={footerButtons}
+          overlayContent={
+            isNameModalVisible && (
+              <View style={styles.inlineModalOverlay} pointerEvents="box-none">
+                <View style={styles.modalBackdrop} />
+                <View style={styles.inlineModalContent}>
+                  <Text style={styles.modalTitle}>Đặt tên lộ trình</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Nhập tên lộ trình"
+                    value={routeTitle}
+                    onChangeText={setRouteTitle}
+                    autoFocus
+                  />
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity
+                      style={[styles.modalButton, styles.modalCancel]}
+                      onPress={() => setIsNameModalVisible(false)}
+                      disabled={isSaving}
+                    >
+                      <Text style={styles.modalCancelText}>Hủy</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.modalButton, styles.modalConfirm]}
+                      onPress={handleSaveConfirm}
+                      disabled={isSaving}
+                    >
+                      {isSaving ? (
+                        <ActivityIndicator size="small" color={COLORS.textWhite} />
+                      ) : (
+                        <Text style={styles.modalConfirmText}>Lưu</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
-            </View>
-          )
-        }
-      />
+            )
+          }
+        />
+      ) : (
+        /* Empty state before saving - show preview interface */
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyTitle}>Xem trước lộ trình</Text>
+          <Text style={styles.emptyMessage}>
+            Nhấn "Lưu lộ trình" để xem chi tiết và lưu lại lộ trình của bạn.
+          </Text>
+          {footerButtons}
+        </View>
+      )}
 
       {/* Weather Warning Modal */}
       <WeatherWarningModal
@@ -438,5 +450,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.textWhite,
+  },
+  emptyContainer: {
+    flex: 1,
+    backgroundColor: COLORS.bgLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.xl,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: SPACING.md,
+  },
+  emptyMessage: {
+    fontSize: 16,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginBottom: SPACING.xl,
   },
 });

@@ -12,6 +12,7 @@ import {
   Dimensions,
   TextInput,
   FlatList,
+  Animated,
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +20,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Swipeable from 'react-native-gesture-handler/Swipeable';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { COLORS, SPACING } from '@/constants';
 import {
@@ -1318,6 +1321,54 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     });
   };
 
+  // Render right actions for swipe (edit and delete buttons)
+  const renderRightActions = (index: number) => (
+    _progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>
+  ) => {
+    const scale = dragX.interpolate({
+      inputRange: [-100, 0],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View style={styles.swipeActionsContainer}>
+        {/* Edit Button */}
+        <TouchableOpacity
+          style={[styles.swipeActionButton, styles.swipeEditButton]}
+          onPress={() => {
+            // Handle edit action - show place replacement modal
+            const activity = activities[index];
+            if (activity) {
+              handleActivityPress(activity);
+            }
+          }}
+        >
+          <Animated.View style={{ transform: [{ scale }] }}>
+            <FontAwesome name="pencil" size={20} color={COLORS.textWhite} />
+          </Animated.View>
+        </TouchableOpacity>
+
+        {/* Delete Button */}
+        <TouchableOpacity
+          style={[styles.swipeActionButton, styles.swipeDeleteButton]}
+          onPress={(event) => {
+            // Handle delete action
+            const activity = activities[index];
+            if (activity) {
+              handleDeletePOI(activity, selectedDay, index, event);
+            }
+          }}
+        >
+          <Animated.View style={{ transform: [{ scale }] }}>
+            <FontAwesome name="trash-o" size={20} color={COLORS.textWhite} />
+          </Animated.View>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
   // Handle select new POI from autocomplete
   const handleSelectNewPOI = async (suggestion: any) => {
     if (!replacingPOI || !routeDetails) {
@@ -1951,13 +2002,135 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                       </View>
                     )}
 
-                    {/* Activity Card */}
-                    <TouchableOpacity
-                      style={[styles.activityCard, isVisited && styles.activityCardVisited]}
-                      onPress={() => handleActivityPress(activity)}
-                      disabled={isEnriching}
-                      activeOpacity={0.7}
-                    >
+                    {/* Swipeable Activity Card - Only swipeable in DRAFT mode */}
+                    {status === 'DRAFT' ? (
+                      <Swipeable
+                        renderRightActions={renderRightActions(index)}
+                        overshootRight={false}
+                        friction={2}
+                      >
+                        <TouchableOpacity
+                          style={[styles.activityCard, isVisited && styles.activityCardVisited]}
+                          onPress={() => handleActivityPress(activity)}
+                          disabled={isEnriching}
+                          activeOpacity={0.7}
+                        >
+                          {/* Card content goes here - same as below */}
+                          <LinearGradient
+                            colors={[COLORS.primary + '15', 'transparent']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.cardGradientOverlay}
+                          />
+
+                          {/* Number Badge */}
+                          <View style={[styles.cardNumberBadge, isVisited && styles.cardNumberBadgeVisited]}>
+                            <LinearGradient
+                              colors={[isVisited ? '#66BB6A' : COLORS.primary, isVisited ? '#66BB6A' : COLORS.gradientSecondary]}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 1, y: 1 }}
+                              style={styles.numberBadgeGradient}
+                            >
+                              <Text style={styles.numberBadgeText}>{index + 1}</Text>
+                            </LinearGradient>
+                          </View>
+
+                          <View style={styles.cardContent}>
+                            {/* Center: Info */}
+                            <View style={styles.cardInfo}>
+                              <Text style={styles.cardTitle} numberOfLines={2}>
+                                {activityName}
+                              </Text>
+                              
+                              {/* Time Row */}
+                              <View style={styles.cardRow}>
+                                <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
+                                <Text style={styles.cardTime}>
+                                {isManualRoute
+                                  ? 'Thời gian tự chọn'
+                                  : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
+                                </Text>
+                              </View>
+
+                              {/* Opening Hours Row */}
+                              {(() => {
+                                const openingHours = (activity as any).openingHours;
+                                const activityKey = `${selectedDay}-${index}`;
+                                const isExpanded = expandedOpeningHours.has(activityKey);
+                                
+                                if (openingHours?.weekdayDescriptions) {
+                                  const today = new Date().getDay();
+                                  const dayIndex = today === 0 ? 6 : today - 1;
+                                  const todayHours = openingHours.weekdayDescriptions[dayIndex];
+                                  
+                                  return (
+                                    <View style={styles.openingHoursContainer}>
+                                      {todayHours && (
+                                        <TouchableOpacity 
+                                          style={styles.cardRow}
+                                          onPress={() => toggleOpeningHours(activityKey)}
+                                          activeOpacity={0.7}
+                                        >
+                                          <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
+                                          <Text style={styles.cardOpeningHours} numberOfLines={1}>
+                                            {todayHours.split(': ')[1] || todayHours}
+                                          </Text>
+                                          <FontAwesome 
+                                            name={isExpanded ? "chevron-up" : "chevron-down"} 
+                                            size={10} 
+                                            color={COLORS.textSecondary}
+                                            style={{ marginLeft: 4 }}
+                                          />
+                                        </TouchableOpacity>
+                                      )}
+                                      
+                                      {isExpanded && (
+                                        <View style={styles.allHoursContainer}>
+                                          {openingHours.weekdayDescriptions.map((dayHours: string, idx: number) => (
+                                            <Text key={idx} style={styles.dayHoursText}>
+                                              {dayHours}
+                                            </Text>
+                                          ))}
+                                        </View>
+                                      )}
+                                    </View>
+                                  );
+                                }
+                                return null;
+                              })()}
+
+                              {/* Loading indicator */}
+                              {isEnriching && (
+                                <ActivityIndicator 
+                                  size="small" 
+                                  color={COLORS.primary} 
+                                  style={styles.cardLoader} 
+                                />
+                              )}
+                            </View>
+
+                            {/* Right: Drag Handle */}
+                            <View style={styles.cardDragHandle}>
+                              <MaterialCommunityIcons name="drag-vertical" size={24} color={COLORS.textSecondary} />
+                            </View>
+                          </View>
+
+                          {/* Tap hint */}
+                          <View style={styles.tapHint}>
+                            <FontAwesome name="hand-pointer-o" size={10} color={COLORS.textSecondary} />
+                            <Text style={styles.tapHintText}>Nhấn để xem chi tiết</Text>
+                          </View>
+                        </TouchableOpacity>
+                      </Swipeable>
+                    ) : (
+                      /* Non-swipeable card for MAIN routes */
+                      <TouchableOpacity
+                        style={[styles.activityCard, isVisited && styles.activityCardVisited]}
+                        onPress={() => handleActivityPress(activity)}
+                        disabled={isEnriching}
+                        activeOpacity={0.7}
+                      >
+                        {/* Card content - same as above but with visit button instead of drag handle */}
                       {/* Card Header with gradient */}
                       <LinearGradient
                         colors={[COLORS.primary + '15', 'transparent']}
@@ -2064,46 +2237,10 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                           )}
                         </View>
 
-                        {/* Right: Action Buttons - Only show for draft routes */}
+                        {/* Right: Drag Handle - Only show for draft routes */}
                         {status === 'DRAFT' && (
-                          <View style={styles.cardActionButtons}>
-                            {/* Move Up */}
-                            <TouchableOpacity
-                              style={[styles.cardActionButton, index === 0 && styles.cardActionButtonDisabled]}
-                              onPress={(e) => handleMovePOI(selectedDay, index, 'up', e)}
-                              disabled={index === 0}
-                              activeOpacity={0.7}
-                            >
-                              <FontAwesome name="chevron-up" size={14} color={index === 0 ? COLORS.textSecondary : COLORS.primary} />
-                            </TouchableOpacity>
-                            
-                            {/* Move Down */}
-                            <TouchableOpacity
-                              style={[styles.cardActionButton, index === activities.length - 1 && styles.cardActionButtonDisabled]}
-                              onPress={(e) => handleMovePOI(selectedDay, index, 'down', e)}
-                              disabled={index === activities.length - 1}
-                              activeOpacity={0.7}
-                            >
-                              <FontAwesome name="chevron-down" size={14} color={index === activities.length - 1 ? COLORS.textSecondary : COLORS.primary} />
-                            </TouchableOpacity>
-                            
-                            {/* Replace */}
-                            <TouchableOpacity
-                              style={styles.cardActionButton}
-                              onPress={(e) => handleReplacePOI(activity, e)}
-                              activeOpacity={0.7}
-                            >
-                              <FontAwesome name="exchange" size={14} color={COLORS.primary} />
-                            </TouchableOpacity>
-                            
-                            {/* Delete */}
-                            <TouchableOpacity
-                              style={styles.cardActionButton}
-                              onPress={(e) => handleDeletePOI(activity, selectedDay, index, e)}
-                              activeOpacity={0.7}
-                            >
-                              <FontAwesome name="trash-o" size={14} color={COLORS.error} />
-                            </TouchableOpacity>
+                          <View style={styles.cardDragHandle}>
+                            <MaterialCommunityIcons name="drag-vertical" size={24} color={COLORS.textSecondary} />
                           </View>
                         )}
 
@@ -2148,6 +2285,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                         <Text style={styles.tapHintText}>Nhấn để xem chi tiết</Text>
                       </View>
                     </TouchableOpacity>
+                    )}
                   </View>
                 );
               })
@@ -2929,6 +3067,31 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.lg + 8,
     paddingTop: SPACING.md,
     backgroundColor: 'transparent',
+  },
+  // Swipe actions styles
+  swipeActionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    height: '100%',
+  },
+  swipeActionButton: {
+    width: 70,
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  swipeEditButton: {
+    backgroundColor: COLORS.primary,
+  },
+  swipeDeleteButton: {
+    backgroundColor: '#EF5350',
+  },
+  // Drag handle styles
+  cardDragHandle: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingLeft: SPACING.sm,
   },
 });
 
