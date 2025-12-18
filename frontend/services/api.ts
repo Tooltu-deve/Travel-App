@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'https://travel-app-vfcj.onrender.com'; // ⬅️ Local URL (Simulator only)
+const API_BASE_URL = 'https://localhost:3000'; // ⬅️ Local URL (Simulator only)
 // const API_BASE_URL = 'http://192.168.1.178:3000'; // ⬅️ WiFi IP (cho điện thoại thật)
 // ============================================
 // TYPES
@@ -202,6 +202,11 @@ const makeRequest = async <T>(
     // Check if response is not ok - throw error with message from server
     if (!response.ok) {
       console.error('❌ HTTP Error:', response.status, response.statusText);
+      console.error('❌ Error Response Body:', data);
+      console.error('❌ Request URL:', url);
+      console.error('❌ Request Method:', options.method || 'GET');
+      console.error('❌ Request Headers:', options.headers);
+      console.error('❌ Request Body:', options.body);
       const errorMessage = data?.message || data?.error?.message || data?.error || `HTTP ${response.status}: ${response.statusText}`;
       throw new Error(errorMessage);
     }
