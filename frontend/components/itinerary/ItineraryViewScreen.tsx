@@ -12,7 +12,6 @@ import {
   Dimensions,
   TextInput,
   FlatList,
-  Animated,
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +21,7 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 
 import { COLORS, SPACING } from '@/constants';
 import {
@@ -59,8 +59,9 @@ const calculateDistanceMeters = (lat1: number, lng1: number, lat2: number, lng2:
 interface Activity {
   name: string;
   location?: { lat: number; lng: number };
-  place?: { location: { lat: number; lng: number } };
+  place?: { location: { lat: number; lng: number }; placeID?: string };
   google_place_id?: string;
+  placeID?: string;
   encoded_polyline?: string;
   travel_duration_minutes?: number;
   estimated_arrival?: string;
@@ -167,6 +168,15 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const [isUpdatingRoute, setIsUpdatingRoute] = useState(false);
   const [sessionToken, setSessionToken] = useState<string>('');
+  
+  // Add POI modal state
+  const [isAddPOIModalVisible, setIsAddPOIModalVisible] = useState(false);
+  const [addSearchQuery, setAddSearchQuery] = useState('');
+  const [addAutocompleteResults, setAddAutocompleteResults] = useState<any[]>([]);
+  const [isAddSearching, setIsAddSearching] = useState(false);
+  const [addSessionToken, setAddSessionToken] = useState<string>('');
+  const [isUsingFavorites, setIsUsingFavorites] = useState(false);
+  const currentAddSearchRef = useRef<string>('');
   
   // Favorites from context
   const { favorites: favoritesPlaces, refreshFavorites } = useFavorites();
@@ -475,7 +485,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
       // Process all activities in parallel with timeout
       const enrichPromises = activities.map(async (activity, index) => {
-        const placeId = activity.google_place_id;
+        const placeId = activity.place?.placeID || activity.placeID || `activity-${index}`;
         if (!placeId) return;
 
         // Create unique key for this activity
@@ -939,6 +949,15 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       setSearchQuery('');
     }
   }, [isReplacePOIModalVisible]);
+  
+  // Reset Add POI modal session token khi đóng
+  useEffect(() => {
+    if (!isAddPOIModalVisible) {
+      setAddSessionToken('');
+      setAddAutocompleteResults([]);
+      setAddSearchQuery('');
+    }
+  }, [isAddPOIModalVisible]);
 
   // Debounced search for autocomplete
   useEffect(() => {
@@ -1037,7 +1056,51 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             isFavorite, // Đánh dấu nếu là favorite
           };
         });
-        setAutocompleteResults(normalized);
+        
+        // 🔍 Filter favorites that match search query
+        const searchLower = searchQuerySnapshot.toLowerCase().trim();
+        const matchedFavorites = favoritesPlaces
+          .filter((fav: any) => {
+            const name = fav.name?.toLowerCase() || '';
+            const address = (fav.address || fav.formatted_address || '').toLowerCase();
+            return name.includes(searchLower) || address.includes(searchLower);
+          })
+          .map((fav: any) => {
+            const favPlaceId = fav.googlePlaceId || fav.placeId || fav.id;
+            const normalizedFavPlaceId = favPlaceId?.replace(/^places\//, '');
+            
+            // Check if already in API results
+            const alreadyInResults = normalized.some((item: any) => {
+              const itemPlaceId = (item.placeId || '')?.replace(/^places\//, '');
+              return itemPlaceId === normalizedFavPlaceId;
+            });
+            
+            // Only add if not already in results
+            if (!alreadyInResults) {
+              return {
+                placeId: favPlaceId,
+                googlePlaceId: favPlaceId,
+                text: fav.name,
+                name: fav.name,
+                address: fav.address || fav.formatted_address || '',
+                description: fav.address || fav.formatted_address || '',
+                structuredFormat: {
+                  mainText: fav.name,
+                  secondaryText: fav.address || fav.formatted_address || '',
+                },
+                rating: fav.rating,
+                isFavorite: true,
+              };
+            }
+            return null;
+          })
+          .filter(Boolean); // Remove nulls
+        
+        // Combine: matched favorites first, then API results
+        const combined = [...matchedFavorites, ...normalized];
+        
+        console.log(`🔍 Search "${searchQuerySnapshot}": ${matchedFavorites.length} matched favorites + ${normalized.length} API results`);
+        setAutocompleteResults(combined);
       } catch (error: any) {
         console.error('Autocomplete error:', error);
         setAutocompleteResults([]);
@@ -1051,6 +1114,123 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     // - Nếu thêm sessionToken → useEffect chạy → setSessionToken → sessionToken thay đổi → useEffect chạy lại → vòng lặp!
     // - Session token chỉ cần được tạo khi searchQuery thay đổi (xóa hết text)
   }, [searchQuery, isReplacePOIModalVisible, favoritesPlaces, destination]);
+  
+  // Debounced search for Add POI autocomplete
+  useEffect(() => {
+    if (!isAddPOIModalVisible) {
+      return;
+    }
+
+    currentAddSearchRef.current = addSearchQuery;
+
+    if (!addSearchQuery.trim()) {
+      const newSessionToken = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+      console.log('🆕 Add POI session ended. Created new session token:', newSessionToken);
+      setAddSessionToken(newSessionToken);
+      
+      const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+        placeId: fav.googlePlaceId || fav.placeId || fav.id,
+        googlePlaceId: fav.googlePlaceId || fav.placeId || fav.id,
+        text: fav.name,
+        name: fav.name,
+        address: fav.address || fav.formatted_address || '',
+        description: fav.address || fav.formatted_address || '',
+        structuredFormat: {
+          mainText: fav.name,
+          secondaryText: fav.address || fav.formatted_address || '',
+        },
+        rating: fav.rating,
+        isFavorite: true,
+      }));
+      
+      console.log('💖 Showing favorites in Add POI modal:', transformedFavorites.length, 'items');
+      setAddAutocompleteResults(transformedFavorites);
+      setIsAddSearching(false);
+      return;
+    }
+    
+    // Nếu bật favorites mode, chỉ tìm trong favorites
+    if (isUsingFavorites) {
+      const filtered = favoritesPlaces
+        .filter((fav: any) => 
+          fav.name?.toLowerCase().includes(addSearchQuery.toLowerCase()) ||
+          fav.address?.toLowerCase().includes(addSearchQuery.toLowerCase())
+        )
+        .map((fav: any) => ({
+          placeId: fav.googlePlaceId || fav.placeId || fav.id,
+          googlePlaceId: fav.googlePlaceId || fav.placeId || fav.id,
+          text: fav.name,
+          name: fav.name,
+          address: fav.address || fav.formatted_address || '',
+          description: fav.address || fav.formatted_address || '',
+          structuredFormat: {
+            mainText: fav.name,
+            secondaryText: fav.address || fav.formatted_address || '',
+          },
+          rating: fav.rating,
+          isFavorite: true,
+        }));
+      setAddAutocompleteResults(filtered);
+      setIsAddSearching(false);
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      const searchQuerySnapshot = addSearchQuery;
+      setIsAddSearching(true);
+      try {
+        const token = await AsyncStorage.getItem('userToken');
+        if (!token) return;
+
+        const response = await autocompletePlacesAPI(
+          searchQuerySnapshot.trim(), 
+          addSessionToken || undefined, 
+          destination, 
+          token
+        );
+        
+        if (currentAddSearchRef.current !== searchQuerySnapshot) {
+          console.log('⚠️ Search query changed, ignoring stale Add POI results');
+          return;
+        }
+        
+        const predictionsRaw = Array.isArray(response)
+          ? response
+          : response.predictions || response.suggestions || [];
+        
+        const favoritePlaceIds = new Set(favoritesPlaces.map((fav: any) => 
+          (fav.googlePlaceId || fav.placeId || fav.id || '').replace(/^places\//, '')
+        ));
+        
+        const predictions = predictionsRaw.map((pred: any) => {
+          const placeId = (pred.placeId || pred.place_id || '').replace(/^places\//, '');
+          const isFavorite = favoritePlaceIds.has(placeId);
+          
+          return {
+            placeId: pred.placeId || pred.place_id,
+            googlePlaceId: pred.placeId || pred.place_id,
+            text: pred.text?.text || pred.text || pred.description,
+            name: pred.text?.text || pred.text || pred.description,
+            address: pred.structuredFormat?.secondaryText || '',
+            description: pred.structuredFormat?.secondaryText || '',
+            structuredFormat: pred.structuredFormat || {
+              mainText: pred.text?.text || pred.text || pred.description,
+              secondaryText: pred.structuredFormat?.secondaryText || '',
+            },
+            isFavorite,
+          };
+        });
+        
+        setAddAutocompleteResults(predictions);
+      } catch (error: any) {
+        console.error('Add POI autocomplete error:', error);
+      } finally {
+        setIsAddSearching(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [addSearchQuery, isAddPOIModalVisible, favoritesPlaces, destination]);
 
   // Handle replace POI button press
   const handleReplacePOI = async (activity: Activity, event: any) => {
@@ -1075,6 +1255,71 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
     }));
     setAutocompleteResults(transformedFavorites);
     setIsReplacePOIModalVisible(true);
+  };
+  
+  // Handle add POI button press
+  const handleAddPOI = () => {
+    setAddSearchQuery('');
+    setIsUsingFavorites(false);
+    const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+      placeId: fav.googlePlaceId || fav.placeId || fav.id,
+      googlePlaceId: fav.googlePlaceId || fav.placeId || fav.id,
+      text: fav.name,
+      name: fav.name,
+      address: fav.address || fav.formatted_address || '',
+      description: fav.address || fav.formatted_address || '',
+      structuredFormat: {
+        mainText: fav.name,
+        secondaryText: fav.address || fav.formatted_address || '',
+      },
+      rating: fav.rating,
+      isFavorite: true,
+    }));
+    setAddAutocompleteResults(transformedFavorites);
+    setIsAddPOIModalVisible(true);
+  };
+  
+  // Toggle favorites mode for Add POI
+  const toggleAddFavoritesMode = async () => {
+    if (isUsingFavorites) {
+      // Tắt favorites mode, hiện tất cả
+      setIsUsingFavorites(false);
+      setAddSearchQuery('');
+      const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+        placeId: fav.googlePlaceId || fav.placeId || fav.id,
+        googlePlaceId: fav.googlePlaceId || fav.placeId || fav.id,
+        text: fav.name,
+        name: fav.name,
+        address: fav.address || fav.formatted_address || '',
+        description: fav.address || fav.formatted_address || '',
+        structuredFormat: {
+          mainText: fav.name,
+          secondaryText: fav.address || fav.formatted_address || '',
+        },
+        rating: fav.rating,
+        isFavorite: true,
+      }));
+      setAddAutocompleteResults(transformedFavorites);
+    } else {
+      // Bật favorites mode
+      setIsUsingFavorites(true);
+      setAddSearchQuery('');
+      const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+        placeId: fav.googlePlaceId || fav.placeId || fav.id,
+        googlePlaceId: fav.googlePlaceId || fav.placeId || fav.id,
+        text: fav.name,
+        name: fav.name,
+        address: fav.address || fav.formatted_address || '',
+        description: fav.address || fav.formatted_address || '',
+        structuredFormat: {
+          mainText: fav.name,
+          secondaryText: fav.address || fav.formatted_address || '',
+        },
+        rating: fav.rating,
+        isFavorite: true,
+      }));
+      setAddAutocompleteResults(transformedFavorites);
+    }
   };
 
   // Handle delete POI
@@ -1322,16 +1567,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
   };
 
   // Render right actions for swipe (edit and delete buttons)
-  const renderRightActions = (index: number) => (
-    _progress: Animated.AnimatedInterpolation<number>,
-    dragX: Animated.AnimatedInterpolation<number>
-  ) => {
-    const scale = dragX.interpolate({
-      inputRange: [-100, 0],
-      outputRange: [1, 0],
-      extrapolate: 'clamp',
-    });
-
+  const renderRightActions = (index: number) => () => {
     return (
       <View style={styles.swipeActionsContainer}>
         {/* Edit Button */}
@@ -1345,9 +1581,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             }
           }}
         >
-          <Animated.View style={{ transform: [{ scale }] }}>
-            <FontAwesome name="pencil" size={20} color={COLORS.textWhite} />
-          </Animated.View>
+          <FontAwesome name="pencil" size={20} color={COLORS.textWhite} />
         </TouchableOpacity>
 
         {/* Delete Button */}
@@ -1361,12 +1595,262 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
             }
           }}
         >
-          <Animated.View style={{ transform: [{ scale }] }}>
-            <FontAwesome name="trash-o" size={20} color={COLORS.textWhite} />
-          </Animated.View>
+          <FontAwesome name="trash-o" size={20} color={COLORS.textWhite} />
         </TouchableOpacity>
       </View>
     );
+  };
+
+  // Handle drag end - update order
+  // Handle drag end - update order
+  const handleDragEnd = async (data: Activity[]) => {
+    if (!routeDetails) return;
+
+    const routeData = (routeDetails as any).route_data_json || routeDetails;
+    
+    // TEMP: Clone array gốc để đảm bảo không bao giờ mất data
+    const tempRouteData = JSON.parse(JSON.stringify(routeData));
+    
+    // Extract places với full info (PlaceDto format) từ data mới
+    const placesOrder = data
+      .map(act => {
+        const pid = act.google_place_id || 
+                    act.placeID || 
+                    (act.place as any)?.placeID || 
+                    (act as any).place_id;
+        const normalizedPid = pid?.replace(/^places\//, '') || '';
+        
+        if (!normalizedPid) return null;
+        
+        // Backend expect PlaceDto: { placeId, name, address }
+        return {
+          placeId: normalizedPid,
+          name: act.name || (act.place as any)?.name || 'Unknown Place',
+          address: (act.place as any)?.address || 
+                   (act.place as any)?.location_text || 
+                   (act as any).address || 
+                   'Unknown Address'
+        };
+      })
+      .filter(item => item !== null); // Fix: filter null thay vì Boolean
+    
+    // Nếu không có POI nào hợp lệ, giữ nguyên temp (không update gì cả)
+    if (placesOrder.length === 0) {
+      console.log('⚠️ No valid POIs to reorder, keeping original order');
+      return;
+    }
+    
+    // Optimistic update - chỉ update nếu có POI hợp lệ
+    const updatedRouteLocal = JSON.parse(JSON.stringify(routeData));
+    
+    if (updatedRouteLocal.optimized_route && Array.isArray(updatedRouteLocal.optimized_route)) {
+      updatedRouteLocal.optimized_route.forEach((day: any) => {
+        if (day.day === selectedDay && day.activities) {
+          // Update với data mới (giữ nguyên structure, chỉ đổi order)
+          day.activities = data.map(act => ({
+            ...act,
+            // Đảm bảo có đầy đủ thông tin cho BE vẽ lại routes
+            name: act.name,
+            location: act.location || act.place?.location,
+            google_place_id: act.google_place_id || act.placeID,
+            // Xóa polylines cũ để BE vẽ lại
+            encoded_polyline: undefined,
+            travel_duration_minutes: undefined,
+            steps: undefined,
+            start_encoded_polyline: undefined,
+            start_travel_duration_minutes: undefined,
+          }));
+        }
+      });
+    }
+    
+    if (updatedRouteLocal.days && Array.isArray(updatedRouteLocal.days)) {
+      updatedRouteLocal.days.forEach((day: any) => {
+        const dayNum = day.day ?? day.dayNumber;
+        if (dayNum === selectedDay && day.places) {
+          day.places = [...data];
+        }
+      });
+    }
+    
+    // Update UI ngay
+    const mergedLocal = {
+      ...routeDetails,
+      route_data_json: updatedRouteLocal
+    };
+    setRouteDetails(mergedLocal);
+
+    // Call API để recalculate routes với order mới
+    try {
+      setIsUpdatingRoute(true);
+      
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        // Rollback về temp nếu không có token
+        setRouteDetails({ ...routeDetails, route_data_json: tempRouteData });
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để thay đổi thứ tự.');
+        setIsUpdatingRoute(false);
+        return;
+      }
+      
+      const currentDayData = routeData.optimized_route?.find((d: any) => d.day === selectedDay) ||
+                            routeData.days?.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
+      
+      // Lấy startLocation: ưu tiên từ route settings, nếu không có thì dùng địa chỉ POI đầu tiên
+      let startLocationAddress = '';
+      if ((routeDetails as any).start_location_text) {
+        startLocationAddress = (routeDetails as any).start_location_text;
+      } else if (routeData.metadata?.start_location_text) {
+        startLocationAddress = routeData.metadata.start_location_text;
+      } else if (currentDayData?.startLocation) {
+        startLocationAddress = currentDayData.startLocation;
+      } else if (placesOrder.length > 0) {
+        // Fallback: dùng địa chỉ của POI đầu tiên
+        startLocationAddress = placesOrder[0].address;
+      } else {
+        startLocationAddress = routeData.destination || 'Destination';
+      }
+      
+      console.log('🔄 Reordering POIs:', {
+        routeId: (routeDetails as any).route_id,
+        destination: routeData.destination || (routeDetails as any).destination,
+        day: selectedDay,
+        totalActivities: data.length,
+        validPlaces: placesOrder.length,
+        placesData: placesOrder,
+        travelMode: currentDayData?.travel_mode || currentDayData?.travelMode || 'driving',
+        startLocationAddress,
+        isManualRoute,
+      });
+
+      // Phân biệt AI route vs Manual route
+      let response;
+      
+      if (isManualRoute) {
+        // Manual route: gọi endpoint calculate-routes để recalculate với order mới
+        console.log('📍 Manual route: calling calculate-routes API');
+        response = await fetch(`${API_BASE_URL}/api/v1/custom-itinerary/calculate-routes`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            destination: routeData.destination || (routeDetails as any).destination || 'Destination',
+            days: [{
+              dayNumber: selectedDay,
+              travelMode: currentDayData?.travel_mode || currentDayData?.travelMode || 'driving',
+              startLocation: startLocationAddress,
+              places: placesOrder,
+            }],
+          }),
+        });
+      } else {
+        // AI route: gọi endpoint custom-route để lưu lại thứ tự mới và trigger BE vẽ lại routes
+        console.log('🤖 AI route: calling custom-route API to trigger route recalculation');
+        
+        // Đảm bảo gửi đầy đủ metadata và travel_mode cho BE
+        if (updatedRouteLocal.optimized_route && Array.isArray(updatedRouteLocal.optimized_route)) {
+          updatedRouteLocal.optimized_route.forEach((day: any) => {
+            if (!day.travel_mode) day.travel_mode = 'driving';
+            if (!day.day_start_time) day.day_start_time = '09:00:00';
+          });
+        }
+        
+        response = await fetch(`${API_BASE_URL}/api/v1/itineraries/custom-route`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            route: {
+              route_id: (routeDetails as any).route_id,
+              start_location: (routeDetails as any).start_location || routeData.start_location || null,
+              route_data_json: updatedRouteLocal,
+            },
+            message: 'Thay đổi thứ tự địa điểm',
+          }),
+        });
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Network error' }));
+        console.error('❌ Reorder API error:', errorData);
+        // Rollback về temp (array gốc không bao giờ rỗng)
+        setRouteDetails({ ...routeDetails, route_data_json: tempRouteData });
+        throw new Error(errorData.message || 'Không thể cập nhật thứ tự');
+      }
+
+      const result = await response.json();
+      console.log('✅ Recalculate routes success');
+      
+      if (isManualRoute) {
+        // Manual route: backend trả về routes mới đã calculate
+        if (result.route_id && result.days) {
+          const newRouteData = {
+            optimized_route: result.days.map((day: any) => ({
+              day: day.dayNumber,
+              day_start_time: day.dayStartTime || '09:00:00',
+              travel_mode: day.travelMode || 'driving',
+              activities: day.places || []
+            })),
+            destination: routeData.destination,
+            duration_days: routeData.duration_days,
+          };
+          
+          const mergedRoute = {
+            ...(routeDetails as any),
+            route_data_json: newRouteData,
+            start_location: (routeDetails as any).start_location || routeData.start_location,
+          };
+          
+          // Reset enrich state
+          enrichedActivitiesRef.current = new Set();
+          enrichingInProgressRef.current = new Set();
+          setRefreshEnrichKey(k => k + 1);
+          
+          setRouteDetails(mergedRoute);
+          console.log('✅ Updated route with new order and routes');
+        }
+      } else {
+        // AI route: backend trả về route đã update với polylines mới
+        if (result.route) {
+          const mergedRoute = {
+            ...result.route,
+            start_location: result.route.start_location || (routeDetails as any).start_location || routeData.start_location || null,
+          };
+          
+          // Reset enrich state
+          enrichedActivitiesRef.current = new Set();
+          enrichingInProgressRef.current = new Set();
+          setRefreshEnrichKey(k => k + 1);
+          
+          setRouteDetails(mergedRoute);
+          console.log('✅ AI route order updated with new polylines from backend');
+          
+          // Kiểm tra xem có polylines mới không
+          const hasPolylines = result.route?.route_data_json?.optimized_route?.[selectedDay - 1]?.activities?.some(
+            (act: any) => act.encoded_polyline || act.start_encoded_polyline
+          );
+          
+          if (hasPolylines) {
+            Alert.alert('Thành công', 'Đã cập nhật thứ tự và tính toán lại tuyến đường.');
+          } else {
+            Alert.alert(
+              'Thành công', 
+              'Đã thay đổi thứ tự địa điểm. Đang tính toán tuyến đường, vui lòng đợi một chút.',
+              [{ text: 'OK' }]
+            );
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('❌ Error reordering:', error);
+      Alert.alert('Lỗi', error.message || 'Không thể thay đổi thứ tự');
+    } finally {
+      setIsUpdatingRoute(false);
+    }
   };
 
   // Handle select new POI from autocomplete
@@ -1733,6 +2217,298 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
       setIsUpdatingRoute(false);
     }
   };
+  
+  // Handle select POI from Add POI modal
+  const handleSelectAddPOI = async (suggestion: any) => {
+    if (!routeDetails) {
+      return;
+    }
+
+    const placeId = suggestion.googlePlaceId || suggestion.placeId || suggestion.place_id;
+    if (!placeId) {
+      Alert.alert('Lỗi', 'Không tìm thấy Place ID.');
+      return;
+    }
+
+    const normalizedNewPlaceId = (placeId || '').replace(/^places\//, '');
+
+    setIsUpdatingRoute(true);
+    
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập.');
+        return;
+      }
+
+      // Enrich để lấy đầy đủ thông tin
+      let enrichedData: any = null;
+      try {
+        enrichedData = await enrichPlaceAPI(token, placeId, false);
+        enrichedData = enrichedData?.data || enrichedData;
+      } catch (e: any) {
+        console.warn('Failed to enrich place, using basic info:', e.message);
+      }
+
+      const newName =
+        enrichedData?.name ||
+        enrichedData?.displayName?.text ||
+        suggestion.text?.text ||
+        suggestion.text ||
+        suggestion.description ||
+        'Địa điểm mới';
+      const coords =
+        enrichedData?.location?.coordinates ||
+        (enrichedData?.location?.lat !== undefined && enrichedData?.location?.lng !== undefined
+          ? [enrichedData.location.lng, enrichedData.location.lat]
+          : undefined);
+
+      let newLat: number | undefined;
+      let newLng: number | undefined;
+      if (coords && Array.isArray(coords) && coords.length === 2) {
+        [newLng, newLat] = coords;
+      } else if (enrichedData?.location?.lat !== undefined && enrichedData?.location?.lng !== undefined) {
+        newLat = enrichedData.location.lat;
+        newLng = enrichedData.location.lng;
+      }
+
+      // Kiểm tra trùng place_id trong ngày hiện tại
+      const routeData = (routeDetails as any).route_data_json || routeDetails;
+      let existingPlaceName = '';
+      let existingPlaceId = '';
+
+      if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+        const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
+        if (currentDay?.activities && Array.isArray(currentDay.activities)) {
+          for (const activity of currentDay.activities) {
+            const activityPlaceId = (activity.google_place_id || '').replace(/^places\//, '');
+            if (activityPlaceId === normalizedNewPlaceId) {
+              existingPlaceName = activity.name;
+              existingPlaceId = activityPlaceId;
+              break;
+            }
+          }
+        }
+      }
+
+      if (routeData.days && Array.isArray(routeData.days)) {
+        const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
+        if (currentDay?.places && Array.isArray(currentDay.places)) {
+          for (const place of currentDay.places) {
+            const placePlaceId = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+            if (placePlaceId === normalizedNewPlaceId) {
+              existingPlaceName = place.name;
+              existingPlaceId = placePlaceId;
+              break;
+            }
+          }
+        }
+      }
+
+      // Kiểm tra địa điểm quá gần với các địa điểm khác (trước khi kiểm tra trùng)
+      if (newLat !== undefined && newLng !== undefined) {
+        if (routeData.optimized_route && Array.isArray(routeData.optimized_route)) {
+          const currentDay = routeData.optimized_route.find((d: any) => d.day === selectedDay);
+          if (currentDay?.activities && Array.isArray(currentDay.activities)) {
+            for (const activity of currentDay.activities) {
+              const existingPlaceId = (activity.google_place_id || '').replace(/^places\//, '');
+              if (existingPlaceId === normalizedNewPlaceId) continue;
+
+              const activityLat = activity.location?.lat || activity.place?.location?.lat;
+              const activityLng = activity.location?.lng || activity.place?.location?.lng;
+              if (activityLat !== undefined && activityLng !== undefined) {
+                const distance = calculateDistanceMeters(newLat, newLng, activityLat, activityLng);
+                if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
+                  Alert.alert(
+                    'Địa điểm quá gần',
+                    `Địa điểm mới nằm quá gần địa điểm "${activity.name}" (${Math.round(distance)}m). Vui lòng chọn địa điểm khác xa hơn.`,
+                    [{ text: 'OK' }]
+                  );
+                  return;
+                }
+              }
+            }
+          }
+        }
+
+        if (routeData.days && Array.isArray(routeData.days)) {
+          const currentDay = routeData.days.find((d: any) => (d.day ?? d.dayNumber) === selectedDay);
+          if (currentDay?.places && Array.isArray(currentDay.places)) {
+            for (const place of currentDay.places) {
+              const existingPlaceId = ((place as any).google_place_id || place.placeId || '').replace(/^places\//, '');
+              if (existingPlaceId === normalizedNewPlaceId) continue;
+
+              const placeLat = place.location?.lat;
+              const placeLng = place.location?.lng;
+              if (placeLat !== undefined && placeLng !== undefined) {
+                const distance = calculateDistanceMeters(newLat, newLng, placeLat, placeLng);
+                if (distance < MIN_DISTANCE_THRESHOLD_METERS) {
+                  Alert.alert(
+                    'Địa điểm quá gần',
+                    `Địa điểm mới nằm quá gần địa điểm "${place.name}" (${Math.round(distance)}m). Vui lòng chọn địa điểm khác xa hơn.`,
+                    [{ text: 'OK' }]
+                  );
+                  return;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const placeIdForSend = placeId.startsWith('places/') ? placeId : `places/${normalizedNewPlaceId}`;
+      
+      // Function thực hiện thêm POI
+      const performAddPOI = async () => {
+        try {
+          // Build updated route payload - THÊM POI vào cuối danh sách
+          const updatedRoute = JSON.parse(JSON.stringify(routeData));
+          
+          console.log('📍 Starting to add POI:', {
+            selectedDay,
+            newName,
+            placeIdForSend,
+            hasOptimizedRoute: !!updatedRoute.optimized_route,
+            hasDays: !!updatedRoute.days,
+            optimizedRouteDays: updatedRoute.optimized_route?.map((d: any) => d.day),
+            daysArray: updatedRoute.days?.map((d: any) => d.day ?? d.dayNumber),
+          });
+
+          let poiAdded = false;
+
+          // Thêm vào optimized_route
+          if (updatedRoute.optimized_route && Array.isArray(updatedRoute.optimized_route)) {
+            const dayIndex = updatedRoute.optimized_route.findIndex((d: any) => d.day === selectedDay);
+            console.log('🔍 optimized_route dayIndex:', dayIndex);
+            if (dayIndex !== -1) {
+              if (!updatedRoute.optimized_route[dayIndex].activities) {
+                updatedRoute.optimized_route[dayIndex].activities = [];
+              }
+              updatedRoute.optimized_route[dayIndex].activities.push({
+                name: newName,
+                location: newLat !== undefined && newLng !== undefined ? { lat: newLat, lng: newLng } : undefined,
+                google_place_id: placeIdForSend,
+              });
+              console.log('✅ Added to optimized_route, total activities:', updatedRoute.optimized_route[dayIndex].activities.length);
+              poiAdded = true;
+            } else {
+              console.warn('⚠️ Day not found in optimized_route');
+            }
+          }
+
+          // Thêm vào days (custom itinerary)
+          if (updatedRoute.days && Array.isArray(updatedRoute.days)) {
+            const dayIndex = updatedRoute.days.findIndex((d: any) => (d.day ?? d.dayNumber) === selectedDay);
+            console.log('🔍 days dayIndex:', dayIndex);
+            if (dayIndex !== -1) {
+              if (!updatedRoute.days[dayIndex].places) {
+                updatedRoute.days[dayIndex].places = [];
+              }
+              updatedRoute.days[dayIndex].places.push({
+                name: newName,
+                placeId: placeIdForSend,
+                google_place_id: placeIdForSend,
+                location: newLat !== undefined && newLng !== undefined ? { lat: newLat, lng: newLng } : undefined,
+              });
+              console.log('✅ Added to days, total places:', updatedRoute.days[dayIndex].places.length);
+              poiAdded = true;
+            } else {
+              console.warn('⚠️ Day not found in days array');
+            }
+          }
+          
+          if (!poiAdded) {
+            throw new Error('Không tìm thấy ngày trong lộ trình để thêm POI');
+          }
+
+          // Call API to update route
+          const routeId = (routeDetails as any).route_id;
+          const response = await fetch(`${API_BASE_URL}/api/v1/itineraries/custom-route`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              route: {
+                route_id: routeId,
+                start_location:
+                  (routeDetails as any).start_location ||
+                  routeData.start_location ||
+                  routeData.metadata?.start_location ||
+                  undefined,
+                route_data_json: updatedRoute,
+              },
+              message: 'Thêm địa điểm mới vào lộ trình',
+            }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error('❌ API error:', errorText);
+            throw new Error(errorText || 'Failed to add POI');
+          }
+
+          const result = await response.json();
+          console.log('✅ API response:', result);
+          
+          if (result.route) {
+            const updatedRouteFromBackend = {
+              ...routeDetails,
+              route_data_json: result.route.route_data_json,
+            };
+            enrichedActivitiesRef.current = new Set();
+            enrichingInProgressRef.current = new Set();
+            setRefreshEnrichKey(k => k + 1);
+            setRouteDetails(updatedRouteFromBackend);
+            setIsAddPOIModalVisible(false);
+            Alert.alert(
+              'Thành công',
+              'Đã thêm địa điểm vào lộ trình.',
+              [{ text: 'OK' }]
+            );
+          }
+        } catch (error: any) {
+          console.error('❌ Error in performAddPOI:', error);
+          Alert.alert('Lỗi', error.message || 'Không thể thêm địa điểm.');
+        }
+      };
+      
+      // Nếu POI trùng, hiện cảnh báo và chờ xác nhận
+      if (existingPlaceId) {
+        Alert.alert(
+          'Cảnh báo',
+          `Địa điểm "${existingPlaceName}" đã có trong ngày này. Bạn có chắc muốn thêm lại?`,
+          [
+            { 
+              text: 'Hủy', 
+              style: 'cancel', 
+              onPress: () => {
+                setIsUpdatingRoute(false);
+              }
+            },
+            { 
+              text: 'Thêm', 
+              style: 'default',
+              onPress: async () => {
+                await performAddPOI();
+                setIsUpdatingRoute(false);
+              }
+            }
+          ]
+        );
+        return; // QUAN TRỌNG: Return để chờ user chọn
+      }
+      
+      // Nếu không trùng, thêm POI luôn
+      await performAddPOI();
+    } catch (error: any) {
+      console.error('❌ Error adding POI:', error);
+      Alert.alert('Lỗi', error.message || 'Không thể thêm địa điểm.');
+    } finally {
+      setIsUpdatingRoute(false);
+    }
+  };
 
   return (
     <Modal
@@ -1783,7 +2559,12 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               </View>
             </View>
 
-      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <ScrollView 
+          style={styles.container} 
+          showsVerticalScrollIndicator={false}
+          nestedScrollEnabled={true}
+        >
         {/* Map */}
         {mapRegion && (
           <View style={styles.mapContainer}>
@@ -1849,7 +2630,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                   : coord;
 
                 const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
-                const placeId = activity.google_place_id || `activity-${index}`;
+                const placeId = activity.place?.placeID || activity.placeID || activity.google_place_id || `activity-${index}`;
                 
                 return (
                   <Marker 
@@ -1904,8 +2685,9 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
 
         {/* Activities */}
         <View style={styles.activitiesContainer}>
-          <View style={styles.activitiesContent}>
-              {/* Start point card (hiển thị trước POI đầu tiên) */}
+          <GestureHandlerRootView style={{ flex: 1 }}>
+            <View style={styles.activitiesContent}>
+                {/* Start point card (hiển thị trước POI đầu tiên) */}
               {startLocation && activities.length > 0 && (
                 <View>
                   <View style={styles.activityCard}>
@@ -1971,9 +2753,27 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               <View style={styles.emptyState}>
                 <FontAwesome name="map-o" size={48} color={COLORS.textSecondary} />
                 <Text style={styles.emptyStateText}>Chưa có hoạt động nào</Text>
+                {status === 'DRAFT' && (
+                  <TouchableOpacity
+                    style={styles.addPOIButton}
+                    onPress={handleAddPOI}
+                    activeOpacity={0.7}
+                  >
+                    <FontAwesome name="plus" size={16} color={COLORS.textWhite} />
+                    <Text style={styles.addPOIButtonText}>Thêm địa điểm</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-            ) : (
-              activities.map((activity, index) => {
+            ) : status === 'DRAFT' ? (
+              // DRAFT routes (AI và Manual): Cho phép kéo thả để thay đổi vị trí
+              <DraggableFlatList
+                data={activities}
+                onDragEnd={({ data }) => handleDragEnd(data)}
+                keyExtractor={(item, idx) => `draggable-${selectedDay}-${item.google_place_id || idx}`}
+                scrollEnabled={false}
+                nestedScrollEnabled={true}
+                renderItem={({ item: activity, drag, isActive, getIndex }: RenderItemParams<Activity>) => {
+                const index = getIndex() ?? 0;
                 const activityName = activity.name || 'Hoạt động';
                 const arrival = activity.estimated_arrival;
                 const departure = activity.estimated_departure;
@@ -1988,9 +2788,35 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                 const rating = (activity as any).ecs_score || (activity as any).rating;
                 const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
 
+                // Render swipe actions inline
+                const renderLeftActionsInline = () => (
+                  <View style={styles.swipeActionsContainer}>
+                    <TouchableOpacity
+                      style={[styles.swipeActionButton, styles.swipeDeleteButton]}
+                      onPress={(event) => handleDeletePOI(activity, selectedDay, index, event)}
+                    >
+                      <FontAwesome name="trash-o" size={24} color={COLORS.textWhite} />
+                      <Text style={styles.swipeActionText}>Xóa</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+
+                const renderRightActionsInline = () => (
+                  <View style={styles.swipeActionsContainer}>
+                    <TouchableOpacity
+                      style={[styles.swipeActionButton, styles.swipeEditButton]}
+                      onPress={(event) => handleReplacePOI(activity, event)}
+                    >
+                      <FontAwesome name="exchange" size={24} color={COLORS.textWhite} />
+                      <Text style={styles.swipeActionText}>Thay</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+
                 return (
-                  <View key={`activity-${index}`}>
-                    {/* Travel time indicator - hiển thị từ điểm bắt đầu đến POI đầu tiên hoặc giữa các POI */}
+                  <ScaleDecorator>
+                    <View>
+                      {/* Travel time indicator - hiển thị từ điểm bắt đầu đến POI đầu tiên hoặc giữa các POI */}
                     {showTravelIndicator && (
                       <View style={styles.travelTimeIndicator}>
                         <View style={styles.travelDashedLine} />
@@ -2002,20 +2828,24 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                       </View>
                     )}
 
-                    {/* Swipeable Activity Card - Only swipeable in DRAFT mode */}
-                    {status === 'DRAFT' ? (
-                      <Swipeable
-                        renderRightActions={renderRightActions(index)}
-                        overshootRight={false}
-                        friction={2}
-                      >
+                    {/* Activity Card - with Swipeable for DRAFT mode */}
+                    <Swipeable
+                      renderLeftActions={renderLeftActionsInline}
+                      renderRightActions={renderRightActionsInline}
+                      overshootLeft={false}
+                      overshootRight={false}
+                      friction={2}
+                      leftThreshold={40}
+                      rightThreshold={40}
+                    >
                         <TouchableOpacity
-                          style={[styles.activityCard, isVisited && styles.activityCardVisited]}
+                          style={[styles.activityCard, isVisited && styles.activityCardVisited, isActive && styles.activityCardDragging]}
                           onPress={() => handleActivityPress(activity)}
-                          disabled={isEnriching}
+                          onLongPress={drag}
+                          disabled={isEnriching || isActive}
                           activeOpacity={0.7}
                         >
-                          {/* Card content goes here - same as below */}
+                          {/* Card Header with gradient */}
                           <LinearGradient
                             colors={[COLORS.primary + '15', 'transparent']}
                             start={{ x: 0, y: 0 }}
@@ -2023,7 +2853,17 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                             style={styles.cardGradientOverlay}
                           />
 
-                          {/* Number Badge */}
+                          {/* Visited overlay gradient */}
+                          {isVisited && (
+                            <LinearGradient
+                              colors={[COLORS.success + '10', 'transparent']}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 1, y: 1 }}
+                              style={styles.cardVisitedOverlay}
+                            />
+                          )}
+
+                          {/* Number Badge - Positioned Absolutely at Top-Left */}
                           <View style={[styles.cardNumberBadge, isVisited && styles.cardNumberBadgeVisited]}>
                             <LinearGradient
                               colors={[isVisited ? '#66BB6A' : COLORS.primary, isVisited ? '#66BB6A' : COLORS.gradientSecondary]}
@@ -2052,7 +2892,7 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                                 </Text>
                               </View>
 
-                              {/* Opening Hours Row */}
+                              {/* Opening Hours Row - Expandable */}
                               {(() => {
                                 const openingHours = (activity as any).openingHours;
                                 const activityKey = `${selectedDay}-${index}`;
@@ -2063,38 +2903,371 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                                   const dayIndex = today === 0 ? 6 : today - 1;
                                   const todayHours = openingHours.weekdayDescriptions[dayIndex];
                                   
-                                  return (
-                                    <View style={styles.openingHoursContainer}>
-                                      {todayHours && (
-                                        <TouchableOpacity 
-                                          style={styles.cardRow}
-                                          onPress={() => toggleOpeningHours(activityKey)}
-                                          activeOpacity={0.7}
-                                        >
-                                          <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
-                                          <Text style={styles.cardOpeningHours} numberOfLines={1}>
-                                            {todayHours.split(': ')[1] || todayHours}
+                                  if (isExpanded) {
+                                    // Show all days
+                                    return (
+                                      <View style={styles.expandedOpeningHoursContainer}>
+                                        {openingHours.weekdayDescriptions.map((dayHours: string, idx: number) => (
+                                          <Text key={idx} style={styles.expandedOpeningHoursText}>
+                                            {dayHours}
                                           </Text>
-                                          <FontAwesome 
-                                            name={isExpanded ? "chevron-up" : "chevron-down"} 
-                                            size={10} 
-                                            color={COLORS.textSecondary}
-                                            style={{ marginLeft: 4 }}
-                                          />
+                                        ))}
+                                        <TouchableOpacity onPress={() => toggleOpeningHours(activityKey)}>
+                                          <Text style={styles.expandedOpeningHoursToggle}>Thu gọn ↑</Text>
                                         </TouchableOpacity>
-                                      )}
-                                      
-                                      {isExpanded && (
-                                        <View style={styles.allHoursContainer}>
+                                      </View>
+                                    );
+                                  } else if (todayHours) {
+                                    // Show today only
+                                    const hoursText = todayHours.split(': ')[1] || todayHours;
+                                    return (
+                                      <TouchableOpacity 
+                                        style={styles.cardRow} 
+                                        onPress={() => toggleOpeningHours(activityKey)}
+                                      >
+                                        <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
+                                        <Text style={styles.cardOpeningHours} numberOfLines={1}>
+                                          {hoursText}
+                                        </Text>
+                                        <Text style={styles.expandMoreIndicator}> ↓</Text>
+                                      </TouchableOpacity>
+                                    );
+                                  }
+                                }
+                                return null;
+                              })()}
+
+                              {/* Loading indicator */}
+                              {isEnriching && (
+                                <ActivityIndicator 
+                                  size="small" 
+                                  color={COLORS.primary} 
+                                  style={styles.cardLoader} 
+                                />
+                              )}
+                            </View>
+                          </View>
+
+                          {/* Tap hint */}
+                          <View style={styles.tapHint}>
+                            <FontAwesome name="hand-pointer-o" size={10} color={COLORS.textSecondary} />
+                            <Text style={styles.tapHintText}>Giữ & kéo: Đổi vị trí • Vuốt: Xóa/Thay</Text>
+                          </View>
+                        </TouchableOpacity>
+                      </Swipeable>
+                    </View>
+                  </ScaleDecorator>
+                );
+              }}
+            />
+            ) : (
+              // Manual routes hoặc CONFIRMED/MAIN routes: Không cho kéo thả, chỉ hiển thị list
+              activities.map((activity, index) => {
+                const activityName = activity.name || 'Hoạt động';
+                const arrival = activity.estimated_arrival;
+                const departure = activity.estimated_departure;
+                const duration = calculateDuration(arrival, departure);
+                const travelTimeRaw = activity.travel_duration_minutes;
+                const travelTime = travelTimeRaw != null ? Math.round(travelTimeRaw) : null;
+                const showTravelIndicator =
+                  travelTime != null && (!startLocation ? true : index > 0);
+                const hasPhoto = activity.google_place_id;
+                const rating = (activity as any).ecs_score || (activity as any).rating;
+                const isVisited = status === 'MAIN' && visitedActivities.has(`${selectedDay}-${index}`);
+                
+                // Render swipe actions cho DRAFT manual routes
+                const renderLeftActions = () => (
+                  <View style={styles.swipeActionsContainer}>
+                    <TouchableOpacity
+                      style={[styles.swipeActionButton, styles.swipeDeleteButton]}
+                      onPress={(event) => handleDeletePOI(activity, selectedDay, index, event)}
+                    >
+                      <FontAwesome name="trash-o" size={24} color={COLORS.textWhite} />
+                      <Text style={styles.swipeActionText}>Xóa</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+
+                const renderRightActions = () => (
+                  <View style={styles.swipeActionsContainer}>
+                    <TouchableOpacity
+                      style={[styles.swipeActionButton, styles.swipeEditButton]}
+                      onPress={(event) => handleReplacePOI(activity, event)}
+                    >
+                      <FontAwesome name="exchange" size={24} color={COLORS.textWhite} />
+                      <Text style={styles.swipeActionText}>Thay</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+
+                return (
+                  <View key={`activity-${index}`}>
+                    {/* Travel time indicator */}
+                    {showTravelIndicator && (
+                      <View style={styles.travelTimeIndicator}>
+                        <View style={styles.travelDashedLine} />
+                        <View style={styles.travelTimebadge}>
+                          <FontAwesome name="car" size={12} color={COLORS.primary} />
+                          <Text style={styles.travelTimeBadgeText}>{travelTime}m</Text>
+                        </View>
+                        <View style={styles.travelDashedLine} />
+                      </View>
+                    )}
+
+                    {status === 'DRAFT' ? (
+                      // DRAFT manual routes: Cho phép swipe để xóa/thay
+                      <Swipeable
+                        renderLeftActions={renderLeftActions}
+                        renderRightActions={renderRightActions}
+                        overshootLeft={false}
+                        overshootRight={false}
+                      >
+                        <TouchableOpacity
+                          style={[styles.activityCard, isVisited && styles.activityCardVisited]}
+                          onPress={() => handleActivityPress(activity)}
+                          disabled={isEnriching}
+                          activeOpacity={0.7}
+                        >
+                          {/* Card Header with gradient */}
+                          <LinearGradient
+                              colors={[COLORS.primary + '15', 'transparent']}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 1, y: 1 }}
+                              style={styles.cardGradientOverlay}
+                            />
+
+                            {/* Visited overlay gradient */}
+                            {isVisited && (
+                              <LinearGradient
+                                colors={[COLORS.success + '10', 'transparent']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={styles.cardVisitedOverlay}
+                              />
+                            )}
+
+                            {/* Number Badge - Positioned Absolutely at Top-Left */}
+                            <View style={[styles.cardNumberBadge, isVisited && styles.cardNumberBadgeVisited]}>
+                              <LinearGradient
+                                colors={[isVisited ? '#66BB6A' : COLORS.primary, isVisited ? '#66BB6A' : COLORS.gradientSecondary]}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={styles.numberBadgeGradient}
+                              >
+                                <Text style={styles.numberBadgeText}>{index + 1}</Text>
+                              </LinearGradient>
+                            </View>
+
+                            <View style={styles.cardContent}>
+                              {/* Center: Info */}
+                              <View style={styles.cardInfo}>
+                                <Text style={styles.cardTitle} numberOfLines={2}>
+                                  {activityName}
+                                </Text>
+                                
+                                {/* Time Row */}
+                                <View style={styles.cardRow}>
+                                  <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
+                                  <Text style={styles.cardTime}>
+                                  {isManualRoute
+                                    ? 'Thời gian tự chọn'
+                                    : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
+                                  </Text>
+                                </View>
+
+                                {/* Opening Hours Row - Expandable for MAIN mode */}
+                                {(() => {
+                                  const openingHours = (activity as any).openingHours;
+                                  const activityKey = `${selectedDay}-${index}`;
+                                  const isExpanded = expandedOpeningHours.has(activityKey);
+                                  
+                                  if (openingHours?.weekdayDescriptions) {
+                                    const today = new Date().getDay();
+                                    const dayIndex = today === 0 ? 6 : today - 1;
+                                    const todayHours = openingHours.weekdayDescriptions[dayIndex];
+                                    
+                                    if (isExpanded) {
+                                      // Show all days
+                                      return (
+                                        <View style={styles.expandedOpeningHoursContainer}>
                                           {openingHours.weekdayDescriptions.map((dayHours: string, idx: number) => (
-                                            <Text key={idx} style={styles.dayHoursText}>
+                                            <Text key={idx} style={styles.expandedOpeningHoursText}>
                                               {dayHours}
                                             </Text>
                                           ))}
+                                          <TouchableOpacity onPress={() => toggleOpeningHours(activityKey)}>
+                                            <Text style={styles.expandedOpeningHoursToggle}>Thu gọn ↑</Text>
+                                          </TouchableOpacity>
                                         </View>
-                                      )}
-                                    </View>
-                                  );
+                                      );
+                                    } else if (todayHours) {
+                                      // Show today only
+                                      const hoursText = todayHours.split(': ')[1] || todayHours;
+                                      return (
+                                        <TouchableOpacity 
+                                          style={styles.cardRow} 
+                                          onPress={() => toggleOpeningHours(activityKey)}
+                                        >
+                                          <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
+                                          <Text style={styles.cardOpeningHours} numberOfLines={1}>
+                                            {hoursText}
+                                          </Text>
+                                          <Text style={styles.expandMoreIndicator}> ↓</Text>
+                                        </TouchableOpacity>
+                                      );
+                                    }
+                                  }
+                                  return null;
+                                })()}
+
+                                {/* Loading indicator */}
+                                {isEnriching && (
+                                  <ActivityIndicator 
+                                    size="small" 
+                                    color={COLORS.primary} 
+                                    style={styles.cardLoader} 
+                                  />
+                                )}
+                              </View>
+
+                              {/* Right: Visit Check Button - Only show for main routes */}
+                              {status === 'MAIN' && (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.cardVisitButton,
+                                    visitedActivities.has(`${selectedDay}-${index}`) && styles.cardVisitButtonChecked,
+                                    animatingButtons.has(`${selectedDay}-${index}`) && styles.cardVisitButtonAnimating
+                                  ]}
+                                  onPress={() => toggleVisited(selectedDay, index)}
+                                  activeOpacity={0.7}
+                                >
+                                  {visitedActivities.has(`${selectedDay}-${index}`) ? (
+                                    <LinearGradient
+                                      colors={['#66BB6A', '#66BB6A']}
+                                      start={{ x: 0, y: 0 }}
+                                      end={{ x: 1, y: 1 }}
+                                      style={styles.cardVisitButtonGradient}
+                                    >
+                                      <MaterialCommunityIcons
+                                        name="check"
+                                        size={22}
+                                        color={COLORS.textWhite}
+                                      />
+                                    </LinearGradient>
+                                  ) : (
+                                    <MaterialCommunityIcons
+                                      name="check"
+                                      size={22}
+                                      color={COLORS.textSecondary}
+                                    />
+                                  )}
+                                </TouchableOpacity>
+                              )}
+                            </View>
+
+                          {/* Tap hint */}
+                          <View style={styles.tapHint}>
+                            <FontAwesome name="hand-pointer-o" size={10} color={COLORS.textSecondary} />
+                            <Text style={styles.tapHintText}>Vuốt: Xóa/Thay • Nhấn: Chi tiết</Text>
+                          </View>
+                        </TouchableOpacity>
+                      </Swipeable>
+                    ) : (
+                      // CONFIRMED/MAIN routes: Chỉ xem, không cho chỉnh sửa
+                      <TouchableOpacity
+                        style={[styles.activityCard, isVisited && styles.activityCardVisited]}
+                        onPress={() => handleActivityPress(activity)}
+                        disabled={isEnriching}
+                        activeOpacity={0.7}
+                      >
+                        {/* Card Header with gradient */}
+                        <LinearGradient
+                            colors={[COLORS.primary + '15', 'transparent']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.cardGradientOverlay}
+                          />
+
+                          {/* Visited overlay gradient */}
+                          {isVisited && (
+                            <LinearGradient
+                              colors={[COLORS.success + '10', 'transparent']}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 1, y: 1 }}
+                              style={styles.cardVisitedOverlay}
+                            />
+                          )}
+
+                          {/* Number Badge - Positioned Absolutely at Top-Left */}
+                          <View style={[styles.cardNumberBadge, isVisited && styles.cardNumberBadgeVisited]}>
+                            <LinearGradient
+                              colors={[isVisited ? '#66BB6A' : COLORS.primary, isVisited ? '#66BB6A' : COLORS.gradientSecondary]}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 1, y: 1 }}
+                              style={styles.numberBadgeGradient}
+                            >
+                              <Text style={styles.numberBadgeText}>{index + 1}</Text>
+                            </LinearGradient>
+                          </View>
+
+                          <View style={styles.cardContent}>
+                            {/* Center: Info */}
+                            <View style={styles.cardInfo}>
+                              <Text style={styles.cardTitle} numberOfLines={2}>
+                                {activityName}
+                              </Text>
+                              
+                              {/* Time Row */}
+                              <View style={styles.cardRow}>
+                                <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
+                                <Text style={styles.cardTime}>
+                                {isManualRoute
+                                  ? 'Thời gian tự chọn'
+                                  : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
+                                </Text>
+                              </View>
+
+                              {/* Opening Hours Row - Expandable for MAIN mode */}
+                              {(() => {
+                                const openingHours = (activity as any).openingHours;
+                                const activityKey = `${selectedDay}-${index}`;
+                                const isExpanded = expandedOpeningHours.has(activityKey);
+                                
+                                if (openingHours?.weekdayDescriptions) {
+                                  const today = new Date().getDay();
+                                  const dayIndex = today === 0 ? 6 : today - 1;
+                                  const todayHours = openingHours.weekdayDescriptions[dayIndex];
+                                  
+                                  if (isExpanded) {
+                                    // Show all days
+                                    return (
+                                      <View style={styles.expandedOpeningHoursContainer}>
+                                        {openingHours.weekdayDescriptions.map((dayHours: string, idx: number) => (
+                                          <Text key={idx} style={styles.expandedOpeningHoursText}>
+                                            {dayHours}
+                                          </Text>
+                                        ))}
+                                        <TouchableOpacity onPress={() => toggleOpeningHours(activityKey)}>
+                                          <Text style={styles.expandedOpeningHoursToggle}>Thu gọn ↑</Text>
+                                        </TouchableOpacity>
+                                      </View>
+                                    );
+                                  } else if (todayHours) {
+                                    // Show today only
+                                    const hoursText = todayHours.split(': ')[1] || todayHours;
+                                    return (
+                                      <TouchableOpacity 
+                                        style={styles.cardRow} 
+                                        onPress={() => toggleOpeningHours(activityKey)}
+                                      >
+                                        <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
+                                        <Text style={styles.cardOpeningHours} numberOfLines={1}>
+                                          {hoursText}
+                                        </Text>
+                                        <Text style={styles.expandMoreIndicator}> ↓</Text>
+                                      </TouchableOpacity>
+                                    );
+                                  }
                                 }
                                 return null;
                               })()}
@@ -2109,190 +3282,70 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
                               )}
                             </View>
 
-                            {/* Right: Drag Handle */}
-                            <View style={styles.cardDragHandle}>
-                              <MaterialCommunityIcons name="drag-vertical" size={24} color={COLORS.textSecondary} />
-                            </View>
-                          </View>
-
-                          {/* Tap hint */}
-                          <View style={styles.tapHint}>
-                            <FontAwesome name="hand-pointer-o" size={10} color={COLORS.textSecondary} />
-                            <Text style={styles.tapHintText}>Nhấn để xem chi tiết</Text>
-                          </View>
-                        </TouchableOpacity>
-                      </Swipeable>
-                    ) : (
-                      /* Non-swipeable card for MAIN routes */
-                      <TouchableOpacity
-                        style={[styles.activityCard, isVisited && styles.activityCardVisited]}
-                        onPress={() => handleActivityPress(activity)}
-                        disabled={isEnriching}
-                        activeOpacity={0.7}
-                      >
-                        {/* Card content - same as above but with visit button instead of drag handle */}
-                      {/* Card Header with gradient */}
-                      <LinearGradient
-                        colors={[COLORS.primary + '15', 'transparent']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.cardGradientOverlay}
-                      />
-
-                      {/* Visited overlay gradient */}
-                      {isVisited && (
-                        <LinearGradient
-                          colors={[COLORS.success + '10', 'transparent']}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          style={styles.cardVisitedOverlay}
-                        />
-                      )}
-
-                      {/* Number Badge - Positioned Absolutely at Top-Left */}
-                      <View style={[styles.cardNumberBadge, isVisited && styles.cardNumberBadgeVisited]}>
-                        <LinearGradient
-                          colors={[isVisited ? '#66BB6A' : COLORS.primary, isVisited ? '#66BB6A' : COLORS.gradientSecondary]}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          style={styles.numberBadgeGradient}
-                        >
-                          <Text style={styles.numberBadgeText}>{index + 1}</Text>
-                        </LinearGradient>
-                      </View>
-
-                      <View style={styles.cardContent}>
-                        {/* Center: Info */}
-                        <View style={styles.cardInfo}>
-                          <Text style={styles.cardTitle} numberOfLines={2}>
-                            {activityName}
-                          </Text>
-                          
-                          {/* Time Row */}
-                          <View style={styles.cardRow}>
-                            <FontAwesome name="clock-o" size={12} color={COLORS.primary} />
-                            <Text style={styles.cardTime}>
-                            {isManualRoute
-                              ? 'Thời gian tự chọn'
-                              : `${formatTime(arrival)}${duration ? ` • ${duration}` : ''}`}
-                            </Text>
-                          </View>
-
-                          {/* Opening Hours Row */}
-                          {(() => {
-                            const openingHours = (activity as any).openingHours;
-                            const activityKey = `${selectedDay}-${index}`;
-                            const isExpanded = expandedOpeningHours.has(activityKey);
-                            
-                            if (openingHours?.weekdayDescriptions) {
-                              const today = new Date().getDay();
-                              const dayIndex = today === 0 ? 6 : today - 1;
-                              const todayHours = openingHours.weekdayDescriptions[dayIndex];
-                              
-                              return (
-                                <View style={styles.openingHoursContainer}>
-                                  {/* Today's hours */}
-                                  {todayHours && (
-                                    <TouchableOpacity 
-                                      style={styles.cardRow}
-                                      onPress={() => toggleOpeningHours(activityKey)}
-                                      activeOpacity={0.7}
-                                    >
-                                      <FontAwesome name="calendar" size={11} color={COLORS.textSecondary} />
-                                      <Text style={styles.cardOpeningHours} numberOfLines={1}>
-                                        {todayHours.split(': ')[1] || todayHours}
-                                      </Text>
-                                      <FontAwesome 
-                                        name={isExpanded ? "chevron-up" : "chevron-down"} 
-                                        size={10} 
-                                        color={COLORS.textSecondary}
-                                        style={{ marginLeft: 4 }}
-                                      />
-                                    </TouchableOpacity>
-                                  )}
-                                  
-                                  {/* All week hours (when expanded) */}
-                                  {isExpanded && (
-                                    <View style={styles.allHoursContainer}>
-                                      {openingHours.weekdayDescriptions.map((dayHours: string, idx: number) => (
-                                        <Text key={idx} style={styles.dayHoursText}>
-                                          {dayHours}
-                                        </Text>
-                                      ))}
-                                    </View>
-                                  )}
-                                </View>
-                              );
-                            }
-                            return null;
-                          })()}
-
-                          {/* Loading indicator */}
-                          {isEnriching && (
-                            <ActivityIndicator 
-                              size="small" 
-                              color={COLORS.primary} 
-                              style={styles.cardLoader} 
-                            />
-                          )}
-                        </View>
-
-                        {/* Right: Drag Handle - Only show for draft routes */}
-                        {status === 'DRAFT' && (
-                          <View style={styles.cardDragHandle}>
-                            <MaterialCommunityIcons name="drag-vertical" size={24} color={COLORS.textSecondary} />
-                          </View>
-                        )}
-
-                        {/* Right: Visit Check Button - Only show for main routes */}
-                        {status === 'MAIN' && (
-                          <TouchableOpacity
-                            style={[
-                              styles.cardVisitButton,
-                              visitedActivities.has(`${selectedDay}-${index}`) && styles.cardVisitButtonChecked,
-                              animatingButtons.has(`${selectedDay}-${index}`) && styles.cardVisitButtonAnimating
-                            ]}
-                            onPress={() => toggleVisited(selectedDay, index)}
-                            activeOpacity={0.7}
-                          >
-                            {visitedActivities.has(`${selectedDay}-${index}`) ? (
-                              <LinearGradient
-                                colors={['#66BB6A', '#66BB6A']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 1 }}
-                                style={styles.cardVisitButtonGradient}
+                            {/* Right: Visit Check Button - Only show for main routes */}
+                            {status === 'MAIN' && (
+                              <TouchableOpacity
+                                style={[
+                                  styles.cardVisitButton,
+                                  visitedActivities.has(`${selectedDay}-${index}`) && styles.cardVisitButtonChecked,
+                                  animatingButtons.has(`${selectedDay}-${index}`) && styles.cardVisitButtonAnimating
+                                ]}
+                                onPress={() => toggleVisited(selectedDay, index)}
+                                activeOpacity={0.7}
                               >
-                                <MaterialCommunityIcons
-                                  name="check"
-                                  size={22}
-                                  color={COLORS.textWhite}
-                                />
-                              </LinearGradient>
-                            ) : (
-                              <MaterialCommunityIcons
-                                name="check"
-                                size={22}
-                                color={COLORS.textSecondary}
-                              />
+                                {visitedActivities.has(`${selectedDay}-${index}`) ? (
+                                  <LinearGradient
+                                    colors={['#66BB6A', '#66BB6A']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={styles.cardVisitButtonGradient}
+                                  >
+                                    <MaterialCommunityIcons
+                                      name="check"
+                                      size={22}
+                                      color={COLORS.textWhite}
+                                    />
+                                  </LinearGradient>
+                                ) : (
+                                  <MaterialCommunityIcons
+                                    name="check"
+                                    size={22}
+                                    color={COLORS.textSecondary}
+                                  />
+                                )}
+                              </TouchableOpacity>
                             )}
-                          </TouchableOpacity>
-                        )}
-                      </View>
+                          </View>
 
-                      {/* Tap hint */}
-                      <View style={styles.tapHint}>
-                        <FontAwesome name="hand-pointer-o" size={10} color={COLORS.textSecondary} />
-                        <Text style={styles.tapHintText}>Nhấn để xem chi tiết</Text>
-                      </View>
-                    </TouchableOpacity>
+                        {/* Tap hint */}
+                        <View style={styles.tapHint}>
+                          <FontAwesome name="hand-pointer-o" size={10} color={COLORS.textSecondary} />
+                          <Text style={styles.tapHintText}>Nhấn để xem chi tiết</Text>
+                        </View>
+                      </TouchableOpacity>
                     )}
                   </View>
                 );
               })
             )}
-          </View>
+            
+            {/* Add POI Button for DRAFT routes */}
+            {status === 'DRAFT' && activities.length > 0 && (
+              <TouchableOpacity
+                style={styles.addPOIButtonBottom}
+                onPress={handleAddPOI}
+                activeOpacity={0.7}
+                disabled={isUpdatingRoute}
+              >
+                <FontAwesome name="plus-circle" size={20} color={COLORS.primary} />
+                <Text style={styles.addPOIButtonBottomText}>Thêm địa điểm</Text>
+              </TouchableOpacity>
+            )}
+            </View>
+          </GestureHandlerRootView>
         </View>
       </ScrollView>
+      </GestureHandlerRootView>
           </>
         )}
 
@@ -2415,6 +3468,159 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
               <View style={styles.updatingContainer}>
                 <ActivityIndicator size="small" color={COLORS.primary} />
                 <Text style={styles.updatingText}>Đang cập nhật lộ trình...</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+      
+      {/* Add POI Modal */}
+      <Modal
+        visible={isAddPOIModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsAddPOIModalVisible(false)}
+      >
+        <View style={styles.replaceModalContainer}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setIsAddPOIModalVisible(false)}
+          />
+          <View style={styles.replaceModalContent}>
+            {/* Header */}
+            <View style={styles.replaceModalHeader}>
+              <Text style={styles.replaceModalTitle}>Thêm địa điểm</Text>
+              <TouchableOpacity
+                onPress={() => setIsAddPOIModalVisible(false)}
+                style={styles.replaceModalCloseButton}
+              >
+                <FontAwesome name="times" size={24} color={COLORS.textDark} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Search Input with Favorites Toggle */}
+            <View style={styles.searchContainerWrapper}>
+              {/* Favorites Toggle Button - Outside search box */}
+              <TouchableOpacity
+                style={[
+                  styles.favoritesToggleButton,
+                  isUsingFavorites && styles.favoritesToggleButtonActive
+                ]}
+                onPress={toggleAddFavoritesMode}
+                activeOpacity={0.7}
+              >
+                <FontAwesome 
+                  name={isUsingFavorites ? "heart" : "heart-o"} 
+                  size={20} 
+                  color={isUsingFavorites ? COLORS.textWhite : COLORS.primary} 
+                />
+              </TouchableOpacity>
+              
+              {/* Search Input Box */}
+              <View style={styles.searchInputContainer}>
+                <FontAwesome name="search" size={18} color={COLORS.textSecondary} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Tìm kiếm địa điểm..."
+                  placeholderTextColor={COLORS.textSecondary}
+                  value={addSearchQuery}
+                  onChangeText={setAddSearchQuery}
+                  autoFocus
+                />
+                {addSearchQuery.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setAddSearchQuery('');
+                      const newSessionToken = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+                      setAddSessionToken(newSessionToken);
+                    }}
+                  >
+                    <FontAwesome name="times-circle" size={18} color={COLORS.textSecondary} />
+                  </TouchableOpacity>
+                )}
+                {isAddSearching && <ActivityIndicator size="small" color={COLORS.primary} />}
+              </View>
+            </View>
+            
+            {/* Hint text */}
+            {!addSearchQuery.trim() && (
+              <View style={styles.searchHintContainer}>
+                <FontAwesome name="lightbulb-o" size={14} color={COLORS.primary} />
+                <Text style={styles.searchHintText}>
+                  {isUsingFavorites 
+                    ? `Đang tìm trong ${favoritesPlaces.length} địa điểm yêu thích`
+                    : 'Nhập tên địa điểm, nhà hàng, khách sạn, điểm du lịch...'}
+                </Text>
+              </View>
+            )}
+            
+            {/* Status hint khi dùng favorites mode */}
+            {isUsingFavorites && addSearchQuery.trim() && (
+              <View style={styles.searchHintContainer}>
+                <FontAwesome name="info-circle" size={14} color={COLORS.primary} />
+                <Text style={styles.searchHintText}>
+                  Đang tìm trong {favoritesPlaces.length} địa điểm yêu thích
+                </Text>
+              </View>
+            )}
+
+            {/* Search Results */}
+            <ScrollView
+              style={styles.autocompleteContainer}
+              keyboardShouldPersistTaps="handled"
+            >
+              {addAutocompleteResults.length > 0 ? (
+                addAutocompleteResults.map((result, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.autocompleteItem}
+                    onPress={() => handleSelectAddPOI(result)}
+                    disabled={isUpdatingRoute}
+                  >
+                    <View style={[
+                      styles.autocompleteItemIcon,
+                      result.isFavorite && styles.autocompleteItemIconFavorite
+                    ]}>
+                      <FontAwesome
+                        name={result.isFavorite ? "heart" : "map-marker"}
+                        size={16}
+                        color={result.isFavorite ? "#E91E63" : COLORS.primary}
+                      />
+                    </View>
+                    <View style={styles.autocompleteItemContent}>
+                      <Text style={styles.autocompleteItemName} numberOfLines={1}>
+                        {result.name || result.text}
+                      </Text>
+                      {result.address && (
+                        <Text style={styles.autocompleteItemAddress} numberOfLines={1}>
+                          {result.address}
+                        </Text>
+                      )}
+                      {result.rating && (
+                        <View style={styles.ratingContainer}>
+                          <FontAwesome name="star" size={12} color="#F59E0B" />
+                          <Text style={styles.ratingText}>{result.rating.toFixed(1)}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <View style={styles.noResultsContainer}>
+                  <FontAwesome name="search" size={48} color={COLORS.textSecondary} opacity={0.3} />
+                  <Text style={styles.noResultsText}>
+                    {addSearchQuery.trim() ? 'Không tìm thấy địa điểm nào' : 'Tìm kiếm hoặc chọn từ yêu thích'}
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Loading Indicator */}
+            {isUpdatingRoute && (
+              <View style={styles.updatingContainer}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+                <Text style={styles.updatingText}>Đang thêm địa điểm...</Text>
               </View>
             )}
           </View>
@@ -2688,6 +3894,14 @@ const styles = StyleSheet.create({
     elevation: 6,
     transform: [{ scale: 1.02 }],
   },
+  activityCardDragging: {
+    opacity: 0.8,
+    transform: [{ scale: 1.05 }],
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 10,
+  },
   cardNumberBadge: {
     position: 'absolute',
     top: SPACING.md,
@@ -2791,40 +4005,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '400',
     color: COLORS.textSecondary,
-    flex: 1,
-  },
-  openingHoursContainer: {
-    width: '100%',
-  },
-  allHoursContainer: {
-    marginTop: SPACING.xs,
-    paddingLeft: SPACING.md,
-    paddingTop: SPACING.xs,
-    borderLeftWidth: 2,
-    borderLeftColor: COLORS.border,
-  },
-  dayHoursText: {
-    fontSize: 10,
-    color: COLORS.textSecondary,
-    marginBottom: 2,
-  },
-  cardActionButtons: {
-    flexDirection: 'row',
-    gap: SPACING.xs / 2,
-    alignItems: 'center',
-  },
-  cardActionButton: {
-    width: 30,
-    height: 30,
-    borderRadius: SPACING.sm,
-    backgroundColor: COLORS.bgCard,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardActionButtonDisabled: {
-    opacity: 0.3,
   },
   cardRating: {
     fontSize: 12,
@@ -2944,7 +4124,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.textDark,
   },
+  searchContainerWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginBottom: SPACING.md,
+  },
   searchInputContainer: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.bgCard,
@@ -2952,7 +4139,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     paddingHorizontal: SPACING.md,
-    marginBottom: SPACING.md,
+    gap: SPACING.sm,
   },
   searchInput: {
     flex: 1,
@@ -3018,33 +4205,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   favoritesToggleButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.bgLightBlue,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.textWhite,
     borderWidth: 1,
-    borderColor: COLORS.primary,
+    borderColor: COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: SPACING.sm,
   },
   favoritesToggleButtonActive: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: '#E91E63',
+    borderColor: '#E91E63',
   },
   searchHintContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.lg,
-    backgroundColor: COLORS.bgLightBlue,
-    borderRadius: SPACING.md,
-    marginHorizontal: SPACING.lg,
-    marginTop: SPACING.sm,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.xs,
+    marginBottom: SPACING.sm,
   },
   searchHintText: {
-    fontSize: 14,
+    fontSize: 13,
     color: COLORS.textSecondary,
-    marginLeft: SPACING.sm,
+    marginLeft: SPACING.xs,
     flex: 1,
   },
   updatingContainer: {
@@ -3068,30 +4252,90 @@ const styles = StyleSheet.create({
     paddingTop: SPACING.md,
     backgroundColor: 'transparent',
   },
-  // Swipe actions styles
+  // Swipe Actions Styles
   swipeActionsContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
+    alignItems: 'stretch',
     height: '100%',
   },
   swipeActionButton: {
-    width: 70,
-    height: '100%',
+    width: 80,
     justifyContent: 'center',
     alignItems: 'center',
+    gap: SPACING.xs / 2,
   },
   swipeEditButton: {
     backgroundColor: COLORS.primary,
   },
   swipeDeleteButton: {
-    backgroundColor: '#EF5350',
+    backgroundColor: '#E91E63',
   },
-  // Drag handle styles
-  cardDragHandle: {
-    justifyContent: 'center',
+  swipeActionText: {
+    color: COLORS.textWhite,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  // Expanded Opening Hours Styles
+  expandedOpeningHoursContainer: {
+    backgroundColor: COLORS.bgLightBlue,
+    borderRadius: SPACING.sm,
+    padding: SPACING.sm,
+    marginTop: SPACING.xs,
+  },
+  expandedOpeningHoursText: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginBottom: 2,
+  },
+  expandedOpeningHoursToggle: {
+    fontSize: 11,
+    color: COLORS.primary,
+    fontWeight: '600',
+    marginTop: SPACING.xs / 2,
+  },
+  expandMoreIndicator: {
+    fontSize: 11,
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  addPOIButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: SPACING.sm,
+    gap: SPACING.sm,
+    marginTop: SPACING.xl,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.md,
+    backgroundColor: COLORS.primary,
+    borderRadius: SPACING.lg,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  addPOIButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textWhite,
+  },
+  addPOIButtonBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    marginTop: SPACING.lg,
+    marginHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: SPACING.md,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    borderStyle: 'dashed',
+  },
+  addPOIButtonBottomText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.primary,
   },
 });
 

@@ -42,22 +42,46 @@ export default function ManualRouteScreen() {
   const durationDays = parseInt(params.durationDays || '1', 10);
   const currentLocationText = params.currentLocationText || 'Vị trí hiện tại';
 
-  // Parse itinerary data from params
-  const [itinerary, setItinerary] = useState<DayItinerary[]>([]);
-  const [travelModes, setTravelModes] = useState<{ [key: number]: string }>({});
-  
-  useEffect(() => {
+  // Initialize itinerary with empty days based on durationDays
+  const initializeEmptyItinerary = (): DayItinerary[] => {
+    const days: DayItinerary[] = [];
+    const start = new Date(startDate);
+    
+    for (let i = 0; i < durationDays; i++) {
+      const currentDate = new Date(start);
+      currentDate.setDate(start.getDate() + i);
+      
+      days.push({
+        day: i + 1,
+        date: currentDate,
+        places: [], // Empty places array - user will add POIs
+      });
+    }
+    
+    return days;
+  };
+
+  // Parse itinerary data from params OR initialize empty itinerary
+  const [itinerary, setItinerary] = useState<DayItinerary[]>(() => {
     if (params.itineraryData) {
       try {
         const parsed = JSON.parse(params.itineraryData);
-        setItinerary(parsed.map((day: any) => ({
+        return parsed.map((day: any) => ({
           ...day,
           date: new Date(day.date),
-        })));
+        }));
       } catch (error) {
         console.error('Failed to parse itinerary data:', error);
+        return initializeEmptyItinerary();
       }
     }
+    // No itinerary data provided, create empty structure
+    return initializeEmptyItinerary();
+  });
+  
+  const [travelModes, setTravelModes] = useState<{ [key: number]: string }>({});
+  
+  useEffect(() => {
     if (params.travelModes) {
       try {
         setTravelModes(JSON.parse(params.travelModes));
@@ -65,7 +89,7 @@ export default function ManualRouteScreen() {
         console.error('Failed to parse travel modes:', error);
       }
     }
-  }, [params.itineraryData, params.travelModes]);
+  }, [params.travelModes]);
 
   const suggestedTitle =
     destination && destination !== 'Lộ trình mới'
@@ -76,13 +100,39 @@ export default function ManualRouteScreen() {
   const [isNameModalVisible, setIsNameModalVisible] = useState(false);
   const [routeTitle, setRouteTitle] = useState(suggestedTitle);
   const [routeIdToConfirm, setRouteIdToConfirm] = useState<string | null>(null);
-  const [customRouteData, setCustomRouteData] = useState<any>(null);
+  
+  // Initialize customRouteData with empty itinerary structure
+  const [customRouteData, setCustomRouteData] = useState<any>(() => ({
+    destination,
+    title: suggestedTitle,
+    start_date: startDate.toISOString(),
+    end_date: endDate.toISOString(),
+    start_location_text: currentLocationText,
+    status: 'DRAFT',
+    days: itinerary.map(day => ({
+      day: day.day,
+      dayNumber: day.day,
+      places: day.places,
+    })),
+  }));
   
   // Weather warning modal states
   const [weatherModalVisible, setWeatherModalVisible] = useState(false);
   const [weatherAlert, setWeatherAlert] = useState('');
   const [weatherSeverity, setWeatherSeverity] = useState<WeatherSeverity>('normal');
   const [pendingRouteData, setPendingRouteData] = useState<any>(null);
+
+  // Update customRouteData when itinerary changes
+  useEffect(() => {
+    setCustomRouteData((prev: any) => ({
+      ...prev,
+      days: itinerary.map(day => ({
+        day: day.day,
+        dayNumber: day.day,
+        places: day.places,
+      })),
+    }));
+  }, [itinerary]);
 
   // Check if there are any places in itinerary
   const hasPlaces = itinerary.some(day => day.places.length > 0);
@@ -282,63 +332,52 @@ export default function ManualRouteScreen() {
 
   return (
     <>
-      {/* Only show ItineraryViewScreen when we have customRouteData (after save) */}
-      {customRouteData ? (
-        <ItineraryViewScreen
-          visible
-          routeId={routeIdToConfirm || ''}
-          customRouteData={customRouteData}
-          isManual={true}
-          onClose={() => router.back()}
-          footerContent={footerButtons}
-          overlayContent={
-            isNameModalVisible && (
-              <View style={styles.inlineModalOverlay} pointerEvents="box-none">
-                <View style={styles.modalBackdrop} />
-                <View style={styles.inlineModalContent}>
-                  <Text style={styles.modalTitle}>Đặt tên lộ trình</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="Nhập tên lộ trình"
-                    value={routeTitle}
-                    onChangeText={setRouteTitle}
-                    autoFocus
-                  />
-                  <View style={styles.modalActions}>
-                    <TouchableOpacity
-                      style={[styles.modalButton, styles.modalCancel]}
-                      onPress={() => setIsNameModalVisible(false)}
-                      disabled={isSaving}
-                    >
-                      <Text style={styles.modalCancelText}>Hủy</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.modalButton, styles.modalConfirm]}
-                      onPress={handleSaveConfirm}
-                      disabled={isSaving}
-                    >
-                      {isSaving ? (
-                        <ActivityIndicator size="small" color={COLORS.textWhite} />
-                      ) : (
-                        <Text style={styles.modalConfirmText}>Lưu</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
+      {/* Always show ItineraryViewScreen - allow user to add places */}
+      <ItineraryViewScreen
+        visible
+        routeId={routeIdToConfirm || ''}
+        customRouteData={customRouteData}
+        isManual={true}
+        onClose={() => router.back()}
+        footerContent={hasPlaces ? footerButtons : undefined}
+        overlayContent={
+          isNameModalVisible && (
+            <View style={styles.inlineModalOverlay} pointerEvents="box-none">
+              <View style={styles.modalBackdrop} />
+              <View style={styles.inlineModalContent}>
+                <Text style={styles.modalTitle}>Đặt tên lộ trình</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Nhập tên lộ trình"
+                  value={routeTitle}
+                  onChangeText={setRouteTitle}
+                  autoFocus
+                />
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.modalCancel]}
+                    onPress={() => setIsNameModalVisible(false)}
+                    disabled={isSaving}
+                  >
+                    <Text style={styles.modalCancelText}>Hủy</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.modalConfirm]}
+                    onPress={handleSaveConfirm}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? (
+                      <ActivityIndicator size="small" color={COLORS.textWhite} />
+                    ) : (
+                      <Text style={styles.modalConfirmText}>Lưu</Text>
+                    )}
+                  </TouchableOpacity>
                 </View>
               </View>
-            )
-          }
-        />
-      ) : (
-        /* Empty state before saving - show preview interface */
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyTitle}>Xem trước lộ trình</Text>
-          <Text style={styles.emptyMessage}>
-            Nhấn "Lưu lộ trình" để xem chi tiết và lưu lại lộ trình của bạn.
-          </Text>
-          {footerButtons}
-        </View>
-      )}
+            </View>
+          )
+        }
+      />
 
       {/* Weather Warning Modal */}
       <WeatherWarningModal
@@ -450,24 +489,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.textWhite,
-  },
-  emptyContainer: {
-    flex: 1,
-    backgroundColor: COLORS.bgLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: SPACING.xl,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textDark,
-    marginBottom: SPACING.md,
-  },
-  emptyMessage: {
-    fontSize: 16,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    marginBottom: SPACING.xl,
   },
 });
