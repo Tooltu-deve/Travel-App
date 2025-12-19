@@ -100,7 +100,9 @@ def companion_assistant_node(state: TravelState) -> TravelState:
             "địa điểm trong", "ngày", "thêm địa điểm", "thêm vào",
             "gợi ý thêm", "nên thêm", "có nên", "nên đi",
             # Additional keywords for draft mode
-            "địa điểm này", "chỗ này", "nơi này"
+            "địa điểm này", "chỗ này", "nơi này",
+            # Keywords for showing all places or specific place info
+            "các địa điểm", "tất cả địa điểm", "giới thiệu", "cho tôi biết", "kể về", "thông tin về", "danh sách"
         ]):
             is_draft = itinerary_data.get('status') == 'DRAFT' or not itinerary_data.get('route_id')
             print(f"   📋 Type: Itinerary query ({'Draft' if is_draft else 'Saved'})")
@@ -1457,6 +1459,7 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
     Supports: viewing itinerary, adding places, getting place info from itinerary
     Works with both saved itineraries and draft itineraries (being created)
     """
+    import re
     try:
         # Check if this is a draft (being created) or saved itinerary
         is_draft = itinerary_data.get('status') == 'DRAFT' or not itinerary_data.get('route_id')
@@ -1488,6 +1491,33 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
             
             return response
         
+        # Ask about all places in itinerary (show all places)
+        elif any(word in user_text for word in ["các địa điểm", "tất cả", "danh sách", "tất cả địa điểm"]):
+            print("      → Show all places in itinerary")
+            details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
+            
+            if details.get("error"):
+                return f"❌ Không thể lấy thông tin lộ trình: {details['error']}"
+            
+            # Add draft indicator if needed
+            title_suffix = " (Đang tạo)" if is_draft else ""
+            response = f"📋 **Tất cả địa điểm trong lộ trình{title_suffix}:**\n\n"
+            response += f"📍 **Điểm đến:** {details.get('destination', 'N/A')}\n"
+            response += f"⏱️ **Thời gian:** {details.get('duration_days', 0)} ngày\n"
+            response += f"🏛️ **Tổng số địa điểm:** {details.get('total_places', 0)}\n\n"
+            
+            for day in details.get('days', []):
+                response += f"**📅 Ngày {day['day_number']}** ({day.get('date', 'N/A')}):\n"
+                for i, place in enumerate(day['places'], 1):
+                    response += f"  {i}. **{place['name']}** ({place['type']})\n"
+                    response += f"     ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')}\n"
+                response += "\n"
+            
+            if is_draft:
+                response += "💡 **Lưu ý:** Đây là lộ trình đang tạo. Bạn có thể hỏi tôi chi tiết về bất kỳ địa điểm nào!"
+            
+            return response
+        
         # Ask about specific place in itinerary (works for both draft and saved)
         elif any(word in user_text for word in ["giới thiệu", "cho tôi biết", "kể về", "thông tin về"]):
             print("      → Place info from itinerary (draft/saved)")
@@ -1500,8 +1530,34 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                     if len(parts) > 1:
                         place_name = parts[1].strip()
                         # Remove common words
-                        place_name = place_name.replace("về", "").replace("địa điểm", "").strip()
+                        place_name = place_name.replace("về", "").replace("địa điểm", "").replace("các", "").replace("tất cả", "").strip()
                         break
+            
+            # Check if no specific place name extracted (means asking about all places in different phrasing)
+            if not place_name or len(place_name) < 2:
+                print("      → No specific place name extracted, showing all places")
+                details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
+                
+                if details.get("error"):
+                    return f"❌ Không thể lấy thông tin lộ trình: {details['error']}"
+                
+                title_suffix = " (Đang tạo)" if is_draft else ""
+                response = f"📋 **Tất cả địa điểm trong lộ trình{title_suffix}:**\n\n"
+                response += f"📍 **Điểm đến:** {details.get('destination', 'N/A')}\n"
+                response += f"⏱️ **Thời gian:** {details.get('duration_days', 0)} ngày\n"
+                response += f"🏛️ **Tổng số địa điểm:** {details.get('total_places', 0)}\n\n"
+                
+                for day in details.get('days', []):
+                    response += f"**📅 Ngày {day['day_number']}** ({day.get('date', 'N/A')}):\n"
+                    for i, place in enumerate(day['places'], 1):
+                        response += f"  {i}. **{place['name']}** ({place['type']})\n"
+                        response += f"     ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')}\n"
+                    response += "\n"
+                
+                if is_draft:
+                    response += "💡 **Lưu ý:** Đây là lộ trình đang tạo. Bạn có thể hỏi tôi chi tiết về bất kỳ địa điểm nào!"
+                
+                return response
             
             if place_name:
                 places = get_place_from_itinerary.invoke({
@@ -1542,70 +1598,121 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
             else:
                 return "❓ Bạn muốn biết thông tin về địa điểm nào trong lộ trình?"
         
-        # Suggest adding places
+        # Suggest adding places or confirm adding a specific place
         elif any(word in user_text for word in ["thêm", "add", "gợi ý thêm", "nên thêm", "có nên"]):
-            print("      → Suggest additional places")
+            print("      → Handle place suggestion/addition")
             
-            # Extract preferences from user text
-            preferences = {}
-            
-            # Detect category
-            category_map = {
-                "quán cà phê": "cafe",
-                "cà phê": "cafe",
-                "café": "cafe",
-                "nhà hàng": "restaurant",
-                "quán ăn": "restaurant",
-                "bảo tàng": "museum",
-                "chùa": "temple",
-                "đền": "temple",
-                "chợ": "market",
-                "công viên": "park",
-                "bar": "bar",
-                "pub": "bar"
-            }
-            
-            for key, value in category_map.items():
-                if key in user_text:
-                    preferences["category"] = value
-                    break
-            
-            # Extract day number
-            import re
+            # Check if trying to add a specific place (contains place name + day number)
+            place_name_pattern = r'thêm (.+?)( vào ngày|\\s+ngày|$)'
+            place_match = re.search(place_name_pattern, user_text)
             day_match = re.search(r'ngày (\d+)', user_text)
-            if day_match:
-                preferences["day_number"] = int(day_match.group(1))
             
-            # Get suggestions
-            suggestions = suggest_additional_places.invoke({
-                "itinerary_data": itinerary_data,
-                "preferences": preferences
-            })
-            
-            if suggestions:
-                response = "💡 **Gợi ý địa điểm bổ sung cho lộ trình:**\n\n"
-                for i, place in enumerate(suggestions[:5], 1):
-                    response += f"{i}. **{place.get('name', 'Unknown')}**\n"
-                    response += f"   📍 {place.get('address', 'N/A')}\n"
-                    response += f"   ⭐ {place.get('rating', 'N/A')}/5\n"
-                    
-                    if place.get('distance_from_reference'):
-                        response += f"   📏 {place['distance_from_reference']}km từ địa điểm tham khảo\n"
-                    
-                    if place.get('description'):
-                        desc = place['description'][:100] + "..." if len(place['description']) > 100 else place['description']
-                        response += f"   📝 {desc}\n"
-                    response += "\n"
+            if place_match and day_match:
+                # User wants to add a specific place
+                print("      → User requesting to add specific place")
+                place_name = place_match.group(1).strip()
+                day_number = int(day_match.group(1))
                 
-                response += "💬 Bạn muốn biết thêm chi tiết về địa điểm nào?"
-                return response
+                # Validate day number
+                duration_days = itinerary_data.get("duration_days", 1)
+                if day_number > duration_days or day_number < 1:
+                    return f"❌ Ngày {day_number} không hợp lệ. Lộ trình có {duration_days} ngày."
+                
+                # Try to find place in suggestions (via search)
+                suggestions = search_places.invoke({
+                    "query": place_name,
+                    "location_filter": itinerary_data.get("destination", ""),
+                    "limit": 1
+                })
+                
+                if suggestions:
+                    place = suggestions[0]
+                    # Call add_place_to_itinerary_backend
+                    result = add_place_to_itinerary_backend.invoke({
+                        "place_data": place,
+                        "itinerary_data": itinerary_data,
+                        "day_number": day_number,
+                        "time": "TBD",
+                        "duration": "2 hours"
+                    })
+                    
+                    if result.get("success"):
+                        response = f"✅ {result['message']}\n\n"
+                        response += f"📍 **{place.get('name')}**\n"
+                        response += f"📝 {place.get('address', 'N/A')}\n"
+                        response += f"⭐ {place.get('rating', 'N/A')}/5\n\n"
+                        response += "💾 **Lưu ý**: Thay đổi này sẽ được lưu vào lộ trình của bạn.\n"
+                        response += "💡 Bạn muốn thêm địa điểm khác không?"
+                        return response
+                    else:
+                        return f"❌ Lỗi: {result.get('error', 'Không thể thêm địa điểm')}"
+                else:
+                    return f"❌ Không tìm thấy địa điểm '{place_name}' ở {itinerary_data.get('destination', 'đây')}."
             else:
-                return "😔 Xin lỗi, không tìm thấy địa điểm phù hợp để gợi ý."
+                # User asking for suggestions only
+                print("      → Suggest additional places")
+                
+                # Extract preferences from user text
+                preferences = {}
+                
+                # Detect category
+                category_map = {
+                    "quán cà phê": "cafe",
+                    "cà phê": "cafe",
+                    "café": "cafe",
+                    "nhà hàng": "restaurant",
+                    "quán ăn": "restaurant",
+                    "bảo tàng": "museum",
+                    "chùa": "temple",
+                    "đền": "temple",
+                    "chợ": "market",
+                    "công viên": "park",
+                    "bar": "bar",
+                    "pub": "bar"
+                }
+                
+                for key, value in category_map.items():
+                    if key in user_text:
+                        preferences["category"] = value
+                        break
+                
+                # Extract day number if mentioned
+                if day_match:
+                    preferences["day_number"] = int(day_match.group(1))
+                
+                # Get suggestions
+                suggestions = suggest_additional_places.invoke({
+                    "itinerary_data": itinerary_data,
+                    "preferences": preferences
+                })
+                
+                if suggestions:
+                    response = "💡 **Gợi ý địa điểm bổ sung cho lộ trình:**\n\n"
+                    for i, place in enumerate(suggestions[:5], 1):
+                        response += f"{i}. **{place.get('name', 'Unknown')}**\n"
+                        response += f"   📍 {place.get('address', 'N/A')}\n"
+                        response += f"   ⭐ {place.get('rating', 'N/A')}/5\n"
+                        
+                        if place.get('distance_from_reference'):
+                            response += f"   📏 {place['distance_from_reference']}km từ địa điểm tham khảo\n"
+                        
+                        if place.get('description'):
+                            desc = place['description'][:100] + "..." if len(place['description']) > 100 else place['description']
+                            response += f"   📝 {desc}\n"
+                        response += "\n"
+                    
+                    response += "**💡 Bạn có thể:**\n"
+                    if day_match:
+                        response += f"• Hỏi: 'Thêm [tên địa điểm] vào ngày {day_match.group(1)}'\n"
+                    response += "• Hỏi chi tiết về địa điểm nào đó\n"
+                    response += "• Yêu cầu gợi ý thêm loại hình khác"
+                    return response
+                else:
+                    return "😔 Xin lỗi, không tìm thấy địa điểm phù hợp để gợi ý."
         
         # List places by day
         elif any(word in user_text for word in ["ngày", "day"]):
             print("      → List places by day")
-            import re
             day_match = re.search(r'ngày (\d+)', user_text)
             
             if day_match:
@@ -1618,10 +1725,28 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                 if places:
                     response = f"📅 **Ngày {day_number}** ({places[0].get('date', 'N/A')}):\n\n"
                     for i, place in enumerate(places, 1):
-                        response += f"{i}. **{place['name']}**\n"
-                        response += f"   ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')}\n"
-                        response += f"   📍 {place.get('address', 'N/A')}\n"
-                        response += f"   ⭐ {place.get('rating', 'N/A')}/5\n\n"
+                        response += f"{i}. **{place['name']}**"
+                        if place.get('type'):
+                            response += f" ({place.get('type')})"
+                        response += "\n"
+                        response += f"   ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')} phút\n"
+                        
+                        # Only show address if it exists and is not just coordinates
+                        address = place.get('address', '')
+                        if address and not address.startswith('Lat:'):
+                            response += f"   📍 {address}\n"
+                        
+                        # Show rating if available
+                        rating = place.get('rating', 0)
+                        if rating > 0:
+                            response += f"   ⭐ {rating}/5\n"
+                        
+                        # Show emotional tags if available
+                        if place.get('emotional_tags'):
+                            tags = ', '.join(place['emotional_tags'][:3])  # Show first 3 tags
+                            response += f"   💭 {tags}\n"
+                        
+                        response += "\n"
                     
                     return response
                 else:

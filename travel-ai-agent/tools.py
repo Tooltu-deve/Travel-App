@@ -1814,7 +1814,9 @@ def get_itinerary_details(itinerary_data: Dict) -> Dict:
         
         # Extract route data
         route_data = itinerary_data.get("route_data_json", {})
-        days = route_data.get("days", [])
+        
+        # Handle both "days" and "optimized_route" structures
+        days = route_data.get("days", []) or route_data.get("optimized_route", [])
         
         for day in days:
             day_info = {
@@ -1825,17 +1827,31 @@ def get_itinerary_details(itinerary_data: Dict) -> Dict:
             
             activities = day.get("activities", [])
             for activity in activities:
+                # Handle both structures:
+                # 1. Nested: activity.place.name (old structure with saved itineraries)
+                # 2. Direct: activity.name (new structure with optimized_route)
                 place = activity.get("place", {})
+                if not place or not place.get("name"):
+                    # Try to get place data directly from activity (optimized_route structure)
+                    place = activity
+                
+                # Construct address if not provided
+                address = place.get("address", "")
+                if not address and place.get("location"):
+                    loc = place.get("location", {})
+                    if isinstance(loc, dict) and ("lat" in loc or "lng" in loc):
+                        address = f"Lat: {loc.get('lat', 'N/A')}, Lng: {loc.get('lng', 'N/A')}"
+                
                 place_info = {
-                    "place_id": place.get("place_id", ""),
+                    "place_id": place.get("place_id", "") or place.get("google_place_id", ""),
                     "name": place.get("name", ""),
                     "type": place.get("type", ""),
-                    "address": place.get("address", ""),
+                    "address": address,
                     "rating": place.get("rating", 0),
                     "description": place.get("description", ""),
                     "location": place.get("location", {}),
-                    "time": activity.get("time", ""),
-                    "duration": activity.get("duration", "")
+                    "time": activity.get("time", activity.get("estimated_arrival", "")),
+                    "duration": activity.get("duration", activity.get("visit_duration_minutes", ""))
                 }
                 day_info["places"].append(place_info)
                 result["total_places"] += 1
@@ -1867,7 +1883,9 @@ def get_place_from_itinerary(itinerary_data: Dict, place_name: str = None, day_n
             return []
         
         route_data = itinerary_data.get("route_data_json", {})
-        days = route_data.get("days", [])
+        
+        # Handle both "days" and "optimized_route" structures
+        days = route_data.get("days", []) or route_data.get("optimized_route", [])
         
         matching_places = []
         
@@ -1878,7 +1896,13 @@ def get_place_from_itinerary(itinerary_data: Dict, place_name: str = None, day_n
             
             activities = day.get("activities", [])
             for activity in activities:
+                # Handle both structures:
+                # 1. Nested: activity.place.name (old structure)
+                # 2. Direct: activity.name (optimized_route structure)
                 place = activity.get("place", {})
+                if not place or not place.get("name"):
+                    # Try to get place data directly from activity (optimized_route structure)
+                    place = activity
                 
                 # Filter by place name if specified
                 if place_name:
@@ -1888,20 +1912,35 @@ def get_place_from_itinerary(itinerary_data: Dict, place_name: str = None, day_n
                         continue
                 
                 # Build place info
+                # Note: optimized_route might not have address, so we construct it if needed
+                address = place.get("address", "")
+                if not address and place.get("location"):
+                    # Fallback: construct location string from coordinates if no address provided
+                    loc = place.get("location", {})
+                    if isinstance(loc, dict) and ("lat" in loc or "lng" in loc):
+                        address = f"Lat: {loc.get('lat', 'N/A')}, Lng: {loc.get('lng', 'N/A')}"
+                
+                # Extract emotional tags - handle both list and dict formats
+                emotional_tags = place.get("emotional_tags", [])
+                if isinstance(emotional_tags, dict):
+                    emotional_tags = list(emotional_tags.keys())
+                elif not isinstance(emotional_tags, list):
+                    emotional_tags = []
+                
                 place_info = {
                     "day": day.get("day"),
                     "date": day.get("date"),
-                    "place_id": place.get("place_id", ""),
+                    "place_id": place.get("place_id", "") or place.get("google_place_id", ""),
                     "name": place.get("name", ""),
                     "type": place.get("type", ""),
-                    "address": place.get("address", ""),
+                    "address": address,
                     "rating": place.get("rating", 0),
                     "description": place.get("description", ""),
                     "location": place.get("location", {}),
                     "opening_hours": place.get("opening_hours", {}),
-                    "time": activity.get("time", ""),
-                    "duration": activity.get("duration", ""),
-                    "emotional_tags": place.get("emotional_tags", []),
+                    "time": activity.get("time", activity.get("estimated_arrival", "")),
+                    "duration": activity.get("duration", activity.get("visit_duration_minutes", "")),
+                    "emotional_tags": emotional_tags,
                     "price_level": place.get("price_level", "")
                 }
                 matching_places.append(place_info)
@@ -1914,54 +1953,58 @@ def get_place_from_itinerary(itinerary_data: Dict, place_name: str = None, day_n
 
 
 @tool
-def add_place_to_itinerary_backend(route_id: str, place_id: str, day_number: int, time: str = "TBD", duration: str = "2 hours") -> Dict:
+def add_place_to_itinerary_backend(place_data: Dict, itinerary_data: Dict, day_number: int, time: str = "TBD", duration: str = "2 hours") -> Dict:
     """
-    Thêm địa điểm mới vào itinerary thông qua Backend API.
+    Thêm địa điểm mới vào itinerary. Hỗ trợ cả saved + draft itinerary.
+    Note: Frontend sẽ handle actual API call - function này chuẩn bị data.
     
     Args:
-        route_id: ID của route/itinerary
-        place_id: Google Place ID của địa điểm cần thêm
+        place_data: Dictionary chứa thông tin địa điểm (name, google_place_id, etc.)
+        itinerary_data: Dictionary chứa thông tin itinerary hiện tại
         day_number: Ngày muốn thêm địa điểm (1, 2, 3...)
         time: Thời gian dự kiến (VD: "09:00", "14:30")
-        duration: Thời gian dự kiến ở địa điểm (VD: "2 hours", "1.5 hours")
+        duration: Thời gian dự kiến ở địa điểm (VD: "2 hours", "90 minutes")
         
     Returns:
-        Dict: Kết quả từ API backend
+        Dict: Thông tin xác nhận thêm địa điểm (frontend sẽ xử lý actual save)
     """
     try:
-        # Get backend URL from env
-        backend_url = os.getenv("BACKEND_API_URL", "http://localhost:3000")
+        if not place_data or not itinerary_data:
+            return {"success": False, "error": "Missing place or itinerary data"}
         
-        # Note: This requires authentication token which should be passed from frontend
-        # For now, this is a placeholder - actual implementation needs token management
+        # Validate day number
+        duration_days = itinerary_data.get("duration_days", 1)
+        if day_number > duration_days or day_number < 1:
+            return {
+                "success": False,
+                "error": f"Ngày {day_number} không hợp lệ. Lộ trình có {duration_days} ngày."
+            }
         
-        response = {
-            "success": False,
-            "message": "This feature requires authentication. Please use the frontend to add places to your itinerary.",
-            "route_id": route_id,
-            "place_id": place_id,
-            "day_number": day_number
+        # Prepare place data to add
+        place_to_add = {
+            "google_place_id": place_data.get("google_place_id") or place_data.get("place_id"),
+            "name": place_data.get("name", ""),
+            "type": place_data.get("type", "tourist_attraction"),
+            "address": place_data.get("address", ""),
+            "rating": place_data.get("rating", 0),
+            "description": place_data.get("description", ""),
+            "location": place_data.get("location", {}),
+            "time": time,
+            "duration": duration
         }
         
-        # TODO: Implement actual API call when authentication flow is ready
-        # url = f"{backend_url}/itineraries/{route_id}/add-place"
-        # headers = {"Authorization": f"Bearer {token}"}
-        # payload = {
-        #     "place_id": place_id,
-        #     "day_number": day_number,
-        #     "time": time,
-        #     "duration": duration
-        # }
-        # response = requests.post(url, json=payload, headers=headers)
-        
-        return response
+        return {
+            "success": True,
+            "message": f"✅ Thêm '{place_data.get('name')}' vào ngày {day_number} lúc {time}",
+            "place_to_add": place_to_add,
+            "day_number": day_number,
+            "route_id": itinerary_data.get("route_id"),
+            "instruction": "Frontend sẽ gọi API backend để lưu thay đổi này vào itinerary."
+        }
         
     except Exception as e:
         print(f"Error in add_place_to_itinerary_backend: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @tool  
@@ -1989,12 +2032,19 @@ def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[D
         
         # Get existing places to avoid duplicates
         route_data = itinerary_data.get("route_data_json", {})
-        days = route_data.get("days", [])
+        # Handle both "days" and "optimized_route" structures
+        days = route_data.get("days", []) or route_data.get("optimized_route", [])
         existing_place_ids = set()
         
         for day in days:
             for activity in day.get("activities", []):
-                place_id = activity.get("place", {}).get("place_id")
+                # Handle both structures
+                place = activity.get("place", {})
+                if not place or not place.get("place_id"):
+                    # Try to get place data directly from activity (optimized_route structure)
+                    place = activity
+                
+                place_id = place.get("place_id") or place.get("google_place_id")
                 if place_id:
                     existing_place_ids.add(place_id)
         
@@ -2026,8 +2076,13 @@ def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[D
             # Find the reference place in itinerary
             for day in days:
                 for activity in day.get("activities", []):
+                    # Handle both structures
                     place = activity.get("place", {})
-                    if place.get("name") == near_place or place.get("place_id") == near_place:
+                    if not place or not place.get("name"):
+                        # Try to get place data directly from activity (optimized_route structure)
+                        place = activity
+                    
+                    if place.get("name") == near_place or place.get("place_id") == near_place or place.get("google_place_id") == near_place:
                         ref_location = place.get("location", {})
                         if ref_location.get("coordinates"):
                             ref_lat, ref_lng = ref_location["coordinates"]

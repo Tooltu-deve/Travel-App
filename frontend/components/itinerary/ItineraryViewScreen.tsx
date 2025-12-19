@@ -34,6 +34,7 @@ import { API_BASE_URL } from '@/services/api';
 
 // Import POIDetailBottomSheet thật
 import POIDetailBottomSheet from '../place/POIDetailBottomSheet';
+import { ItineraryChatButton } from './ItineraryChatButton';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const MIN_DISTANCE_THRESHOLD_METERS = 30;
@@ -3153,6 +3154,17 @@ export const ItineraryViewScreen: React.FC<ItineraryViewScreenProps> = ({
         {overlayContent}
         {/* External footer actions (optional) */}
         {footerContent && <View style={styles.externalFooter}>{footerContent}</View>}
+        
+        {/* AI Chatbot Button - In Footer Area */}
+        {!isLoading && !error && !!routeDetails && (
+          <View style={styles.chatbotButtonContainer} pointerEvents="box-none">
+            <ItineraryChatButton 
+              visible={true}
+              itineraryData={routeDetails}
+              routeId={routeId}
+            />
+          </View>
+        )}
       </LinearGradient>
 
       {/* Replace POI Modal */}
@@ -4215,6 +4227,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.primary,
+  },
+  chatbotButtonContainer: {
+    position: 'absolute',
+    bottom: 80,
+    right: 20,
+    zIndex: 999,
   },
 });
 
