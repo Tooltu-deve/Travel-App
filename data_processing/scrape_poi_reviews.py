@@ -1,3 +1,21 @@
+def fetch_place_details(place_id: str, api_key: str):
+    """
+    Lấy thông tin chi tiết POI từ Google Places API (new).
+    Trả về dict với price_level (nếu có).
+    """
+    try:
+        url = f'https://places.googleapis.com/v1/places/{place_id}'
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': api_key,
+            'X-Goog-FieldMask': 'priceLevel,displayName'
+        }
+        r = requests.get(url, headers=headers, timeout=8, verify=False)
+        if r.status_code != 200:
+            return {}
+        return r.json()
+    except Exception:
+        return {}
 """
 Script để tìm kiếm POI bằng Google Text Search API
 - Tìm POI bằng Google Places API (Text Search)
@@ -299,8 +317,34 @@ def main():
                 print(f"   ✅ Tìm thấy {len(pois)} POI (đạt yêu cầu {min_results_per_city}-{max_results_per_city})")
             print(f"   {'─'*66}")
             
+            # Lọc POI sang trọng/đắt tiền bằng price_level
+            print(f"\n   🔎 Đang kiểm tra price_level cho {len(pois)} POI...")
+            luxury_levels = {"PRICE_LEVEL_EXPENSIVE", "PRICE_LEVEL_VERY_EXPENSIVE", "luxury", "expensive", 3, 4, 5}
+            filtered_pois = []
+            for idx, poi in enumerate(pois, 1):
+                details = fetch_place_details(poi['place_id'], GOOGLE_PLACES_API_KEY)
+                price_level = details.get('priceLevel')
+                # Hỗ trợ cả enum string và số (API cũ)
+                is_luxury = False
+                if price_level is not None:
+                    if isinstance(price_level, str):
+                        if price_level.upper() in luxury_levels:
+                            is_luxury = True
+                    else:
+                        try:
+                            if int(price_level) >= 3:
+                                is_luxury = True
+                        except Exception:
+                            pass
+                if is_luxury:
+                    filtered_pois.append(poi)
+                if idx % 10 == 0 or idx == len(pois):
+                    print(f"      Đã kiểm tra {idx}/{len(pois)} POI...")
+
+            print(f"   ✅ Có {len(filtered_pois)}/{len(pois)} POI sang trọng/đắt tiền")
+
             # Lưu POI vào summary (để thống kê)
-            for poi in pois:
+            for poi in filtered_pois:
                 poi_summary = {
                     'city': city['name'],
                     'place_id': poi['place_id'],
@@ -309,25 +353,25 @@ def main():
                 }
                 city_pois_summary.append(poi_summary)
                 all_pois_summary.append(poi_summary)
-            
+
             # Xuất file CSV cho thành phố hiện tại (chỉ có place_id)
-            if pois:
+            if filtered_pois:
                 # Sanitize tên thành phố để dùng làm tên file (loại bỏ ký tự đặc biệt)
                 city_name_safe = city['name'].replace(' ', '_').replace('/', '_').replace('\\', '_')
                 city_pois_file = f'./placeID/{city_name_safe}.csv'
-                
+
                 print(f"\n   💾 Đang lưu POI cho {city['name']}...")
                 try:
                     with open(city_pois_file, 'w', newline='', encoding='utf-8') as f:
                         writer = csv.DictWriter(f, fieldnames=['place_id'])
                         writer.writeheader()
-                        for poi in pois:
+                        for poi in filtered_pois:
                             writer.writerow({'place_id': poi['place_id']})
-                    print(f"   ✅ Đã lưu {len(pois)} POI → {city_pois_file}")
+                    print(f"   ✅ Đã lưu {len(filtered_pois)} POI → {city_pois_file}")
                 except Exception as e:
                     print(f"   ❌ Lỗi khi lưu file CSV cho {city['name']}: {e}")
             else:
-                print(f"\n   ⚠️  Không có POI nào để lưu cho {city['name']}")
+                print(f"\n   ⚠️  Không có POI sang trọng/đắt tiền nào để lưu cho {city['name']}")
             
         except Exception as e:
             print(f"❌ Lỗi khi xử lý {city['name']}: {e}")

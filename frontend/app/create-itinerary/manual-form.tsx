@@ -216,11 +216,11 @@ const ManualFormScreen: React.FC = () => {
     }
   };
 
-  // Hàm chuyển sang màn hình manual preview
+  // Hàm chuyển sang màn hình manual preview (để chọn POI)
   const proceedToManualPreview = () => {
     const durationDays = calculateDurationDays();
     
-    // Navigate to manual preview screen
+    // Navigate to manual preview screen (to add POIs)
     router.push({
       pathname: '/create-itinerary/manual-preview' as any,
       params: {

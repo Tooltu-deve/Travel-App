@@ -19,15 +19,20 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import Swipeable from 'react-native-gesture-handler/Swipeable';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '@/constants/colors';
 import { SPACING, BORDER_RADIUS } from '@/constants/spacing';
-import { calculateRoutesAPI, autocompletePlacesAPI, updateCustomItineraryStatusAPI, getLikedPlacesAPI, getPlaceByIdAPI } from '../../services/api';
+import { calculateRoutesAPI, autocompletePlacesAPI, updateCustomItineraryStatusAPI, getLikedPlacesAPI } from '../../services/api';
 import WeatherWarningModal, { WeatherSeverity } from '../../components/WeatherWarningModal';
+import { useFavorites } from '@/contexts/FavoritesContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const BOTTOM_SHEET_MIN_HEIGHT = 250;
 const BOTTOM_SHEET_MAX_HEIGHT = SCREEN_HEIGHT * 0.75;
+const ROUTE_COLORS = { main: '#4DB8FF', transit: '#F44336' };
 
 // Debounce delay cho autocomplete (ms)
 const AUTOCOMPLETE_DELAY = 500;
@@ -46,6 +51,10 @@ interface PlaceItem {
   address: string;
   placeId: string;
   location: { lat: number; lng: number };
+  openingHours?: {
+    weekdayDescriptions?: string[];
+  };
+  rating?: number;
 }
 
 interface DayItinerary {
@@ -59,6 +68,7 @@ export default function ManualPreviewScreen() {
   const params = useLocalSearchParams() as unknown as ManualPreviewParams;
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
+  const { favorites: favoritesPlaces } = useFavorites();
   
   // Parse params - use useMemo to prevent recreating Date objects on every render
   const startDate = useMemo(() => new Date(params.startDate), [params.startDate]);
@@ -74,8 +84,12 @@ export default function ManualPreviewScreen() {
   const [isSaving, setIsSaving] = useState(false);
   // Store travelMode for each day: { dayNumber: travelMode }
   const [travelModes, setTravelModes] = useState<Record<number, 'driving' | 'bicycling' | 'walking' | 'transit'>>({});
+  
+  // Title input modal state
+  const [showTitleInputModal, setShowTitleInputModal] = useState(false);
+  const [itineraryTitle, setItineraryTitle] = useState('');
   const [destinationCoords, setDestinationCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [routePolylines, setRoutePolylines] = useState<Array<{ latitude: number; longitude: number }[]>>([]);
+  const [enrichedPlaces, setEnrichedPlaces] = useState<Array<PlaceItem & { encoded_polyline?: string; start_encoded_polyline?: string; steps?: any[] }>>([]);
   const [startLocationCoords, setStartLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
   
   // Add place modal
@@ -84,16 +98,22 @@ export default function ManualPreviewScreen() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [sessionToken, setSessionToken] = useState<string>('');
-  const [favoritesPlaces, setFavoritesPlaces] = useState<any[]>([]);
-  const [isLoadingFavorites, setIsLoadingFavorites] = useState(false);
   const [isUsingFavorites, setIsUsingFavorites] = useState(false);
+  
+  // Replace POI modal
+  const [isReplacePOIModalVisible, setIsReplacePOIModalVisible] = useState(false);
+  const [replacingPlace, setReplacingPlace] = useState<PlaceItem | null>(null);
+  const [replaceSearchQuery, setReplaceSearchQuery] = useState('');
+  const [replaceSearchResults, setReplaceSearchResults] = useState<any[]>([]);
+  const [isReplaceSearching, setIsReplaceSearching] = useState(false);
+  const [replaceSessionToken, setReplaceSessionToken] = useState<string>('');
   
   // Multi-select delete mode
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedPlaces, setSelectedPlaces] = useState<Set<string>>(new Set());
   
-  // Swipe delete
-  const [swipedPlaceId, setSwipedPlaceId] = useState<string | null>(null);
+  // Opening hours expansion state
+  const [expandedOpeningHours, setExpandedOpeningHours] = useState<Set<string>>(new Set());
   
   // Bottom sheet animation
   const bottomSheetHeight = useRef(new Animated.Value(BOTTOM_SHEET_MIN_HEIGHT)).current;
@@ -101,22 +121,21 @@ export default function ManualPreviewScreen() {
 
   // Debounce timer ref
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const replaceSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Preview saved itinerary
   const [savedRouteData, setSavedRouteData] = useState<any | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-  
-  // Input title modal
-  const [showTitleInputModal, setShowTitleInputModal] = useState(false);
-  const [routeIdToConfirm, setRouteIdToConfirm] = useState<string | null>(null);
-  const [itineraryTitle, setItineraryTitle] = useState('');
-  const [isConfirming, setIsConfirming] = useState(false);
 
   // Weather warning state
   const [weatherModalVisible, setWeatherModalVisible] = useState(false);
   const [weatherSeverity, setWeatherSeverity] = useState<WeatherSeverity>('normal');
   const [weatherAlert, setWeatherAlert] = useState<string>('');
   const [pendingRouteData, setPendingRouteData] = useState<any>(null);
+
+  // Lightweight toggle for verbose debugging logs (set to true only when actively debugging)
+  const VERBOSE_LOG = false;
+  const log = (...args: any[]) => { if (VERBOSE_LOG) console.log(...args); };
 
   // Generate unique session token (not in useCallback to avoid dependency issues)
   const generateSessionToken = () => {
@@ -127,6 +146,24 @@ export default function ManualPreviewScreen() {
   useEffect(() => {
     setSessionToken(generateSessionToken());
   }, []); // Empty dependency array - run only once
+
+  // Show favorites when modal opens
+  useEffect(() => {
+    if (isAddPlaceModalVisible && favoritesPlaces.length > 0) {
+      const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+        description: fav.name + (fav.address ? `, ${fav.address}` : ''),
+        place_id: fav.googlePlaceId || fav.placeId || fav.id,
+        structured_formatting: {
+          main_text: fav.name,
+          secondary_text: fav.address || fav.formatted_address || '',
+        },
+        isFavorite: true,
+        rating: fav.rating,
+        location: fav.location,
+      }));
+      setSearchResults(transformedFavorites);
+    }
+  }, [isAddPlaceModalVisible, favoritesPlaces]);
 
   // Initialize itinerary with empty days and default travelMode for each day
   useEffect(() => {
@@ -203,6 +240,39 @@ export default function ManualPreviewScreen() {
   const getMapRegion = () => {
     const currentDayPlaces = itinerary[selectedDay - 1]?.places || [];
     
+    // Priority 1: Center on start location if available
+    if (startLocationCoords) {
+      // Include all places in the view
+      if (currentDayPlaces.length > 0) {
+        const allLats = [startLocationCoords.lat, ...currentDayPlaces.map(p => p.location.lat)];
+        const allLngs = [startLocationCoords.lng, ...currentDayPlaces.map(p => p.location.lng)];
+        
+        const minLat = Math.min(...allLats);
+        const maxLat = Math.max(...allLats);
+        const minLng = Math.min(...allLngs);
+        const maxLng = Math.max(...allLngs);
+        
+        const latDelta = (maxLat - minLat) * 1.5 || 0.05;
+        const lngDelta = (maxLng - minLng) * 1.5 || 0.05;
+        
+        return {
+          latitude: (minLat + maxLat) / 2,
+          longitude: (minLng + maxLng) / 2,
+          latitudeDelta: Math.max(latDelta, 0.05),
+          longitudeDelta: Math.max(lngDelta, 0.05),
+        };
+      }
+      
+      // Just start location
+      return {
+        latitude: startLocationCoords.lat,
+        longitude: startLocationCoords.lng,
+        latitudeDelta: 0.1,
+        longitudeDelta: 0.1,
+      };
+    }
+    
+    // Priority 2: Center on current day places
     if (currentDayPlaces.length === 0 && destinationCoords) {
       return {
         latitude: destinationCoords.lat,
@@ -244,8 +314,9 @@ export default function ManualPreviewScreen() {
     };
   };
 
-  // Decode polyline helper
-  const decodePolyline = (encoded: string): { latitude: number; longitude: number }[] => {
+  // Decode polyline - copied from AI
+  const decodePolyline = (encoded?: string) => {
+    if (!encoded) return [];
     const points: { latitude: number; longitude: number }[] = [];
     let index = 0;
     let lat = 0;
@@ -286,67 +357,192 @@ export default function ManualPreviewScreen() {
     return points;
   };
 
-  // Fetch directions and update polylines
+  // Fetch directions and update enriched places with polylines - copied logic from AI
   const fetchDirections = async (places: PlaceItem[]) => {
     if (places.length === 0) {
-      setRoutePolylines([]);
+      setEnrichedPlaces([]);
       return;
     }
 
-    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_DIRECTIONS_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
-    if (!apiKey) return;
-
     try {
-      const polylines: { latitude: number; longitude: number }[][] = [];
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) return;
+
+      // Prepare payload for calculateRoutesAPI
+      const travelMode = travelModes[selectedDay] || 'driving';
+      const payload = {
+        destination: destination,
+        days: [
+          {
+            dayNumber: selectedDay,
+            travelMode: travelMode,
+            startLocation: currentLocationText || destination,
+            places: places.map(place => ({
+              placeId: place.placeId,
+              name: place.name,
+              address: place.address,
+            })),
+          },
+        ],
+        optimize: false, // Don't optimize order, keep manual order
+      };
+
+      log('🚀 [Manual] Calling calculateRoutesAPI with payload:', JSON.stringify(payload, null, 2));
       
-      // Get all waypoints including start location
-      const waypoints: { lat: number; lng: number }[] = [];
+      const response = await calculateRoutesAPI(payload, token);
       
-      // Add start location as first point
-      if (startLocationCoords) {
-        waypoints.push(startLocationCoords);
-      }
+      log('📍 [Manual] calculateRoutesAPI response:', JSON.stringify(response, null, 2));
       
-      // Add all places
-      places.forEach(place => {
-        if (place.location.lat !== 0 || place.location.lng !== 0) {
-          waypoints.push(place.location);
+      if (response && response.days && response.days[0]) {
+        const dayData = response.days[0];
+
+        // If backend returned startLocationCoordinates, use it to set the start marker
+        if (dayData.startLocationCoordinates && dayData.startLocationCoordinates.lat != null && dayData.startLocationCoordinates.lng != null) {
+          log('   ✅ [Manual] Setting startLocationCoords from API response:', dayData.startLocationCoordinates);
+          setStartLocationCoords({
+            lat: dayData.startLocationCoordinates.lat,
+            lng: dayData.startLocationCoordinates.lng,
+          });
         }
-      });
 
-      // Fetch directions between consecutive waypoints
-      for (let i = 0; i < waypoints.length - 1; i++) {
-        const origin = waypoints[i];
-        const destination = waypoints[i + 1];
+        // Enrich places with encoded_polyline and start_encoded_polyline from response
+        const enriched = places.map((place, index) => {
+          const routeData = dayData.places?.[index] || {};
+          log(`   - Place ${index} (${place.name}):`, {
+            hasEncodedPolyline: !!routeData.encoded_polyline,
+            hasStartPolyline: !!routeData.start_encoded_polyline,
+            hasSteps: !!routeData.steps,
+          });
+          return {
+            ...place,
+            encoded_polyline: routeData.encoded_polyline || undefined,
+            start_encoded_polyline: index === 0 ? routeData.start_encoded_polyline : undefined,
+            steps: routeData.steps || undefined,
+          };
+        });
         
-        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}&mode=driving&key=${apiKey}`;
-        
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (data.status === 'OK' && data.routes && data.routes[0]) {
-          const encodedPolyline = data.routes[0].overview_polyline.points;
-          const decodedPoints = decodePolyline(encodedPolyline);
-          polylines.push(decodedPoints);
-        }
+        log('✅ [Manual] Setting enrichedPlaces with polylines');
+        setEnrichedPlaces(enriched);
+      } else {
+        log('⚠️ [Manual] No valid response, using places without polylines');
+        // No response, just use places without polylines
+        setEnrichedPlaces(places as any);
       }
-
-      setRoutePolylines(polylines);
     } catch (error) {
       console.error('Fetch directions error:', error);
+      // Fallback to places without polylines
+      setEnrichedPlaces(places as any);
     }
   };
+
+  // Calculate route segments from enriched places (memoized to avoid re-computation/log spam)
+  const routeSegments = useMemo(() => {
+    // Build a single ordered route: Start -> POI1 -> POI2 -> ...
+    const fullPoints: { latitude: number; longitude: number }[] = [];
+
+    const pushIfNew = (pt?: { latitude: number; longitude: number }) => {
+      if (!pt) return;
+      const last = fullPoints[fullPoints.length - 1];
+      if (!last || last.latitude !== pt.latitude || last.longitude !== pt.longitude) {
+        fullPoints.push(pt);
+      }
+    };
+
+    // Start -> first POI (ensure route begins at explicit start coord then follows encoded segment or direct line)
+    if (startLocationCoords && enrichedPlaces.length > 0) {
+      const startCoord = { latitude: startLocationCoords.lat, longitude: startLocationCoords.lng };
+      if (enrichedPlaces[0]?.start_encoded_polyline) {
+        const decoded = decodePolyline(enrichedPlaces[0].start_encoded_polyline);
+        // only log when explicitly enabled
+        log('   ✅ Using start_encoded_polyline with', decoded.length, 'points');
+        if (startCoord) pushIfNew(startCoord);
+        decoded.forEach(p => pushIfNew({ latitude: p.latitude, longitude: p.longitude }));
+      } else if (enrichedPlaces[0]?.location) {
+        log('   ⚠️ No start_encoded_polyline, using start coord -> first POI coord fallback');
+        if (startCoord) pushIfNew(startCoord);
+        pushIfNew({ latitude: enrichedPlaces[0].location.lat, longitude: enrichedPlaces[0].location.lng });
+      }
+    } else if (enrichedPlaces.length > 0 && enrichedPlaces[0]?.location) {
+      pushIfNew({ latitude: enrichedPlaces[0].location.lat, longitude: enrichedPlaces[0].location.lng });
+    }
+
+    // Append each place's encoded_polyline (route to next) if available, otherwise append place coordinate
+    enrichedPlaces.forEach((place, idx) => {
+      if (place.encoded_polyline) {
+        const decoded = decodePolyline(place.encoded_polyline);
+        if (decoded.length > 0) {
+          log(`   ✅ Appending encoded_polyline for POI ${idx} (${place.name}) with ${decoded.length} points`);
+          decoded.forEach(p => pushIfNew({ latitude: p.latitude, longitude: p.longitude }));
+          return;
+        }
+      }
+      if (place.location) {
+        pushIfNew({ latitude: place.location.lat, longitude: place.location.lng });
+      }
+    });
+
+    if (fullPoints.length > 1) {
+      log('   📊 Simplified route created with', fullPoints.length, 'points');
+      return [{ points: fullPoints, mode: 'DRIVE' }];
+    }
+
+    log('   ⚠️ Not enough points to build simplified route');
+    return [];
+  }, [enrichedPlaces, startLocationCoords, travelModes, selectedDay]);
 
   // Update routes when places change
   useEffect(() => {
     const currentDayPlaces = itinerary[selectedDay - 1]?.places || [];
-    // Chỉ fetch directions nếu thực sự có places hoặc startLocationCoords thay đổi
-    if (currentDayPlaces.length > 0 || startLocationCoords) {
+    log('🔄 [Manual] Places changed, updating routes...');
+    log('   - Current day places:', currentDayPlaces.length);
+    log('   - Start location coords:', startLocationCoords);
+    log('   - Current location text:', currentLocationText);
+    
+    // Fetch directions nếu có places và start location
+    if (currentDayPlaces.length > 0 && (startLocationCoords || currentLocationText)) {
+      log('   ✅ Calling fetchDirections...');
       fetchDirections(currentDayPlaces);
     } else {
-      setRoutePolylines([]);
+      log('   ⚠️ Not calling fetchDirections (missing places or start location)');
+      setEnrichedPlaces([]);
     }
-  }, [itinerary, selectedDay, startLocationCoords]);
+  }, [itinerary, selectedDay, startLocationCoords, travelModes]);
+
+  // Fit map to show all places and routes when they change
+  useEffect(() => {
+    if (mapRef.current) {
+      const currentDayPlaces = itinerary[selectedDay - 1]?.places || [];
+      
+      if (currentDayPlaces.length > 0 && startLocationCoords) {
+        // Include start location and all places
+        const coordinates = [
+          { latitude: startLocationCoords.lat, longitude: startLocationCoords.lng },
+          ...currentDayPlaces.map(p => ({ latitude: p.location.lat, longitude: p.location.lng }))
+        ];
+        
+        // Fit to coordinates with padding
+        setTimeout(() => {
+          mapRef.current?.fitToCoordinates(coordinates, {
+            edgePadding: { top: 100, right: 50, bottom: 350, left: 50 },
+            animated: true,
+          });
+        }, 500);
+      } else if (currentDayPlaces.length > 0) {
+        // Just places, no start location
+        const coordinates = currentDayPlaces.map(p => ({ 
+          latitude: p.location.lat, 
+          longitude: p.location.lng 
+        }));
+        
+        setTimeout(() => {
+          mapRef.current?.fitToCoordinates(coordinates, {
+            edgePadding: { top: 100, right: 50, bottom: 350, left: 50 },
+            animated: true,
+          });
+        }, 500);
+      }
+    }
+  }, [itinerary, selectedDay, startLocationCoords, enrichedPlaces]);
 
   // Backend Autocomplete search
   const searchPlaces = async (query: string) => {
@@ -369,7 +565,63 @@ export default function ManualPreviewScreen() {
 
       // Backend returns array directly, not wrapped in predictions
       if (data && Array.isArray(data)) {
-        setSearchResults(data);
+        // Mark favorites and sort them to top
+        const resultsWithFavorites = data.map(item => {
+          // Normalize place_id for comparison (remove 'places/' prefix if exists)
+          const normalizedPlaceId = (item.place_id || item.placeId || '').replace(/^places\//, '');
+          
+          // Check if this place is in favorites
+          const isFavorite = favoritesPlaces.some(fav => {
+            const favPlaceId = (fav.google_place_id || fav.place_id || '').replace(/^places\//, '');
+            return favPlaceId === normalizedPlaceId;
+          });
+          
+          return {
+            ...item,
+            isFavorite,
+          };
+        });
+        
+        // 🔍 Filter favorites that match search query
+        const searchLower = query.toLowerCase().trim();
+        const matchedFavorites = favoritesPlaces
+          .filter((fav: any) => {
+            const name = fav.structured_formatting?.main_text?.toLowerCase() || fav.description?.toLowerCase() || '';
+            const address = fav.structured_formatting?.secondary_text?.toLowerCase() || '';
+            return name.includes(searchLower) || address.includes(searchLower);
+          })
+          .map((fav: any) => {
+            const favPlaceId = (fav.google_place_id || fav.place_id || '').replace(/^places\//, '');
+            
+            // Check if already in API results
+            const alreadyInResults = resultsWithFavorites.some((item: any) => {
+              const itemPlaceId = (item.place_id || item.placeId || '').replace(/^places\//, '');
+              return itemPlaceId === favPlaceId;
+            });
+            
+            // Only add if not already in results
+            if (!alreadyInResults) {
+              return {
+                ...fav,
+                isFavorite: true,
+              };
+            }
+            return null;
+          })
+          .filter(Boolean); // Remove nulls
+        
+        // Combine: matched favorites first, then API results (already sorted with favorites marked)
+        const combined = [...matchedFavorites, ...resultsWithFavorites];
+        
+        // Sort: favorites first, then others
+        const sortedResults = combined.sort((a, b) => {
+          if (a.isFavorite && !b.isFavorite) return -1;
+          if (!a.isFavorite && b.isFavorite) return 1;
+          return 0;
+        });
+        
+        log(`🔍 Search "${query}": ${matchedFavorites.length} matched favorites + ${data.length} API results`);
+        setSearchResults(sortedResults);
       } else {
         setSearchResults([]);
       }
@@ -390,30 +642,37 @@ export default function ManualPreviewScreen() {
       clearTimeout(searchTimerRef.current);
     }
 
-    // If favorites mode is on
-    if (isUsingFavorites) {
-      if (!text.trim()) {
-        // Show all favorites when input is empty
-        setSearchResults(favoritesPlaces);
-        return;
-      } else {
-        // Filter favorites based on search text
-        const filteredFavorites = favoritesPlaces.filter(fav =>
-          fav.description.toLowerCase().includes(text.toLowerCase()) ||
-          fav.structured_formatting?.main_text?.toLowerCase().includes(text.toLowerCase()) ||
-          fav.structured_formatting?.secondary_text?.toLowerCase().includes(text.toLowerCase())
-        );
-        setSearchResults(filteredFavorites);
-        return;
-      }
-    }
+    // Transform favorites to match format
+    const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+      description: fav.name + (fav.address ? `, ${fav.address}` : ''),
+      place_id: fav.googlePlaceId || fav.placeId || fav.id,
+      structured_formatting: {
+        main_text: fav.name,
+        secondary_text: fav.address || fav.formatted_address || '',
+      },
+      isFavorite: true,
+      rating: fav.rating,
+      location: fav.location,
+    }));
 
-    // Normal autocomplete mode
+    // If search is empty, show all favorites
     if (!text.trim()) {
-      setSearchResults([]);
+      setSearchResults(transformedFavorites);
       setSessionToken(generateSessionToken());
       return;
     }
+
+    // If favorites mode is on, filter favorites only
+    if (isUsingFavorites) {
+      const filteredFavorites = transformedFavorites.filter((fav: any) =>
+        fav.structured_formatting?.main_text?.toLowerCase().includes(text.toLowerCase()) ||
+        fav.structured_formatting?.secondary_text?.toLowerCase().includes(text.toLowerCase())
+      );
+      setSearchResults(filteredFavorites);
+      return;
+    }
+
+    // Normal autocomplete mode - search from API
 
     // Set new timer for debounced search
     searchTimerRef.current = setTimeout(() => {
@@ -422,85 +681,30 @@ export default function ManualPreviewScreen() {
   };
 
   // Toggle favorites mode for autocomplete
-  const toggleFavoritesMode = async () => {
-    if (isUsingFavorites) {
-      // Turn off favorites mode
-      setIsUsingFavorites(false);
-      setSearchResults([]);
-      setSearchQuery('');
-    } else {
-      // Turn on favorites mode
-      if (favoritesPlaces.length === 0) {
-        // Load favorites if not loaded yet
-        try {
-          setIsLoadingFavorites(true);
-          const token = await AsyncStorage.getItem('userToken');
-          if (!token) {
-            Alert.alert('Lỗi', 'Bạn cần đăng nhập để tải địa điểm yêu thích.');
-            return;
-          }
+  const toggleFavoritesMode = () => {
+    // Transform favorites to match autocomplete format
+    const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+      description: fav.name + (fav.address ? `, ${fav.address}` : ''),
+      place_id: fav.googlePlaceId || fav.placeId || fav.id,
+      structured_formatting: {
+        main_text: fav.name,
+        secondary_text: fav.address || fav.formatted_address || '',
+      },
+      isFavorite: true,
+      rating: fav.rating,
+      location: fav.location,
+    }));
 
-          const favorites = await getLikedPlacesAPI(token);
-          if (favorites && Array.isArray(favorites)) {
-            // Transform favorites to match autocomplete format
-            // Enrich with full place details
-            const enrichedFavorites = await Promise.all(
-              favorites.map(async (fav, index) => {
-                try {
-                  const placeDetails = await getPlaceByIdAPI(fav.place_id);
-                  return {
-                    description: placeDetails.name + (placeDetails.address ? `, ${placeDetails.address}` : ''),
-                    place_id: `fav-${fav.place_id}-${index}`,
-                    structured_formatting: {
-                      main_text: placeDetails.name,
-                      secondary_text: placeDetails.address || '',
-                    },
-                    // Add marker to identify as favorite
-                    isFavorite: true,
-                    rating: placeDetails.rating,
-                    // Store location for map display
-                    location: placeDetails.location,
-                    // Store original data for later use
-                    originalData: fav,
-                  };
-                } catch (error) {
-                  console.warn('Failed to enrich favorite place:', fav.place_id, error);
-                  // Fallback to basic info
-                  return {
-                    description: `Địa điểm ${fav.place_id}`,
-                    place_id: `fav-${fav.place_id}-${index}`,
-                    structured_formatting: {
-                      main_text: `Địa điểm ${fav.place_id}`,
-                      secondary_text: '',
-                    },
-                    isFavorite: true,
-                    rating: null,
-                    originalData: fav,
-                  };
-                }
-              })
-            );
-            
-            setFavoritesPlaces(enrichedFavorites);
-            setSearchResults(enrichedFavorites);
-            setIsUsingFavorites(true);
-            // Reset search query to trigger display of all favorites
-            setSearchQuery('');
-          }
-        } catch (error) {
-          console.error('Load favorites error:', error);
-          Alert.alert('Lỗi', 'Không thể tải địa điểm yêu thích.');
-          return;
-        } finally {
-          setIsLoadingFavorites(false);
-        }
-      } else {
-        // Use already loaded favorites
-        setIsUsingFavorites(true);
-        setSearchResults(favoritesPlaces);
-        // Reset search query to trigger display of all favorites
-        setSearchQuery('');
-      }
+    if (isUsingFavorites) {
+      // Tắt favorites mode, vẫn hiện favorites
+      setIsUsingFavorites(false);
+      setSearchQuery('');
+      setSearchResults(transformedFavorites);
+    } else {
+      // Bật favorites mode, hiện favorites
+      setIsUsingFavorites(true);
+      setSearchQuery('');
+      setSearchResults(transformedFavorites);
     }
   };
 
@@ -564,6 +768,27 @@ export default function ManualPreviewScreen() {
         }
       }
       
+      // Fetch detailed place info including opening hours
+      // Skip enrichment for now - will be done later when viewing itinerary details
+      let openingHours = undefined;
+      let rating = undefined;
+      // Note: Commented out auto-enrich to avoid unnecessary API calls
+      // Opening hours will be fetched on-demand when user views itinerary
+      // try {
+      //   if (placeId) {
+      //     const token = await AsyncStorage.getItem('userToken');
+      //     if (token) {
+      //       const enriched = await enrichPlaceAPI(token, placeId, false);
+      //       if (enriched?.data) {
+      //         openingHours = enriched.data.openingHours;
+      //         rating = enriched.data.rating;
+      //       }
+      //     }
+      //   }
+      // } catch (err) {
+      //   console.warn('Failed to fetch place details:', err);
+      // }
+
       // Add place to itinerary
       const newPlace: PlaceItem = {
         id: `${placeId}-${Date.now()}`,
@@ -574,6 +799,8 @@ export default function ManualPreviewScreen() {
           lat: latitude,
           lng: longitude,
         },
+        openingHours,
+        rating,
       };
 
       // Add to current day
@@ -628,7 +855,6 @@ export default function ManualPreviewScreen() {
               };
               return updated;
             });
-            setSwipedPlaceId(null);
           },
         },
       ]
@@ -677,6 +903,185 @@ export default function ManualPreviewScreen() {
     );
   };
 
+  // Handle drag end to reorder places
+  const handleDragEnd = (data: PlaceItem[]) => {
+    setItinerary(prev => {
+      const updated = [...prev];
+      updated[selectedDay - 1] = {
+        ...updated[selectedDay - 1],
+        places: data,
+      };
+      return updated;
+    });
+  };
+
+  // Toggle opening hours expansion
+  const toggleOpeningHours = (placeKey: string) => {
+    setExpandedOpeningHours(prev => {
+      const next = new Set(prev);
+      if (next.has(placeKey)) {
+        next.delete(placeKey);
+      } else {
+        next.add(placeKey);
+      }
+      return next;
+    });
+  };
+
+  // Handle replace POI
+  const handleReplacePlace = (place: PlaceItem) => {
+    setReplacingPlace(place);
+    setIsReplacePOIModalVisible(true);
+    setReplaceSearchQuery('');
+    setReplaceSearchResults([]);
+    setReplaceSessionToken(generateSessionToken());
+  };
+
+  // Handle replace search
+  const handleReplaceSearchChange = (text: string) => {
+    setReplaceSearchQuery(text);
+
+    // Transform favorites to match format
+    const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+      description: fav.name + (fav.address ? `, ${fav.address}` : ''),
+      place_id: fav.googlePlaceId || fav.placeId || fav.id,
+      structured_formatting: {
+        main_text: fav.name,
+        secondary_text: fav.address || fav.formatted_address || '',
+      },
+      isFavorite: true,
+      rating: fav.rating,
+      location: fav.location,
+    }));
+
+    // If search is empty, show all favorites
+    if (!text.trim()) {
+      setReplaceSearchResults(transformedFavorites);
+      setReplaceSessionToken(generateSessionToken());
+      return;
+    }
+
+    // Normal autocomplete mode - search from API
+    if (replaceSearchTimerRef.current) {
+      clearTimeout(replaceSearchTimerRef.current);
+    }
+
+    replaceSearchTimerRef.current = setTimeout(() => {
+      searchPlacesForReplace(text);
+    }, AUTOCOMPLETE_DELAY);
+  };
+
+  // Search places for replace
+  const searchPlacesForReplace = async (query: string) => {
+    if (!query.trim()) {
+      setReplaceSearchResults([]);
+      return;
+    }
+
+    setIsReplaceSearching(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        setIsReplaceSearching(false);
+        return;
+      }
+
+      const response = await autocompletePlacesAPI(query, replaceSessionToken, destination, token);
+      const predictions = Array.isArray(response) ? response : (response.predictions || []);
+      setReplaceSearchResults(predictions);
+    } catch (error) {
+      console.error('Replace autocomplete error:', error);
+      setReplaceSearchResults([]);
+    } finally {
+      setIsReplaceSearching(false);
+    }
+  };
+
+  // Handle select new place for replacement
+  const handleSelectNewPlace = async (prediction: any) => {
+    if (!replacingPlace) return;
+
+    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
+    
+    try {
+      setIsLoading(true);
+      
+      let mainText: string;
+      let secondaryText: string;
+      let placeIdValue: string;
+
+      if (prediction.isFavorite) {
+        mainText = prediction.structured_formatting?.main_text || prediction.name || '';
+        secondaryText = prediction.structured_formatting?.secondary_text || prediction.address || '';
+        placeIdValue = prediction.place_id || prediction.googlePlaceId || '';
+      } else {
+        mainText = prediction.structured_formatting?.main_text || prediction.description || '';
+        secondaryText = prediction.structured_formatting?.secondary_text || '';
+        placeIdValue = prediction.place_id || '';
+      }
+
+      if (!placeIdValue) {
+        Alert.alert('Lỗi', 'Không thể lấy thông tin địa điểm.');
+        return;
+      }
+
+      // Get place details
+      const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeIdValue}&fields=name,formatted_address,geometry&key=${apiKey}`;
+      const detailsResponse = await fetch(detailsUrl);
+      const detailsData = await detailsResponse.json();
+
+      if (detailsData.status !== 'OK' || !detailsData.result) {
+        Alert.alert('Lỗi', 'Không thể lấy thông tin chi tiết địa điểm.');
+        return;
+      }
+
+      const { result } = detailsData;
+      const newPlace: PlaceItem = {
+        id: `${Date.now()}-${Math.random()}`,
+        name: result.name || mainText,
+        address: result.formatted_address || secondaryText,
+        placeId: placeIdValue,
+        location: {
+          lat: result.geometry.location.lat,
+          lng: result.geometry.location.lng,
+        },
+      };
+
+      // Replace the place in itinerary
+      setItinerary(prev => {
+        const updated = [...prev];
+        const dayIndex = selectedDay - 1;
+        const placeIndex = updated[dayIndex].places.findIndex(p => p.id === replacingPlace.id);
+        
+        if (placeIndex !== -1) {
+          updated[dayIndex] = {
+            ...updated[dayIndex],
+            places: [
+              ...updated[dayIndex].places.slice(0, placeIndex),
+              newPlace,
+              ...updated[dayIndex].places.slice(placeIndex + 1),
+            ],
+          };
+        }
+        
+        return updated;
+      });
+
+      // Close modal
+      setIsReplacePOIModalVisible(false);
+      setReplacingPlace(null);
+      setReplaceSearchQuery('');
+      setReplaceSearchResults([]);
+      
+      Alert.alert('Thành công', 'Đã thay đổi địa điểm.');
+    } catch (error) {
+      console.error('Replace place error:', error);
+      Alert.alert('Lỗi', 'Không thể thay đổi địa điểm. Vui lòng thử lại.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Exit multi-select mode
   const exitMultiSelectMode = () => {
     setIsMultiSelectMode(false);
@@ -700,8 +1105,8 @@ export default function ManualPreviewScreen() {
     setIsBottomSheetExpanded(!isBottomSheetExpanded);
   };
 
-  // Save itinerary via backend API
-  const handleSaveItinerary = async () => {
+  // Save itinerary - Navigate to manual-route.tsx for final preview with opening hours
+  const handleSaveItinerary = () => {
     // Check if there are any places
     const totalPlaces = itinerary.reduce((sum, day) => sum + day.places.length, 0);
     if (totalPlaces === 0) {
@@ -709,10 +1114,24 @@ export default function ManualPreviewScreen() {
       return;
     }
 
+    // Show title input modal
+    const suggestedTitle = destination && destination !== 'Lộ trình mới'
+      ? `Lộ trình ${destination}`
+      : 'Lộ trình mới';
+    setItineraryTitle(suggestedTitle);
+    setShowTitleInputModal(true);
+  };
+  
+  const handleConfirmSave = async () => {
+    if (!itineraryTitle.trim()) {
+      Alert.alert('Thông báo', 'Vui lòng nhập tên lộ trình.');
+      return;
+    }
+    
     setIsSaving(true);
+    setShowTitleInputModal(false);
+    
     try {
-      // Import AsyncStorage dynamically to avoid import issues
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       const token = await AsyncStorage.getItem('userToken');
       if (!token) {
         Alert.alert('Lỗi', 'Bạn cần đăng nhập để lưu lộ trình.');
@@ -720,73 +1139,69 @@ export default function ManualPreviewScreen() {
         return;
       }
 
-      // Prepare payload for backend API
+      // Build payload for calculateRoutesAPI
       const payload = {
         destination: destination,
-        start_date: startDate.toISOString(),
-        end_date: endDate.toISOString(),
-        optimize: false,
-        startLocationText: currentLocationText,
+        // Persist trip dates so backend will save start_date / end_date
+        start_date: startDate ? startDate.toISOString() : undefined,
+        end_date: endDate ? endDate.toISOString() : undefined,
         days: itinerary.map((day) => {
-          // Calculate start location for each day:
-          // Day 1: Use current location text
-          // Other days: Use last place of previous day, or fallback to current location
-          let dayStartLocation = currentLocationText;
-          if (day.day > 1) {
-            const previousDay = itinerary[day.day - 2];
-            if (previousDay && previousDay.places.length > 0) {
-              const lastPlace = previousDay.places[previousDay.places.length - 1];
-              dayStartLocation = lastPlace.address || currentLocationText;
-            }
-          }
-
+          // Use the single start location from the manual form for ALL days
+          const dayStartLocation = (currentLocationText && currentLocationText.trim()) ? currentLocationText : (destination || '');
           return {
-          dayNumber: day.day,
-            travelMode: travelModes[day.day] || 'driving', // Get travelMode for this specific day
+            dayNumber: day.day,
+            travelMode: travelModes[day.day] || 'driving',
             startLocation: dayStartLocation,
-          places: day.places.map((place) => ({
-            placeId: place.placeId,
-            name: place.name,
-            address: place.address,
-        })),
+            places: day.places.map((place) => ({
+              placeId: place.placeId,
+              name: place.name,
+              address: place.address,
+            })),
           };
         }),
       };
 
+      log('🚀 Saving itinerary with payload:', payload);
+      
       // Call backend API to calculate routes and save
       const result = await calculateRoutesAPI(payload, token);
-
-      // Kiểm tra cảnh báo thời tiết từ backend custom-itinerary
-      const alerts = result?.alerts;
-      if (Array.isArray(alerts) && alerts.length > 0) {
-        const firstAlert = alerts[0];
-        setWeatherSeverity(firstAlert.severity === 'danger' ? 'danger' : firstAlert.severity === 'warning' ? 'warning' : 'normal');
-        setWeatherAlert(firstAlert.message || firstAlert.title || 'Có cảnh báo thời tiết');
-        setPendingRouteData(result);
-        setWeatherModalVisible(true);
-        setIsSaving(false);
-        return;
-      }
+      
+      log('✅ Route saved:', result);
 
       // Check if route_id exists in response
       if (result && result.route_id) {
-        // Save route_id and show input title modal
-        setRouteIdToConfirm(result.route_id);
-        setItineraryTitle(result.title || `Lộ trình ${destination}`);
-        setShowTitleInputModal(true);
+        // Update status to CONFIRMED with title
+        await updateCustomItineraryStatusAPI(
+          result.route_id,
+          'CONFIRMED',
+          itineraryTitle.trim(),
+          token
+        );
+
+        Alert.alert(
+          'Thành công',
+          'Lộ trình đã được lưu thành công!',
+          [
+            {
+              text: 'OK',
+              onPress: () => router.replace('/(tabs)/itinerary'),
+            },
+          ]
+        );
       } else {
-        // Fallback: show error
         Alert.alert('Lỗi', 'Không thể lưu lộ trình. Vui lòng thử lại.');
       }
     } catch (error: any) {
-      console.error('Save itinerary error:', error);
+      console.error('❌ Save itinerary error:', error);
       Alert.alert('Lỗi', error.message || 'Không thể lưu lộ trình. Vui lòng thử lại.');
     } finally {
       setIsSaving(false);
     }
   };
 
+  // LEGACY: Function moved to manual-route.tsx
   // Handle confirm title and update status
+  /*
   const handleConfirmTitle = async () => {
     if (!routeIdToConfirm || !itineraryTitle.trim()) {
       Alert.alert('Thông báo', 'Vui lòng nhập tên lộ trình.');
@@ -834,7 +1249,9 @@ export default function ManualPreviewScreen() {
     }
   };
 
+  // LEGACY: Functions moved to manual-route.tsx
   // Xử lý khi người dùng chọn "Tiếp tục" trong modal warning
+  /*
   const handleWeatherContinue = async () => {
     setWeatherModalVisible(false);
     // Sử dụng route data đã được lưu trước đó
@@ -851,6 +1268,7 @@ export default function ManualPreviewScreen() {
     setWeatherModalVisible(false);
     setPendingRouteData(null);
   };
+  */
 
   // Cleanup search timer on unmount
   useEffect(() => {
@@ -877,19 +1295,27 @@ export default function ManualPreviewScreen() {
         toolbarEnabled={false}
         onMapReady={() => {
           // Map is ready
+          log('🗺️ [Manual Render] routeSegments count:', routeSegments.length);
         }}
+
       >
-        {/* Route Polylines */}
-        {routePolylines.map((polyline, index) => (
-          <Polyline
-            key={`polyline-${index}`}
-            coordinates={polyline}
-            strokeColor={COLORS.primary}
-            strokeWidth={3}
-            lineCap="round"
-            lineJoin="round"
-          />
-        ))}
+        {/* Route Polylines - copied from AI */}
+        {routeSegments.map((segment, idx) => {
+
+          return (
+            <Polyline
+              key={`polyline-${selectedDay}-${idx}`}
+              coordinates={segment.points}
+              strokeColor={
+                segment.mode === 'TRANSIT' ? '#F44336' : ROUTE_COLORS.main
+              }
+              strokeWidth={segment.mode === 'TRANSIT' ? 6 : 4}
+              lineDashPattern={segment.mode === 'WALK' ? [20, 10] : undefined}
+              lineCap="round"
+              lineJoin="round"
+            />
+          );
+        })}
 
         {/* Start Location marker */}
         {startLocationCoords && (
@@ -1160,11 +1586,7 @@ export default function ManualPreviewScreen() {
         )}
 
         {/* Places List */}
-        <ScrollView
-          style={styles.placesContainer}
-          contentContainerStyle={styles.placesContent}
-          showsVerticalScrollIndicator={false}
-        >
+        <GestureHandlerRootView style={{ flex: 1 }}>
           {currentPlaces.length === 0 ? (
             <View style={styles.emptyState}>
               <FontAwesome name="map-o" size={48} color={COLORS.disabled} />
@@ -1174,23 +1596,38 @@ export default function ManualPreviewScreen() {
               </Text>
             </View>
           ) : (
-            currentPlaces.map((place, index) => (
-              <PlaceCard
-                key={place.id}
-                place={place}
-                index={index}
-                isMultiSelectMode={isMultiSelectMode}
-                isSelected={selectedPlaces.has(place.id)}
-                isSwiped={swipedPlaceId === place.id}
-                onSwipe={() => setSwipedPlaceId(place.id)}
-                onCancelSwipe={() => setSwipedPlaceId(null)}
-                onDelete={() => handleDeletePlace(place.id)}
-                onLongPress={() => handleLongPressPlace(place.id)}
-                onToggleSelect={() => togglePlaceSelection(place.id)}
-              />
-            ))
+            <DraggableFlatList
+              data={currentPlaces}
+              onDragEnd={({ data }) => handleDragEnd(data)}
+              keyExtractor={(item) => item.id}
+              scrollEnabled={false}
+              nestedScrollEnabled={true}
+              containerStyle={styles.placesContainer}
+              contentContainerStyle={styles.placesContent}
+              renderItem={({ item: place, drag, isActive, getIndex }: RenderItemParams<PlaceItem>) => {
+                const index = getIndex() ?? 0;
+                return (
+                  <ScaleDecorator>
+                    <PlaceCard
+                      place={place}
+                      index={index}
+                      isMultiSelectMode={isMultiSelectMode}
+                      isSelected={selectedPlaces.has(place.id)}
+                      onDelete={() => handleDeletePlace(place.id)}
+                      onReplace={() => handleReplacePlace(place)}
+                      onLongPress={isMultiSelectMode ? () => handleLongPressPlace(place.id) : drag}
+                      onToggleSelect={() => togglePlaceSelection(place.id)}
+                      isActive={isActive}
+                      selectedDay={selectedDay}
+                      expandedOpeningHours={expandedOpeningHours}
+                      toggleOpeningHours={toggleOpeningHours}
+                    />
+                  </ScaleDecorator>
+                );
+              }}
+            />
           )}
-        </ScrollView>
+        </GestureHandlerRootView>
 
         {/* Add Place Button */}
         {!isMultiSelectMode && (
@@ -1204,17 +1641,10 @@ export default function ManualPreviewScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Footer Actions */}
+        {/* Footer Actions (single large Save button) */}
         <View style={styles.footerActions}>
           <TouchableOpacity
-            style={[styles.footerButton, styles.cancelButton]}
-            onPress={() => router.back()}
-            disabled={isSaving}
-          >
-            <Text style={styles.cancelButtonText}>Quay lại</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.footerButton, styles.saveButton]}
+            style={[styles.footerButton, styles.saveButton, styles.saveButtonFull]}
             onPress={handleSaveItinerary}
             disabled={isSaving}
           >
@@ -1222,8 +1652,8 @@ export default function ManualPreviewScreen() {
               <ActivityIndicator size="small" color={COLORS.textWhite} />
             ) : (
               <>
-                <FontAwesome name="save" size={16} color={COLORS.textWhite} />
-                <Text style={styles.saveButtonText}>Lưu lộ trình</Text>
+                <FontAwesome name="save" size={18} color={COLORS.textWhite} />
+                <Text style={[styles.saveButtonText, styles.saveButtonTextLarge]}>Lưu lộ trình</Text>
               </>
             )}
           </TouchableOpacity>
@@ -1255,49 +1685,59 @@ export default function ManualPreviewScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Search Input */}
-            <View style={styles.searchInputContainer}>
-              {/* Favorites Toggle Button */}
+            {/* Search Input with Favorites Toggle */}
+            <View style={styles.searchContainerWrapper}>
+              {/* Favorites Toggle Button - Outside search box */}
               <TouchableOpacity
                 style={[
                   styles.favoritesToggleButton,
                   isUsingFavorites && styles.favoritesToggleButtonActive
                 ]}
                 onPress={toggleFavoritesMode}
-                disabled={isLoadingFavorites}
                 activeOpacity={0.7}
               >
-                {isLoadingFavorites ? (
-                  <ActivityIndicator size="small" color={COLORS.primary} />
-                ) : (
-                  <FontAwesome 
-                    name={isUsingFavorites ? "heart" : "heart-o"} 
-                    size={18} 
-                    color={isUsingFavorites ? COLORS.textWhite : COLORS.primary} 
-                  />
-                )}
+                <FontAwesome 
+                  name={isUsingFavorites ? "heart" : "heart-o"} 
+                  size={20} 
+                  color={isUsingFavorites ? COLORS.textWhite : COLORS.primary} 
+                />
               </TouchableOpacity>
               
-              <FontAwesome name="search" size={18} color={COLORS.textSecondary} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Tìm kiếm địa điểm..."
-                placeholderTextColor={COLORS.textSecondary}
-                value={searchQuery}
-                onChangeText={handleSearchChange}
-                autoFocus
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity
-                  onPress={() => {
-                    setSearchQuery('');
-                    setSearchResults([]);
-                    setSessionToken(generateSessionToken());
-                  }}
-                >
-                  <FontAwesome name="times-circle" size={18} color={COLORS.textSecondary} />
-                </TouchableOpacity>
-              )}
+              {/* Search Input Box */}
+              <View style={styles.searchInputContainer}>
+                <FontAwesome name="search" size={18} color={COLORS.textSecondary} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Tìm kiếm địa điểm..."
+                  placeholderTextColor={COLORS.textSecondary}
+                  value={searchQuery}
+                  onChangeText={handleSearchChange}
+                  autoFocus
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSearchQuery('');
+                      // Show favorites when clearing search
+                      const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+                        description: fav.name + (fav.address ? `, ${fav.address}` : ''),
+                        place_id: fav.googlePlaceId || fav.placeId || fav.id,
+                        structured_formatting: {
+                          main_text: fav.name,
+                          secondary_text: fav.address || fav.formatted_address || '',
+                        },
+                        isFavorite: true,
+                        rating: fav.rating,
+                        location: fav.location,
+                      }));
+                      setSearchResults(transformedFavorites);
+                      setSessionToken(generateSessionToken());
+                    }}
+                  >
+                    <FontAwesome name="times-circle" size={18} color={COLORS.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
 
             {/* Status hint */}
@@ -1374,6 +1814,139 @@ export default function ManualPreviewScreen() {
         </View>
       </Modal>
 
+      {/* Replace POI Modal */}
+      <Modal
+        visible={isReplacePOIModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsReplacePOIModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { paddingBottom: insets.bottom + SPACING.lg }]}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Thay đổi địa điểm</Text>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => {
+                  setIsReplacePOIModalVisible(false);
+                  setReplacingPlace(null);
+                  setReplaceSearchQuery('');
+                  setReplaceSearchResults([]);
+                }}
+              >
+                <FontAwesome name="times" size={24} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Current Place Info */}
+            {replacingPlace && (
+              <View style={styles.currentPlaceInfo}>
+                <Text style={styles.currentPlaceLabel}>Địa điểm hiện tại:</Text>
+                <Text style={styles.currentPlaceName}>{replacingPlace.name}</Text>
+              </View>
+            )}
+
+            {/* Search Input */}
+            <View style={styles.searchInputContainer}>
+              <FontAwesome name="search" size={18} color={COLORS.textSecondary} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Tìm kiếm địa điểm thay thế..."
+                placeholderTextColor={COLORS.textSecondary}
+                value={replaceSearchQuery}
+                onChangeText={handleReplaceSearchChange}
+                autoFocus
+              />
+              {replaceSearchQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setReplaceSearchQuery('');
+                    const transformedFavorites = favoritesPlaces.map((fav: any) => ({
+                      description: fav.name + (fav.address ? `, ${fav.address}` : ''),
+                      place_id: fav.googlePlaceId || fav.placeId || fav.id,
+                      structured_formatting: {
+                        main_text: fav.name,
+                        secondary_text: fav.address || fav.formatted_address || '',
+                      },
+                      isFavorite: true,
+                      rating: fav.rating,
+                      location: fav.location,
+                    }));
+                    setReplaceSearchResults(transformedFavorites);
+                    setReplaceSessionToken(generateSessionToken());
+                  }}
+                >
+                  <FontAwesome name="times-circle" size={18} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              )}
+              {isReplaceSearching && <ActivityIndicator size="small" color={COLORS.primary} />}
+            </View>
+
+            {/* Search Results */}
+            {isReplaceSearching ? (
+              <View style={styles.searchLoadingContainer}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+                <Text style={styles.searchLoadingText}>Đang tìm kiếm...</Text>
+              </View>
+            ) : replaceSearchResults.length > 0 ? (
+              <FlatList
+                data={replaceSearchResults}
+                keyExtractor={(item) => item.place_id}
+                keyboardShouldPersistTaps="handled"
+                style={styles.searchResultsList}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.searchResultItem}
+                    onPress={() => handleSelectNewPlace(item)}
+                    activeOpacity={0.7}
+                  >
+                    {item.isFavorite ? (
+                      <FontAwesome name="heart" size={20} color="#E91E63" />
+                    ) : (
+                      <FontAwesome name="map-marker" size={20} color={COLORS.primary} />
+                    )}
+                    <View style={styles.searchResultInfo}>
+                      <Text style={styles.searchResultName} numberOfLines={1}>
+                        {item.structured_formatting?.main_text || item.description}
+                      </Text>
+                      <Text style={styles.searchResultAddress} numberOfLines={1}>
+                        {item.structured_formatting?.secondary_text || ''}
+                      </Text>
+                      {item.rating && (
+                        <View style={styles.ratingContainer}>
+                          <FontAwesome name="star" size={12} color="#F59E0B" />
+                          <Text style={styles.ratingText}>{item.rating}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                )}
+              />
+            ) : replaceSearchQuery.length > 0 ? (
+              <View style={styles.noResultsContainer}>
+                <Text style={styles.noResultsText}>Không tìm thấy địa điểm</Text>
+              </View>
+            ) : (
+              <View style={styles.searchHintContainer}>
+                <FontAwesome name="lightbulb-o" size={24} color={COLORS.accent} />
+                <Text style={styles.searchHintText}>
+                  Nhập tên địa điểm, nhà hàng, khách sạn, điểm du lịch...
+                </Text>
+              </View>
+            )}
+
+            {/* Loading overlay */}
+            {isLoading && (
+              <View style={styles.loadingOverlay}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+                <Text style={styles.loadingText}>Đang thay đổi địa điểm...</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {/* Success Preview Modal */}
       <Modal
         visible={showPreviewModal}
@@ -1439,117 +2012,75 @@ export default function ManualPreviewScreen() {
         </View>
       </Modal>
 
-      {/* Input Title Modal */}
+      {/* Title Input Modal */}
       <Modal
         visible={showTitleInputModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => {
-          if (!isConfirming) {
-            setShowTitleInputModal(false);
-            setRouteIdToConfirm(null);
-            setItineraryTitle('');
-          }
-        }}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowTitleInputModal(false)}
       >
-        <View style={styles.titleModalOverlay}>
-          <View style={[styles.titleModalContent, { paddingBottom: insets.bottom + SPACING.lg }]}>
-            {/* Modal Header */}
+        <TouchableOpacity
+          style={styles.titleModalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowTitleInputModal(false)}
+        >
+          <View style={styles.titleModalContainer} onStartShouldSetResponder={() => true}>
             <View style={styles.titleModalHeader}>
               <Text style={styles.titleModalTitle}>Đặt tên lộ trình</Text>
-              {!isConfirming && (
-                <TouchableOpacity
-                  style={styles.titleModalCloseButton}
-                  onPress={() => {
-                    setShowTitleInputModal(false);
-                    setRouteIdToConfirm(null);
-                    setItineraryTitle('');
-                  }}
-                >
-                  <FontAwesome name="times" size={24} color={COLORS.textSecondary} />
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={styles.titleModalCloseButton}
+                onPress={() => setShowTitleInputModal(false)}
+              >
+                <FontAwesome name="times" size={20} color={COLORS.textSecondary} />
+              </TouchableOpacity>
             </View>
 
-            {/* Input Field */}
             <View style={styles.titleInputContainer}>
               <Text style={styles.titleInputLabel}>Tên lộ trình</Text>
               <TextInput
                 style={styles.titleInput}
-                placeholder="Nhập tên lộ trình..."
-                placeholderTextColor={COLORS.textSecondary}
+                placeholder="Nhập tên lộ trình"
                 value={itineraryTitle}
                 onChangeText={setItineraryTitle}
                 autoFocus
-                editable={!isConfirming}
-                maxLength={100}
               />
-              <Text style={styles.titleInputHint}>
-                {itineraryTitle.length}/100 ký tự
-              </Text>
             </View>
 
-            {/* Action Buttons */}
-            <View style={styles.titleModalActions}>
-              {!isConfirming && (
-                <TouchableOpacity
-                  style={[styles.titleModalButton, styles.titleModalCancelButton]}
-                  onPress={() => {
-                    setShowTitleInputModal(false);
-                    setRouteIdToConfirm(null);
-                    setItineraryTitle('');
-                  }}
-                >
-                  <Text style={styles.titleModalCancelText}>Hủy</Text>
-                </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.titleModalConfirmButton,
+                isSaving && styles.titleModalConfirmButtonDisabled
+              ]}
+              onPress={handleConfirmSave}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <ActivityIndicator size="small" color={COLORS.textWhite} />
+              ) : (
+                <Text style={styles.titleModalConfirmText}>Lưu lộ trình</Text>
               )}
-              <TouchableOpacity
-                style={[
-                  styles.titleModalButton,
-                  styles.titleModalConfirmButton,
-                  (!itineraryTitle.trim() || isConfirming) && styles.titleModalConfirmButtonDisabled,
-                ]}
-                onPress={handleConfirmTitle}
-                disabled={!itineraryTitle.trim() || isConfirming}
-              >
-                {isConfirming ? (
-                  <ActivityIndicator size="small" color={COLORS.textWhite} />
-                ) : (
-                  <>
-                    <FontAwesome name="check" size={16} color={COLORS.textWhite} />
-                    <Text style={styles.titleModalConfirmText}>Xác nhận</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
+            </TouchableOpacity>
           </View>
-        </View>
+        </TouchableOpacity>
       </Modal>
-
-      {/* Weather Warning Modal */}
-      <WeatherWarningModal
-        visible={weatherModalVisible}
-        severity={weatherSeverity}
-        alertMessage={weatherAlert}
-        onContinue={handleWeatherContinue}
-        onGoBack={handleWeatherGoBack}
-      />
     </View>
   );
 }
 
-// Place Card Component with swipe to delete
+// Place Card Component with swipe actions
 interface PlaceCardProps {
   place: PlaceItem;
   index: number;
   isMultiSelectMode: boolean;
   isSelected: boolean;
-  isSwiped: boolean;
-  onSwipe: () => void;
-  onCancelSwipe: () => void;
+  isActive?: boolean;
   onDelete: () => void;
+  onReplace: () => void;
   onLongPress: () => void;
   onToggleSelect: () => void;
+  selectedDay: number;
+  expandedOpeningHours: Set<string>;
+  toggleOpeningHours: (key: string) => void;
 }
 
 const PlaceCard: React.FC<PlaceCardProps> = (props: PlaceCardProps) => {
@@ -1558,124 +2089,159 @@ const PlaceCard: React.FC<PlaceCardProps> = (props: PlaceCardProps) => {
     index,
     isMultiSelectMode,
     isSelected,
-    isSwiped,
-    onSwipe,
-    onCancelSwipe,
+    isActive,
     onDelete,
+    onReplace,
     onLongPress,
     onToggleSelect,
+    selectedDay,
+    expandedOpeningHours,
+    toggleOpeningHours,
   } = props;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const DELETE_THRESHOLD = -80;
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only respond to horizontal swipes
-        return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dy) < 10;
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dx < 0) {
-          translateX.setValue(Math.max(gestureState.dx, DELETE_THRESHOLD - 20));
-        }
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx < DELETE_THRESHOLD / 2) {
-          // Snap to delete position
-          Animated.spring(translateX, {
-            toValue: DELETE_THRESHOLD,
-            useNativeDriver: true,
-          }).start();
-          onSwipe();
-        } else {
-          // Snap back
-          Animated.spring(translateX, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-          onCancelSwipe();
-        }
-      },
-    })
-  ).current;
+  // Render left swipe action (Delete)
+  const renderLeftActions = () => (
+    <View style={styles.swipeActionsContainer}>
+      <TouchableOpacity
+        style={[styles.swipeActionButton, styles.swipeDeleteButton]}
+        onPress={onDelete}
+        activeOpacity={0.7}
+      >
+        <FontAwesome name="trash-o" size={24} color={COLORS.textWhite} />
+        <Text style={styles.swipeActionText}>Xóa</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
-  // Reset position when not swiped
-  useEffect(() => {
-    if (!isSwiped) {
-      Animated.spring(translateX, {
-        toValue: 0,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [isSwiped, translateX]);
+  // Render right swipe action (Replace)
+  const renderRightActions = () => (
+    <View style={styles.swipeActionsContainer}>
+      <TouchableOpacity
+        style={[styles.swipeActionButton, styles.swipeEditButton]}
+        onPress={onReplace}
+        activeOpacity={0.7}
+      >
+        <FontAwesome name="exchange" size={24} color={COLORS.textWhite} />
+        <Text style={styles.swipeActionText}>Thay</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   const handlePress = () => {
     if (isMultiSelectMode) {
       onToggleSelect();
-    } else if (isSwiped) {
-      onCancelSwipe();
     }
   };
 
   return (
     <View style={styles.placeCardContainer}>
-      {/* Delete background */}
-      <View style={styles.deleteBackground}>
-        <TouchableOpacity
-          style={styles.deleteButton}
-          onPress={onDelete}
-          activeOpacity={0.7}
-        >
-          <FontAwesome name="trash" size={24} color={COLORS.textWhite} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Card content */}
-      <Animated.View
-        style={[
-          styles.placeCard,
-          { transform: [{ translateX }] },
-          isSelected && styles.placeCardSelected,
-        ]}
-        {...(isMultiSelectMode ? {} : panResponder.panHandlers)}
+      <Swipeable
+        renderLeftActions={renderLeftActions}
+        renderRightActions={renderRightActions}
+        overshootLeft={false}
+        overshootRight={false}
+        friction={2}
+        leftThreshold={40}
+        rightThreshold={40}
+        enabled={!isMultiSelectMode}
       >
-        <TouchableOpacity
-          style={styles.placeCardTouchable}
-          onPress={handlePress}
-          onLongPress={onLongPress}
-          delayLongPress={500}
-          activeOpacity={0.7}
-        >
-          {/* Selection checkbox */}
-          {isMultiSelectMode && (
-            <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
-              {isSelected && (
-                <FontAwesome name="check" size={12} color={COLORS.textWhite} />
+        <View style={[
+          styles.placeCard, 
+          isSelected && styles.placeCardSelected,
+          isActive && styles.placeCardDragging
+        ]}>
+          <TouchableOpacity
+            style={styles.placeCardTouchable}
+            onPress={handlePress}
+            onLongPress={onLongPress}
+            delayLongPress={500}
+            activeOpacity={0.7}
+            disabled={isActive}
+          >
+            {/* Selection checkbox */}
+            {isMultiSelectMode && (
+              <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+                {isSelected && (
+                  <FontAwesome name="check" size={12} color={COLORS.textWhite} />
+                )}
+              </View>
+            )}
+
+            {/* Place number */}
+            <View style={styles.placeNumber}>
+              <Text style={styles.placeNumberText}>{index + 1}</Text>
+            </View>
+
+            {/* Place info */}
+            <View style={styles.placeInfo}>
+              <Text style={styles.placeName} numberOfLines={1}>
+                {place.name}
+              </Text>
+              <Text style={styles.placeAddress} numberOfLines={1}>
+                {place.address}
+              </Text>
+              
+              {/* Opening Hours - Expandable */}
+              {(() => {
+                const openingHours = place.openingHours;
+                const placeKey = `${selectedDay}-${index}`;
+                const isExpanded = expandedOpeningHours.has(placeKey);
+                
+                if (openingHours?.weekdayDescriptions) {
+                  const today = new Date().getDay();
+                  const dayIndex = today === 0 ? 6 : today - 1;
+                  const todayHours = openingHours.weekdayDescriptions[dayIndex];
+                  
+                  if (isExpanded) {
+                    // Show all days
+                    return (
+                      <View style={styles.expandedOpeningHoursContainer}>
+                        {openingHours.weekdayDescriptions.map((dayHours: string, idx: number) => (
+                          <Text key={idx} style={styles.expandedOpeningHoursText}>
+                            {dayHours}
+                          </Text>
+                        ))}
+                        <TouchableOpacity onPress={() => toggleOpeningHours(placeKey)}>
+                          <Text style={styles.expandedOpeningHoursToggle}>Thu gọn ↑</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  } else if (todayHours) {
+                    // Show today only
+                    const hoursText = todayHours.split(': ')[1] || todayHours;
+                    return (
+                      <TouchableOpacity 
+                        style={styles.openingHoursRow} 
+                        onPress={() => toggleOpeningHours(placeKey)}
+                      >
+                        <FontAwesome name="clock-o" size={11} color={COLORS.textSecondary} />
+                        <Text style={styles.openingHoursText} numberOfLines={1}>
+                          {hoursText}
+                        </Text>
+                        <Text style={styles.expandMoreIndicator}> ↓</Text>
+                      </TouchableOpacity>
+                    );
+                  }
+                }
+                return null;
+              })()}
+              
+              {/* Rating */}
+              {place.rating && (
+                <View style={styles.ratingRow}>
+                  <FontAwesome name="star" size={11} color="#F59E0B" />
+                  <Text style={styles.ratingText}>{place.rating.toFixed(1)}</Text>
+                </View>
               )}
             </View>
-          )}
 
-          {/* Place number */}
-          <View style={styles.placeNumber}>
-            <Text style={styles.placeNumberText}>{index + 1}</Text>
-          </View>
-
-          {/* Place info */}
-          <View style={styles.placeInfo}>
-            <Text style={styles.placeName} numberOfLines={1}>
-              {place.name}
-            </Text>
-            <Text style={styles.placeAddress} numberOfLines={1}>
-              {place.address}
-            </Text>
-          </View>
-
-          {/* Drag hint icon */}
-          {!isMultiSelectMode && (
-            <MaterialIcons name="drag-indicator" size={24} color={COLORS.textSecondary} />
-          )}
-        </TouchableOpacity>
-      </Animated.View>
+            {/* Drag hint icon */}
+            {!isMultiSelectMode && (
+              <MaterialIcons name="drag-indicator" size={24} color={COLORS.textSecondary} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </Swipeable>
     </View>
   );
 };
@@ -1937,8 +2503,31 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xs,
   },
   placeCardContainer: {
+    marginHorizontal: SPACING.lg,
     marginBottom: SPACING.sm,
-    position: 'relative',
+  },
+  // Swipe Actions Styles
+  swipeActionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    height: '100%',
+  },
+  swipeActionButton: {
+    width: 80,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: SPACING.xs / 2,
+  },
+  swipeEditButton: {
+    backgroundColor: COLORS.primary,
+  },
+  swipeDeleteButton: {
+    backgroundColor: '#E91E63',
+  },
+  swipeActionText: {
+    color: COLORS.textWhite,
+    fontSize: 11,
+    fontWeight: '600',
   },
   deleteBackground: {
     position: 'absolute',
@@ -1970,6 +2559,14 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bgLightBlue,
     borderWidth: 2,
     borderColor: COLORS.primary,
+  },
+  placeCardDragging: {
+    opacity: 0.7,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
   placeCardTouchable: {
     flexDirection: 'row',
@@ -2017,6 +2614,50 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 2,
   },
+  openingHoursRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  openingHoursText: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    flex: 1,
+  },
+  expandMoreIndicator: {
+    fontSize: 10,
+    color: COLORS.textSecondary,
+  },
+  expandedOpeningHoursContainer: {
+    marginTop: 6,
+    padding: 8,
+    backgroundColor: COLORS.bgMain,
+    borderRadius: 6,
+    gap: 4,
+  },
+  expandedOpeningHoursText: {
+    fontSize: 11,
+    color: COLORS.textDark,
+  },
+  expandedOpeningHoursToggle: {
+    fontSize: 11,
+    color: COLORS.primary,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  ratingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  ratingText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#F59E0B',
+  },
   addPlaceButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2061,10 +2702,22 @@ const styles = StyleSheet.create({
   saveButton: {
     backgroundColor: COLORS.success,
   },
+  saveButtonFull: {
+    flex: 1,
+    paddingVertical: SPACING.lg,
+    borderRadius: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   saveButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.textWhite,
+  },
+  saveButtonTextLarge: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginLeft: SPACING.sm,
   },
   // Modal styles
   modalOverlay: {
@@ -2076,7 +2729,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bgMain,
     borderTopLeftRadius: SPACING.xl,
     borderTopRightRadius: SPACING.xl,
-    maxHeight: SCREEN_HEIGHT * 0.85,
+    maxHeight: SCREEN_HEIGHT * 0.9,
+    width: '100%',
     paddingTop: SPACING.lg,
   },
   modalHeader: {
@@ -2094,13 +2748,39 @@ const styles = StyleSheet.create({
   modalCloseButton: {
     padding: SPACING.xs,
   },
+  currentPlaceInfo: {
+    backgroundColor: COLORS.primary + '10',
+    padding: SPACING.md,
+    borderRadius: SPACING.md,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+  },
+  currentPlaceLabel: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xs / 2,
+  },
+  currentPlaceName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  searchContainerWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+  },
   searchInputContainer: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.bgCard,
-    marginHorizontal: SPACING.lg,
     paddingHorizontal: SPACING.md,
     borderRadius: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     gap: SPACING.sm,
   },
   searchInput: {
@@ -2151,11 +2831,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SPACING.xs,
     marginTop: 2,
-  },
-  ratingText: {
-    fontSize: 12,
-    color: '#F59E0B',
-    fontWeight: '600',
   },
   noResultsContainer: {
     alignItems: 'center',
@@ -2303,7 +2978,15 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: COLORS.textWhite,
   },
-  // Title Input Modal Styles
+  // Title Input Modal Styles (handled by titleModalOverlay)
+
+  titleModalContainer: {
+    backgroundColor: COLORS.bgMain,
+    borderRadius: SPACING.xl,
+    width: '100%',
+    maxWidth: 400,
+    padding: SPACING.xl,
+  },
   titleModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -2324,18 +3007,18 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   favoritesToggleButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.bgLightBlue,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.textWhite,
     borderWidth: 1,
-    borderColor: COLORS.primary,
+    borderColor: COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: SPACING.sm,
   },
   favoritesToggleButtonActive: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: '#E91E63',
+    borderColor: '#E91E63',
   },
   loadFavoritesButton: {
     flexDirection: 'row',
@@ -2423,14 +3106,19 @@ const styles = StyleSheet.create({
   },
   titleModalConfirmButton: {
     backgroundColor: COLORS.success,
+    width: '100%',
+    paddingVertical: SPACING.lg,
+    borderRadius: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   titleModalConfirmButtonDisabled: {
     backgroundColor: COLORS.disabled,
     opacity: 0.6,
   },
   titleModalConfirmText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: COLORS.textWhite,
   },
   searchHintText: {

@@ -292,6 +292,23 @@ export class PlaceService {
 
     const { googlePlaceId, forceRefresh } = enrichDto;
 
+    console.log(`🔍 Enriching place: ${googlePlaceId}`);
+
+    // Validate googlePlaceId format - must be a valid Google Place ID
+    // Valid formats: ChIJxxxx or places/ChIJxxxx (not custom_xxx or activity-xxx)
+    const cleanPlaceId = googlePlaceId.replace(/^places\//, '');
+    if (!cleanPlaceId || 
+        cleanPlaceId.startsWith('custom_') || 
+        cleanPlaceId.startsWith('activity-') ||
+        cleanPlaceId.length < 10 ||
+        !/^ChIJ/.test(cleanPlaceId)) {
+      console.log(`❌ Invalid Place ID: ${googlePlaceId}`);
+      throw new HttpException(
+        `Place ID không hợp lệ: ${googlePlaceId}. Chỉ chấp nhận Google Place ID (format: ChIJxxxx).`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     let place = await this.placeModel
       .findOne({ googlePlaceId })
       .exec();
