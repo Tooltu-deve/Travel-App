@@ -133,6 +133,10 @@ export default function ManualPreviewScreen() {
   const [weatherAlert, setWeatherAlert] = useState<string>('');
   const [pendingRouteData, setPendingRouteData] = useState<any>(null);
 
+  // Lightweight toggle for verbose debugging logs (set to true only when actively debugging)
+  const VERBOSE_LOG = false;
+  const log = (...args: any[]) => { if (VERBOSE_LOG) console.log(...args); };
+
   // Generate unique session token (not in useCallback to avoid dependency issues)
   const generateSessionToken = () => {
     return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -383,18 +387,18 @@ export default function ManualPreviewScreen() {
         optimize: false, // Don't optimize order, keep manual order
       };
 
-      console.log('🚀 [Manual] Calling calculateRoutesAPI with payload:', JSON.stringify(payload, null, 2));
+      log('🚀 [Manual] Calling calculateRoutesAPI with payload:', JSON.stringify(payload, null, 2));
       
       const response = await calculateRoutesAPI(payload, token);
       
-      console.log('📍 [Manual] calculateRoutesAPI response:', JSON.stringify(response, null, 2));
+      log('📍 [Manual] calculateRoutesAPI response:', JSON.stringify(response, null, 2));
       
       if (response && response.days && response.days[0]) {
         const dayData = response.days[0];
 
         // If backend returned startLocationCoordinates, use it to set the start marker
         if (dayData.startLocationCoordinates && dayData.startLocationCoordinates.lat != null && dayData.startLocationCoordinates.lng != null) {
-          console.log('   ✅ [Manual] Setting startLocationCoords from API response:', dayData.startLocationCoordinates);
+          log('   ✅ [Manual] Setting startLocationCoords from API response:', dayData.startLocationCoordinates);
           setStartLocationCoords({
             lat: dayData.startLocationCoordinates.lat,
             lng: dayData.startLocationCoordinates.lng,
@@ -404,7 +408,7 @@ export default function ManualPreviewScreen() {
         // Enrich places with encoded_polyline and start_encoded_polyline from response
         const enriched = places.map((place, index) => {
           const routeData = dayData.places?.[index] || {};
-          console.log(`   - Place ${index} (${place.name}):`, {
+          log(`   - Place ${index} (${place.name}):`, {
             hasEncodedPolyline: !!routeData.encoded_polyline,
             hasStartPolyline: !!routeData.start_encoded_polyline,
             hasSteps: !!routeData.steps,
@@ -417,10 +421,10 @@ export default function ManualPreviewScreen() {
           };
         });
         
-        console.log('✅ [Manual] Setting enrichedPlaces with polylines');
+        log('✅ [Manual] Setting enrichedPlaces with polylines');
         setEnrichedPlaces(enriched);
       } else {
-        console.log('⚠️ [Manual] No valid response, using places without polylines');
+        log('⚠️ [Manual] No valid response, using places without polylines');
         // No response, just use places without polylines
         setEnrichedPlaces(places as any);
       }
@@ -431,12 +435,8 @@ export default function ManualPreviewScreen() {
     }
   };
 
-  // Calculate route segments from enriched places (copied from AI)
-  const routeSegments = (() => {
-    console.log('\n🗺️ [Frontend Manual] Building route segments for map...');
-    console.log('   - Start location:', startLocationCoords);
-    console.log('   - Enriched places count:', enrichedPlaces.length);
-    
+  // Calculate route segments from enriched places (memoized to avoid re-computation/log spam)
+  const routeSegments = useMemo(() => {
     // Build a single ordered route: Start -> POI1 -> POI2 -> ...
     const fullPoints: { latitude: number; longitude: number }[] = [];
 
@@ -453,17 +453,16 @@ export default function ManualPreviewScreen() {
       const startCoord = { latitude: startLocationCoords.lat, longitude: startLocationCoords.lng };
       if (enrichedPlaces[0]?.start_encoded_polyline) {
         const decoded = decodePolyline(enrichedPlaces[0].start_encoded_polyline);
-        console.log('   ✅ Using start_encoded_polyline with', decoded.length, 'points');
-        // Prepend explicit start coordinate when available
+        // only log when explicitly enabled
+        log('   ✅ Using start_encoded_polyline with', decoded.length, 'points');
         if (startCoord) pushIfNew(startCoord);
         decoded.forEach(p => pushIfNew({ latitude: p.latitude, longitude: p.longitude }));
       } else if (enrichedPlaces[0]?.location) {
-        console.log('   ⚠️ No start_encoded_polyline, using start coord -> first POI coord fallback');
+        log('   ⚠️ No start_encoded_polyline, using start coord -> first POI coord fallback');
         if (startCoord) pushIfNew(startCoord);
         pushIfNew({ latitude: enrichedPlaces[0].location.lat, longitude: enrichedPlaces[0].location.lng });
       }
     } else if (enrichedPlaces.length > 0 && enrichedPlaces[0]?.location) {
-      // No start coords, start at first POI
       pushIfNew({ latitude: enrichedPlaces[0].location.lat, longitude: enrichedPlaces[0].location.lng });
     }
 
@@ -472,7 +471,7 @@ export default function ManualPreviewScreen() {
       if (place.encoded_polyline) {
         const decoded = decodePolyline(place.encoded_polyline);
         if (decoded.length > 0) {
-          console.log(`   ✅ Appending encoded_polyline for POI ${idx} (${place.name}) with ${decoded.length} points`);
+          log(`   ✅ Appending encoded_polyline for POI ${idx} (${place.name}) with ${decoded.length} points`);
           decoded.forEach(p => pushIfNew({ latitude: p.latitude, longitude: p.longitude }));
           return;
         }
@@ -483,28 +482,28 @@ export default function ManualPreviewScreen() {
     });
 
     if (fullPoints.length > 1) {
-      console.log('   📊 Simplified route created with', fullPoints.length, 'points');
+      log('   📊 Simplified route created with', fullPoints.length, 'points');
       return [{ points: fullPoints, mode: 'DRIVE' }];
     }
 
-    console.log('   ⚠️ Not enough points to build simplified route');
+    log('   ⚠️ Not enough points to build simplified route');
     return [];
-  })();
+  }, [enrichedPlaces, startLocationCoords, travelModes, selectedDay]);
 
   // Update routes when places change
   useEffect(() => {
     const currentDayPlaces = itinerary[selectedDay - 1]?.places || [];
-    console.log('🔄 [Manual] Places changed, updating routes...');
-    console.log('   - Current day places:', currentDayPlaces.length);
-    console.log('   - Start location coords:', startLocationCoords);
-    console.log('   - Current location text:', currentLocationText);
+    log('🔄 [Manual] Places changed, updating routes...');
+    log('   - Current day places:', currentDayPlaces.length);
+    log('   - Start location coords:', startLocationCoords);
+    log('   - Current location text:', currentLocationText);
     
     // Fetch directions nếu có places và start location
     if (currentDayPlaces.length > 0 && (startLocationCoords || currentLocationText)) {
-      console.log('   ✅ Calling fetchDirections...');
+      log('   ✅ Calling fetchDirections...');
       fetchDirections(currentDayPlaces);
     } else {
-      console.log('   ⚠️ Not calling fetchDirections (missing places or start location)');
+      log('   ⚠️ Not calling fetchDirections (missing places or start location)');
       setEnrichedPlaces([]);
     }
   }, [itinerary, selectedDay, startLocationCoords, travelModes]);
@@ -621,7 +620,7 @@ export default function ManualPreviewScreen() {
           return 0;
         });
         
-        console.log(`🔍 Search "${query}": ${matchedFavorites.length} matched favorites + ${data.length} API results`);
+        log(`🔍 Search "${query}": ${matchedFavorites.length} matched favorites + ${data.length} API results`);
         setSearchResults(sortedResults);
       } else {
         setSearchResults([]);
@@ -1162,12 +1161,12 @@ export default function ManualPreviewScreen() {
         }),
       };
 
-      console.log('🚀 Saving itinerary with payload:', payload);
+      log('🚀 Saving itinerary with payload:', payload);
       
       // Call backend API to calculate routes and save
       const result = await calculateRoutesAPI(payload, token);
       
-      console.log('✅ Route saved:', result);
+      log('✅ Route saved:', result);
 
       // Check if route_id exists in response
       if (result && result.route_id) {
@@ -1296,12 +1295,13 @@ export default function ManualPreviewScreen() {
         toolbarEnabled={false}
         onMapReady={() => {
           // Map is ready
-          console.log('🗺️ [Manual Render] routeSegments count:', routeSegments.length);
+          log('🗺️ [Manual Render] routeSegments count:', routeSegments.length);
         }}
+
       >
         {/* Route Polylines - copied from AI */}
         {routeSegments.map((segment, idx) => {
-          console.log(`   - Segment ${idx}: ${segment.points.length} points, mode: ${segment.mode}`);
+
           return (
             <Polyline
               key={`polyline-${selectedDay}-${idx}`}
@@ -1641,17 +1641,10 @@ export default function ManualPreviewScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Footer Actions */}
+        {/* Footer Actions (single large Save button) */}
         <View style={styles.footerActions}>
           <TouchableOpacity
-            style={[styles.footerButton, styles.cancelButton]}
-            onPress={() => router.back()}
-            disabled={isSaving}
-          >
-            <Text style={styles.cancelButtonText}>Quay lại</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.footerButton, styles.saveButton]}
+            style={[styles.footerButton, styles.saveButton, styles.saveButtonFull]}
             onPress={handleSaveItinerary}
             disabled={isSaving}
           >
@@ -1659,8 +1652,8 @@ export default function ManualPreviewScreen() {
               <ActivityIndicator size="small" color={COLORS.textWhite} />
             ) : (
               <>
-                <FontAwesome name="save" size={16} color={COLORS.textWhite} />
-                <Text style={styles.saveButtonText}>Lưu lộ trình</Text>
+                <FontAwesome name="save" size={18} color={COLORS.textWhite} />
+                <Text style={[styles.saveButtonText, styles.saveButtonTextLarge]}>Lưu lộ trình</Text>
               </>
             )}
           </TouchableOpacity>
@@ -2709,10 +2702,22 @@ const styles = StyleSheet.create({
   saveButton: {
     backgroundColor: COLORS.success,
   },
+  saveButtonFull: {
+    flex: 1,
+    paddingVertical: SPACING.lg,
+    borderRadius: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   saveButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.textWhite,
+  },
+  saveButtonTextLarge: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginLeft: SPACING.sm,
   },
   // Modal styles
   modalOverlay: {
@@ -3101,14 +3106,19 @@ const styles = StyleSheet.create({
   },
   titleModalConfirmButton: {
     backgroundColor: COLORS.success,
+    width: '100%',
+    paddingVertical: SPACING.lg,
+    borderRadius: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   titleModalConfirmButtonDisabled: {
     backgroundColor: COLORS.disabled,
     opacity: 0.6,
   },
   titleModalConfirmText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: COLORS.textWhite,
   },
   searchHintText: {
