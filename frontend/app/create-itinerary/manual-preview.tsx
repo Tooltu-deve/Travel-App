@@ -391,7 +391,16 @@ export default function ManualPreviewScreen() {
       
       if (response && response.days && response.days[0]) {
         const dayData = response.days[0];
-        
+
+        // If backend returned startLocationCoordinates, use it to set the start marker
+        if (dayData.startLocationCoordinates && dayData.startLocationCoordinates.lat != null && dayData.startLocationCoordinates.lng != null) {
+          console.log('   ✅ [Manual] Setting startLocationCoords from API response:', dayData.startLocationCoordinates);
+          setStartLocationCoords({
+            lat: dayData.startLocationCoordinates.lat,
+            lng: dayData.startLocationCoordinates.lng,
+          });
+        }
+
         // Enrich places with encoded_polyline and start_encoded_polyline from response
         const enriched = places.map((place, index) => {
           const routeData = dayData.places?.[index] || {};
@@ -1135,7 +1144,8 @@ export default function ManualPreviewScreen() {
       const payload = {
         destination: destination,
         days: itinerary.map((day) => {
-          const dayStartLocation = day.day === 1 ? currentLocationText : null;
+          // Use the single start location from the manual form for ALL days
+          const dayStartLocation = (currentLocationText && currentLocationText.trim()) ? currentLocationText : (destination || '');
           return {
             dayNumber: day.day,
             travelMode: travelModes[day.day] || 'driving',
@@ -2014,7 +2024,7 @@ export default function ManualPreviewScreen() {
         onRequestClose={() => setShowTitleInputModal(false)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={styles.titleModalOverlay}
           activeOpacity={1}
           onPress={() => setShowTitleInputModal(false)}
         >
@@ -2960,14 +2970,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: COLORS.textWhite,
   },
-  // Title Input Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: SPACING.lg,
-  },
+  // Title Input Modal Styles (handled by titleModalOverlay)
+
   titleModalContainer: {
     backgroundColor: COLORS.bgMain,
     borderRadius: SPACING.xl,
