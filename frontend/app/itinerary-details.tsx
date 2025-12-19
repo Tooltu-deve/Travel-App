@@ -249,33 +249,56 @@ export default function ItineraryDetailsScreen() {
     };
   };
 
-  // Route segments for polylines
+  // Route segments for polylines — simplified single ordered route (Start -> POI1 -> POI2 ...)
   const routeSegments = (() => {
-    const segments: { points: { latitude: number; longitude: number }[]; mode: string }[] = [];
+    console.log('\n🗺️ [Details] Building simplified route for map...');
+    const fullPoints: { latitude: number; longitude: number }[] = [];
 
-    activities.forEach((activity) => {
-      if (activity.steps && activity.steps.length > 0) {
-        activity.steps.forEach((step) => {
-          const decoded = decodePolyline(step.encoded_polyline);
-          if (decoded.length > 1) {
-            segments.push({
-              points: decoded,
-              mode: step.travel_mode,
-            });
-          }
-        });
-      } else {
-        const decoded = decodePolyline(activity.encoded_polyline);
-        if (decoded.length > 1) {
-          segments.push({
-            points: decoded,
-            mode: 'DRIVE', // Default
-          });
+    const pushIfNew = (pt?: { latitude: number; longitude: number }) => {
+      if (!pt) return;
+      const last = fullPoints[fullPoints.length - 1];
+      if (!last || last.latitude !== pt.latitude || last.longitude !== pt.longitude) {
+        fullPoints.push(pt);
+      }
+    };
+
+    // Start -> first POI (prefer explicit start_location when available)
+    if (routeDetails?.start_location && activities.length > 0) {
+      const startCoord = { latitude: routeDetails.start_location.lat, longitude: routeDetails.start_location.lng };
+      if ((activities[0] as any)?.start_encoded_polyline) {
+        const decoded = decodePolyline((activities[0] as any).start_encoded_polyline);
+        console.log('   ✅ Using start_encoded_polyline with', decoded.length, 'points');
+        if (startCoord) pushIfNew(startCoord);
+        decoded.forEach(p => pushIfNew({ latitude: p.latitude, longitude: p.longitude }));
+      } else if (activities[0]?.location) {
+        const firstCoord = { latitude: activities[0].location.lat, longitude: activities[0].location.lng };
+        if (startCoord) pushIfNew(startCoord);
+        if (firstCoord) pushIfNew(firstCoord);
+      }
+    } else if (activities.length > 0 && activities[0]?.location) {
+      pushIfNew({ latitude: activities[0].location.lat, longitude: activities[0].location.lng });
+    }
+
+    // Append each activity's encoded_polyline (route to next) if available, otherwise append place coordinate
+    activities.forEach((activity, idx) => {
+      if ((activity as any).encoded_polyline) {
+        const decoded = decodePolyline((activity as any).encoded_polyline);
+        if (decoded.length > 0) {
+          console.log(`   ✅ Appending encoded_polyline for activity ${idx} with ${decoded.length} points`);
+          decoded.forEach(p => pushIfNew({ latitude: p.latitude, longitude: p.longitude }));
+          return;
         }
+      }
+      if (activity.location) {
+        pushIfNew({ latitude: activity.location.lat, longitude: activity.location.lng });
       }
     });
 
-    return segments.filter((segment) => segment.points.length > 1);
+    if (fullPoints.length > 1) {
+      return [{ points: fullPoints, mode: 'DRIVE' }];
+    }
+
+    return [];
   })();
 
   // Update map region when day changes

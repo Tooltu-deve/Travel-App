@@ -437,58 +437,58 @@ export default function ManualPreviewScreen() {
     console.log('   - Start location:', startLocationCoords);
     console.log('   - Enriched places count:', enrichedPlaces.length);
     
-    const segments: { points: { latitude: number; longitude: number }[]; mode: string }[] = [];
+    // Build a single ordered route: Start -> POI1 -> POI2 -> ...
+    const fullPoints: { latitude: number; longitude: number }[] = [];
 
-    // Segment from start location to first POI
+    const pushIfNew = (pt?: { latitude: number; longitude: number }) => {
+      if (!pt) return;
+      const last = fullPoints[fullPoints.length - 1];
+      if (!last || last.latitude !== pt.latitude || last.longitude !== pt.longitude) {
+        fullPoints.push(pt);
+      }
+    };
+
+    // Start -> first POI (ensure route begins at explicit start coord then follows encoded segment or direct line)
     if (startLocationCoords && enrichedPlaces.length > 0) {
-      console.log('   - Checking first place for start_encoded_polyline...');
-      console.log('     First place:', enrichedPlaces[0]?.name);
-      console.log('     Has start_encoded_polyline:', !!enrichedPlaces[0]?.start_encoded_polyline);
-      
+      const startCoord = { latitude: startLocationCoords.lat, longitude: startLocationCoords.lng };
       if (enrichedPlaces[0]?.start_encoded_polyline) {
         const decoded = decodePolyline(enrichedPlaces[0].start_encoded_polyline);
-        console.log('     ✅ Decoded start polyline, points:', decoded.length);
-        segments.push({
-          points: decoded,
-          mode: 'DRIVE', // Default to DRIVE for start segment
-        });
-      } else {
-        console.log('     ⚠️ No start_encoded_polyline found for first place');
+        console.log('   ✅ Using start_encoded_polyline with', decoded.length, 'points');
+        // Prepend explicit start coordinate when available
+        if (startCoord) pushIfNew(startCoord);
+        decoded.forEach(p => pushIfNew({ latitude: p.latitude, longitude: p.longitude }));
+      } else if (enrichedPlaces[0]?.location) {
+        console.log('   ⚠️ No start_encoded_polyline, using start coord -> first POI coord fallback');
+        if (startCoord) pushIfNew(startCoord);
+        pushIfNew({ latitude: enrichedPlaces[0].location.lat, longitude: enrichedPlaces[0].location.lng });
       }
+    } else if (enrichedPlaces.length > 0 && enrichedPlaces[0]?.location) {
+      // No start coords, start at first POI
+      pushIfNew({ latitude: enrichedPlaces[0].location.lat, longitude: enrichedPlaces[0].location.lng });
     }
 
+    // Append each place's encoded_polyline (route to next) if available, otherwise append place coordinate
     enrichedPlaces.forEach((place, idx) => {
-      console.log(`   - Processing POI ${idx} (${place.name})...`);
-      console.log(`     Has encoded_polyline: ${!!place.encoded_polyline}`);
-      console.log(`     Has steps: ${!!place.steps}`);
-      
-      if (place.steps && place.steps.length > 0) {
-        place.steps.forEach((step, stepIdx) => {
-          const decoded = decodePolyline(step.encoded_polyline);
-          if (decoded.length > 1) {
-            console.log(`       Step ${stepIdx}: ${decoded.length} points`);
-            segments.push({
-              points: decoded,
-              mode: step.travel_mode,
-            });
-          }
-        });
-      } else if (place.encoded_polyline) {
+      if (place.encoded_polyline) {
         const decoded = decodePolyline(place.encoded_polyline);
-        if (decoded.length > 1) {
-          console.log(`     ✅ Decoded polyline: ${decoded.length} points`);
-          segments.push({
-            points: decoded,
-            mode: 'DRIVE', // Default
-          });
-        } else {
-          console.log(`     ⚠️ No valid polyline (${decoded.length} points)`);
+        if (decoded.length > 0) {
+          console.log(`   ✅ Appending encoded_polyline for POI ${idx} (${place.name}) with ${decoded.length} points`);
+          decoded.forEach(p => pushIfNew({ latitude: p.latitude, longitude: p.longitude }));
+          return;
         }
+      }
+      if (place.location) {
+        pushIfNew({ latitude: place.location.lat, longitude: place.location.lng });
       }
     });
 
-    console.log(`   📊 Total segments created: ${segments.length}`);
-    return segments.filter((segment) => segment.points.length > 1);
+    if (fullPoints.length > 1) {
+      console.log('   📊 Simplified route created with', fullPoints.length, 'points');
+      return [{ points: fullPoints, mode: 'DRIVE' }];
+    }
+
+    console.log('   ⚠️ Not enough points to build simplified route');
+    return [];
   })();
 
   // Update routes when places change
@@ -1143,6 +1143,9 @@ export default function ManualPreviewScreen() {
       // Build payload for calculateRoutesAPI
       const payload = {
         destination: destination,
+        // Persist trip dates so backend will save start_date / end_date
+        start_date: startDate ? startDate.toISOString() : undefined,
+        end_date: endDate ? endDate.toISOString() : undefined,
         days: itinerary.map((day) => {
           // Use the single start location from the manual form for ALL days
           const dayStartLocation = (currentLocationText && currentLocationText.trim()) ? currentLocationText : (destination || '');
