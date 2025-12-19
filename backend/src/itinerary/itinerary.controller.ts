@@ -205,7 +205,7 @@ export class ItineraryController {
     };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard) 
   @Post(':routeId/add-place')
   @HttpCode(HttpStatus.OK)
   async addPlaceToItinerary(
