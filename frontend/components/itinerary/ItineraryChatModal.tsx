@@ -247,7 +247,20 @@ export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
       }
 
       console.log('[ItineraryChat] Sending message with itinerary context');
-      console.log('[ItineraryChat] Itinerary data:', JSON.stringify(itineraryData, null, 2));
+      console.log('[ItineraryChat] Itinerary data keys:', Object.keys(itineraryData || {}));
+      console.log('[ItineraryChat] Has route_data_json:', !!(itineraryData as any)?.route_data_json);
+      console.log('[ItineraryChat] Has optimized_route:', !!(itineraryData as any)?.route_data_json?.optimized_route);
+      console.log('[ItineraryChat] Optimized route length:', (itineraryData as any)?.route_data_json?.optimized_route?.length || 0);
+      
+      // Debug: Log first day activities
+      const firstDay = (itineraryData as any)?.route_data_json?.optimized_route?.[0];
+      if (firstDay) {
+        console.log('[ItineraryChat] First day:', firstDay.day);
+        console.log('[ItineraryChat] First day activities:', firstDay.activities?.length || 0);
+        if (firstDay.activities?.[0]) {
+          console.log('[ItineraryChat] First activity name:', firstDay.activities[0].name);
+        }
+      }
 
       const requestBody: any = {
         message,

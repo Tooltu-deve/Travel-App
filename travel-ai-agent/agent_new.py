@@ -38,7 +38,9 @@ from tools import (
     get_itinerary_details,
     get_place_from_itinerary,
     suggest_additional_places,
-    add_place_to_itinerary_backend
+    add_place_to_itinerary_backend,
+    # Core search tool
+    search_places
 )
 
 load_dotenv()
@@ -67,6 +69,7 @@ class TravelState(TypedDict):
     current_location: Optional[Dict]  # {'lat': float, 'lng': float}
     active_place_id: Optional[str]    # Current place user is at
     itinerary: Optional[List[Dict]]   # User's itinerary (reference only)
+    last_suggestions: Optional[List[Dict]]  # Last place suggestions shown to user
 
 # =====================================
 # GRAPH NODES
@@ -106,7 +109,11 @@ def companion_assistant_node(state: TravelState) -> TravelState:
         ]):
             is_draft = itinerary_data.get('status') == 'DRAFT' or not itinerary_data.get('route_id')
             print(f"   📋 Type: Itinerary query ({'Draft' if is_draft else 'Saved'})")
-            response_text = _handle_itinerary_query(user_text, itinerary_data, current_location)
+            response_text, new_suggestions = _handle_itinerary_query(user_text, itinerary_data, current_location, state)
+            # Update state with new suggestions if returned
+            if new_suggestions is not None:
+                state["last_suggestions"] = new_suggestions
+                print(f"   💾 Updated last_suggestions: {len(new_suggestions)} places")
         
         # PRIORITY 0: SMART FEATURES (weather, directions, time-based)
         elif any(word in user_text for word in ["thời tiết", "weather", "trời", "nắng", "mưa", "nhiệt độ", "dự báo", "forecast"]):
@@ -1453,16 +1460,256 @@ def _handle_time_suggestions(user_text: str, current_location: Optional[Dict]) -
         print(f"   ❌ Error getting time suggestions: {e}")
         return "😔 Xin lỗi, tôi gặp lỗi khi lấy gợi ý hoạt động."
 
-def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_location: Optional[Dict]) -> str:
+def _format_place_type(place_type: str) -> str:
+    """Format place type with icon"""
+    type_map = {
+        'tourist_attraction': '🏛️ Điểm tham quan',
+        'museum': '🏛️ Bảo tàng',
+        'park': '🌳 Công viên',
+        'restaurant': '🍽️ Nhà hàng',
+        'cafe': '☕ Quán cà phê',
+        'bar': '🍸 Bar',
+        'shopping_mall': '🏬 Trung tâm mua sắm',
+        'hotel': '🏨 Khách sạn',
+        'night_club': '🎶 Hộp đêm',
+        'spa': '💆 Spa',
+        'gym': '🏋️ Phòng gym',
+        'movie_theater': '🎬 Rạp chiếu phim',
+        'church': '⛪ Nhà thờ',
+        'temple': '🛕 Đền / Chùa',
+        'beach': '🏖️ Bãi biển',
+        'market': '🏪 Chợ',
+        'default': '📍 Địa điểm'
+    }
+    return type_map.get(place_type, type_map['default'])
+
+
+def _format_emotional_tags(tags: list) -> str:
+    """Map emotional tags to Vietnamese"""
+    tag_map = {
+        # English tags
+        'adventurous': 'Mạo hiểm',
+        'family-friendly': 'Gia đình',
+        'festive': 'Lễ hội',
+        'historical': 'Lịch sử',
+        'lively': 'Sôi động',
+        'romantic': 'Lãng mạn',
+        'peaceful': 'Yên tĩnh',
+        'scenic': 'Đẹp',
+        'cultural': 'Văn hóa',
+        'spiritual': 'Tâm linh',
+        'relaxing': 'Thư giãn',
+        'exciting': 'Hứng thú',
+        'educational': 'Giáo dục',
+        'luxurious': 'Sang trọng',
+        'trendy': 'Hiện đại',
+        'authentic': 'Truyền thống',
+        'vibrant': 'Năng động',
+        'serene': 'Tĩnh lặng',
+        'bustling': 'ôn ào',
+        'charming': 'Quyến rũ',
+        # Vietnamese tags (keep as is)
+        'mạo hiểm': 'Mạo hiểm',
+        'gia đình': 'Gia đình',
+        'lễ hội': 'Lễ hội',
+        'lịch sử': 'Lịch sử',
+        'sôi động': 'Sôi động',
+        'lãng mạn': 'Lãng mạn',
+        'yên tĩnh': 'Yên tĩnh',
+        'đẹp': 'Đẹp',
+        'văn hóa': 'Văn hóa',
+        'tâm linh': 'Tâm linh',
+        'thư giãn': 'Thư giãn'
+    }
+    
+    mapped_tags = []
+    for tag in tags:
+        tag_lower = tag.lower().strip()
+        mapped = tag_map.get(tag_lower, tag)  # Keep original if not found
+        if mapped not in mapped_tags:  # Avoid duplicates
+            mapped_tags.append(mapped)
+    
+    return ', '.join(mapped_tags[:5])  # Limit to 5 tags
+
+
+def _format_place_type(place_type: str) -> str:
+    """Map place types to Vietnamese labels with emojis"""
+    type_map = {
+        'restaurant': ('🍽️ Nhà hàng', '🍽️'),
+        'cafe': ('☕ Quán cà phê', '☕'),
+        'coffee': ('☕ Quán cà phê', '☕'),
+        'museum': ('🏛️ Bảo tàng', '🏛️'),
+        'park': ('🌳 Công viên', '🌳'),
+        'temple': ('⛩️ Đền thờ', '⛩️'),
+        'church': ('⛪ Nhà thờ', '⛪'),
+        'shopping': ('🛍️ Mua sắm', '🛍️'),
+        'market': ('🏪 Chợ', '🏪'),
+        'entertainment': ('🎭 Giải trí', '🎭'),
+        'beach': ('🏖️ Bãi biển', '🏖️'),
+        'mountain': ('⛰️ Núi', '⛰️'),
+        'tourist_attraction': ('📍 Điểm tham quan', '📍'),
+        'attraction': ('📍 Điểm tham quan', '📍'),
+        'hotel': ('🏨 Khách sạn', '🏨'),
+        'accommodation': ('🏨 Chỗ ở', '🏨'),
+    }
+    
+    if not place_type:
+        return '📍 Địa điểm'
+    
+    place_type_lower = place_type.lower().strip()
+    
+    # Try exact match first
+    if place_type_lower in type_map:
+        return type_map[place_type_lower][0]
+    
+    # Try partial match
+    for key, (label, icon) in type_map.items():
+        if key in place_type_lower or place_type_lower in key:
+            return label
+    
+    # Default
+    return f'📍 {place_type}'
+
+
+def _format_datetime(datetime_str: str) -> str:
+    """Format ISO datetime to readable format"""
+    if not datetime_str:
+        return 'N/A'
+    
+    try:
+        from datetime import datetime
+        # Parse ISO format: 2025-12-21T08:05:53.859529
+        dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+        # Format: "08:05 - 21/12"
+        return dt.strftime("%H:%M - %d/%m")
+    except:
+        return datetime_str
+
+
+def _format_duration(minutes: any) -> str:
+    """Format duration in minutes to readable format"""
+    if not minutes:
+        return 'N/A'
+    
+    try:
+        mins = int(minutes) if isinstance(minutes, (int, float)) else 0
+        if mins < 60:
+            return f'{mins} phút'
+        else:
+            hours = mins // 60
+            remaining_mins = mins % 60
+            if remaining_mins == 0:
+                return f'{hours} giờ'
+            else:
+                return f'{hours}h {remaining_mins}m'
+    except:
+        return str(minutes)
+
+
+def _format_itinerary_display(details: Dict, is_draft: bool = False, show_title: bool = True) -> str:
+    """
+    Format itinerary details for beautiful display
+    """
+    from datetime import datetime
+    
+    response = ""
+    
+    # Header with title
+    if show_title:
+        title_suffix = " _(Đang tạo)_" if is_draft else ""
+        title = details.get('title', 'Chưa đặt tên')
+        response += f"📋 **{title}{title_suffix}**\n"
+        response += f"📍 **{details.get('destination', 'N/A')}** • {details.get('duration_days', 0)} ngày • {details.get('total_places', 0)} địa điểm\n\n"
+    
+    # Days and places
+    for day in details.get('days', []):
+        day_number = day.get('day_number', 1)
+        day_date = day.get('date', '')
+        
+        # Try to parse date for better formatting
+        try:
+            if day_date:
+                dt = datetime.fromisoformat(day_date.replace('Z', '+00:00')) if 'T' in str(day_date) else None
+                if dt:
+                    formatted_date = dt.strftime("%d/%m/%Y")
+                else:
+                    formatted_date = day_date
+            else:
+                formatted_date = ""
+        except:
+            formatted_date = day_date
+        
+        response += f"📅 **NGÀY {day_number}**"
+        if formatted_date:
+            response += f" • {formatted_date}"
+        response += "\n"
+        
+        places = day.get('places', [])
+        if not places:
+            response += "_Chưa có địa điểm_\n\n"
+            continue
+        
+        for i, place in enumerate(places, 1):
+            place_type = place.get('type', 'Địa điểm')
+            place_name = place['name']
+            
+            # Format type with emoji
+            type_label = _format_place_type(place_type)
+            
+            response += f"**{i}. {place_name}**\n"
+            response += f"{type_label}\n"
+            
+            # Time and duration on same line
+            time_parts = []
+            if place.get('time'):
+                formatted_time = _format_datetime(place.get('time'))
+                time_parts.append(f"🕐 {formatted_time}")
+            
+            if place.get('duration'):
+                formatted_duration = _format_duration(place.get('duration'))
+                time_parts.append(f"⏳ {formatted_duration}")
+            
+            if time_parts:
+                response += " • ".join(time_parts) + "\n"
+            
+            # Address
+            address = place.get('address', '')
+            if address:
+                response += f"📍 {address}\n"
+            
+            # Rating
+            rating = place.get('rating', 0)
+            if rating and rating > 0:
+                response += f"⭐ {rating}/5.0\n"
+            
+            # Spacing between items (except last one)
+            if i < len(places):
+                response += "\n"
+        
+        response += "\n"
+    
+    # Footer note
+    if is_draft:
+        response += "💡 Hỏi tôi để tìm hiểu chi tiết về từng địa điểm!"
+    
+    return response
+
+
+def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_location: Optional[Dict], state: Optional[Dict] = None) -> tuple:
     """
     Handle queries related to user's itinerary.
     Supports: viewing itinerary, adding places, getting place info from itinerary
     Works with both saved itineraries and draft itineraries (being created)
+    
+    Returns: tuple (response_text, updated_suggestions)
     """
     import re
     try:
         # Check if this is a draft (being created) or saved itinerary
         is_draft = itinerary_data.get('status') == 'DRAFT' or not itinerary_data.get('route_id')
+        
+        # Get last suggestions from state (if available)
+        last_suggestions = state.get('last_suggestions', []) if state else []
         
         # View itinerary overview
         if any(word in user_text for word in ["xem lộ trình", "lộ trình của tôi", "cho tôi xem", "show", "hiển thị"]):
@@ -1470,26 +1717,9 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
             details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
             
             if details.get("error"):
-                return f"❌ Không thể lấy thông tin lộ trình: {details['error']}"
+                return (f"❌ Không thể lấy thông tin lộ trình: {details['error']}", None)
             
-            # Add draft indicator if needed
-            title_suffix = " (Đang tạo)" if is_draft else ""
-            response = f"📋 **Lộ trình của bạn: {details.get('title', 'Chưa đặt tên')}{title_suffix}**\n\n"
-            response += f"📍 **Điểm đến:** {details.get('destination', 'N/A')}\n"
-            response += f"⏱️ **Thời gian:** {details.get('duration_days', 0)} ngày\n"
-            response += f"🏛️ **Tổng số địa điểm:** {details.get('total_places', 0)}\n\n"
-            
-            for day in details.get('days', []):
-                response += f"**📅 Ngày {day['day_number']}** ({day.get('date', 'N/A')}):\n"
-                for i, place in enumerate(day['places'], 1):
-                    response += f"  {i}. **{place['name']}** ({place['type']})\n"
-                    response += f"     ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')}\n"
-                response += "\n"
-            
-            if is_draft:
-                response += "💡 **Lưu ý:** Đây là lộ trình đang tạo. Bạn có thể hỏi tôi về bất kỳ địa điểm nào trong danh sách!"
-            
-            return response
+            return (_format_itinerary_display(details, is_draft=is_draft, show_title=True), None)
         
         # Ask about all places in itinerary (show all places)
         elif any(word in user_text for word in ["các địa điểm", "tất cả", "danh sách", "tất cả địa điểm"]):
@@ -1497,139 +1727,607 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
             details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
             
             if details.get("error"):
-                return f"❌ Không thể lấy thông tin lộ trình: {details['error']}"
+                return (f"❌ Không thể lấy thông tin lộ trình: {details['error']}", None)
             
-            # Add draft indicator if needed
-            title_suffix = " (Đang tạo)" if is_draft else ""
-            response = f"📋 **Tất cả địa điểm trong lộ trình{title_suffix}:**\n\n"
-            response += f"📍 **Điểm đến:** {details.get('destination', 'N/A')}\n"
-            response += f"⏱️ **Thời gian:** {details.get('duration_days', 0)} ngày\n"
-            response += f"🏛️ **Tổng số địa điểm:** {details.get('total_places', 0)}\n\n"
-            
-            for day in details.get('days', []):
-                response += f"**📅 Ngày {day['day_number']}** ({day.get('date', 'N/A')}):\n"
-                for i, place in enumerate(day['places'], 1):
-                    response += f"  {i}. **{place['name']}** ({place['type']})\n"
-                    response += f"     ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')}\n"
-                response += "\n"
-            
-            if is_draft:
-                response += "💡 **Lưu ý:** Đây là lộ trình đang tạo. Bạn có thể hỏi tôi chi tiết về bất kỳ địa điểm nào!"
-            
-            return response
+            return (_format_itinerary_display(details, is_draft=is_draft, show_title=True), None)
         
         # Ask about specific place in itinerary (works for both draft and saved)
         elif any(word in user_text for word in ["giới thiệu", "cho tôi biết", "kể về", "thông tin về"]):
-            print("      → Place info from itinerary (draft/saved)")
-            # Try to extract place name from user text
-            # Simple heuristic: look for words after the trigger
-            place_name = None
-            for trigger in ["giới thiệu", "cho tôi biết", "kể về", "thông tin về"]:
-                if trigger in user_text:
-                    parts = user_text.split(trigger)
-                    if len(parts) > 1:
-                        place_name = parts[1].strip()
-                        # Remove common words
-                        place_name = place_name.replace("về", "").replace("địa điểm", "").replace("các", "").replace("tất cả", "").strip()
-                        break
+            print("      → Place info request")
             
-            # Check if no specific place name extracted (means asking about all places in different phrasing)
-            if not place_name or len(place_name) < 2:
-                print("      → No specific place name extracted, showing all places")
+            # Check if asking about "địa điểm thứ X" pattern
+            place_index_match = re.search(r'địa điểm\s+(?:thứ\s+)?(\d+|một|hai|ba|bốn|năm)', user_text)
+            if place_index_match:
+                # Convert Vietnamese numbers to digits
+                vn_numbers = {'một': 1, 'hai': 2, 'ba': 3, 'bốn': 4, 'năm': 5}
+                index_str = place_index_match.group(1)
+                index = vn_numbers.get(index_str, int(index_str) if index_str.isdigit() else 0)
+                
+                if index > 0:
+                    # Priority 1: Check last_suggestions first
+                    if last_suggestions and index <= len(last_suggestions):
+                        print(f"      → Fetching detailed info for suggestion #{index}")
+                        place = last_suggestions[index - 1]
+                        place_id = place.get('place_id') or place.get('google_place_id')
+                        
+                        # Fetch detailed information from Google Places
+                        if place_id:
+                            try:
+                                print(f"      → Calling Google Places API for {place_id}")
+                                detailed_info = get_place_details.invoke({"place_id": place_id})
+                                if detailed_info and not detailed_info.get("error"):
+                                    # Merge with existing place data
+                                    place.update(detailed_info)
+                                    print(f"      ✅ Fetched details: rating={place.get('rating')}, reviews={len(place.get('reviews', []))}")
+                                else:
+                                    print(f"      ⚠️ No detailed info returned: {detailed_info.get('error', 'Unknown')}")
+                            except Exception as e:
+                                print(f"      ❌ Failed to fetch details: {e}")
+                        else:
+                            print(f"      ⚠️ No place_id found for suggestion #{index}")
+                        
+                        # Format detailed response
+                        response = f"📍 **{place.get('name')}**\n\n"
+                        
+                        type_label = _format_place_type(place.get('type', ''))
+                        response += f"{type_label}\n"
+                        
+                        if place.get('address'):
+                            response += f"📍 {place.get('address')}\n"
+                        
+                        rating = place.get('rating', 0)
+                        if rating and rating > 0:
+                            stars = "⭐" * int(rating)
+                            response += f"{stars} ({rating}/5.0"
+                            if place.get('user_ratings_total'):
+                                response += f" • {place['user_ratings_total']} đánh giá"
+                            response += ")\n"
+                        
+                        response += "\n"
+                        
+                        # Description/Editorial summary
+                        desc = place.get('description') or place.get('editorial_summary') or place.get('formatted_address')
+                        if desc:
+                            # Limit description length to avoid overly long responses
+                            if len(desc) > 300:
+                                desc = desc[:300] + "..."
+                            response += f"**Giới thiệu:**\n{desc}\n\n"
+                        
+                        # Opening hours
+                        if place.get('opening_hours'):
+                            hours = place['opening_hours']
+                            if isinstance(hours, dict):
+                                if hours.get('open_now') is not None:
+                                    status = "🟢 Đang mở cửa" if hours['open_now'] else "🔴 Đã đóng cửa"
+                                    response += f"{status}\n"
+                                if hours.get('weekday_text'):
+                                    response += "**Giờ mở cửa:**\n"
+                                    # Show only today and tomorrow to keep response concise
+                                    for day_hours in hours['weekday_text'][:2]:
+                                        response += f"• {day_hours}\n"
+                                    if len(hours['weekday_text']) > 2:
+                                        response += f"_(Xem đầy đủ khi thêm vào lộ trình)_\n"
+                                    response += "\n"
+                        
+                        # Price level
+                        if place.get('price_level'):
+                            price_map = {1: '$ Rẻ', 2: '$$ Vừa phải', 3: '$$$ Đắt', 4: '$$$$ Rất đắt'}
+                            response += f"💰 {price_map.get(place['price_level'], 'N/A')}\n\n"
+                        
+                        # Reviews - show only 1 review to keep response concise
+                        if place.get('reviews') and len(place['reviews']) > 0:
+                            response += "**💬 Đánh giá nổi bật:**\n"
+                            review = place['reviews'][0]
+                            rating_stars = "⭐" * review.get('rating', 0)
+                            text = review.get('text', '')
+                            if len(text) > 120:
+                                text = text[:120] + "..."
+                            response += f"{rating_stars}\n_{text}_\n\n"
+                        
+                        # Contact info
+                        contact_items = []
+                        if place.get('phone_number'):
+                            contact_items.append(f"📞 {place['phone_number']}")
+                        if place.get('website'):
+                            website = place['website']
+                            if len(website) > 40:
+                                website = website[:40] + "..."
+                            contact_items.append(f"🌐 {website}")
+                        
+                        if contact_items:
+                            response += " • ".join(contact_items) + "\n\n"
+                        
+                        # Tips with day suggestion if available
+                        response += "💡 **Thêm vào lộ trình:**\n"
+                        response += f'Hỏi: _"Thêm {place.get("name")} vào ngày [số ngày]"_'
+                        
+                        return (response, None)
+                    
+                    # Priority 2: Check itinerary places
+                    else:
+                        details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
+                        if not details.get("error"):
+                            all_places = []
+                            for day in details.get('days', []):
+                                for place in day.get('places', []):
+                                    all_places.append(place)
+                            
+                            if index <= len(all_places):
+                                place = all_places[index - 1]
+                                draft_note = " _(đang tạo)_" if is_draft else ""
+                                
+                                response = f"📍 **{place['name']}**{draft_note}\n\n"
+                                type_label = _format_place_type(place.get('type', ''))
+                                response += f"{type_label}\n"
+                                
+                                if place.get('address'):
+                                    response += f"📍 {place.get('address')}\n"
+                                response += "\n"
+                                
+                                response += f"📅 **Ngày {place.get('day', 'N/A')}**\n"
+                                if place.get('time'):
+                                    formatted_time = _format_datetime(place.get('time'))
+                                    response += f"🕐 {formatted_time}\n"
+                                if place.get('duration'):
+                                    formatted_duration = _format_duration(place.get('duration'))
+                                    response += f"⏳ {formatted_duration}\n"
+                                response += "\n"
+                                
+                                rating = place.get('rating', 0)
+                                if rating and rating > 0:
+                                    stars = "⭐" * int(rating)
+                                    response += f"{stars} ({rating}/5.0)\n\n"
+                                
+                                if place.get('description'):
+                                    response += f"**Giới thiệu:**\n{place['description']}\n\n"
+                                
+                                info_items = []
+                                if place.get('emotional_tags'):
+                                    tags = ', '.join(place['emotional_tags'])
+                                    info_items.append(f"💭 {tags}")
+                                if place.get('price_level'):
+                                    price_map = {'$': 'Rẻ', '$$': 'Vừa phải', '$$$': 'Đắt', '$$$$': 'Rất đắt'}
+                                    price = price_map.get(place['price_level'], place['price_level'])
+                                    info_items.append(f"💰 {price}")
+                                
+                                if info_items:
+                                    response += " | ".join(info_items) + "\n"
+                                
+                                if is_draft:
+                                    response += "\n💡 Hỏi tôi về các địa điểm khác!"
+                                
+                                return (response, None)
+                            else:
+                                return (f"❌ Lộ trình chỉ có {len(all_places)} địa điểm.", None)
+            
+            # Try to extract place name from user text
+            place_name = None
+            place_index = None
+            day_for_index = None
+            
+            # First, check if user is asking by index (VD: "giới thiệu địa điểm thứ 2 ngày 1")
+            index_pattern = r'địa điểm thứ (\d+)'
+            index_match = re.search(index_pattern, user_text, re.IGNORECASE)
+            if index_match:
+                place_index = int(index_match.group(1))
+                # Extract day number if mentioned
+                day_match = re.search(r'ngày (\d+)', user_text)
+                if day_match:
+                    day_for_index = int(day_match.group(1))
+                print(f"   🔢 User asking about place #{place_index} on day {day_for_index}")
+            
+            # If not asking by index, try to extract place name
+            if not place_index:
+                for trigger in ["giới thiệu", "cho tôi biết", "kể về", "thông tin về"]:
+                    if trigger in user_text:
+                        parts = user_text.split(trigger)
+                        if len(parts) > 1:
+                            place_name = parts[1].strip()
+                            place_name = place_name.replace("về", "").replace("địa điểm", "").replace("các", "").replace("tất cả", "").strip()
+                            # Remove index pattern if present
+                            place_name = re.sub(r'thứ \d+', '', place_name).strip()
+                            place_name = re.sub(r'ngày \d+', '', place_name).strip()
+                            break
+            
+            # Handle query by index
+            if place_index:
+                print(f"   → Getting place by index: {place_index} (day: {day_for_index})")
+                # Get all places or places from specific day
+                if day_for_index:
+                    # Get places from specific day only
+                    places = []
+                    if itinerary_data.get("route_data_json", {}).get("days"):
+                        for day in itinerary_data["route_data_json"]["days"]:
+                            if day.get("day") == day_for_index:
+                                for idx, activity in enumerate(day.get("activities", []), 1):
+                                    place = activity.get("place", {})
+                                    if place.get("name"):
+                                        places.append({
+                                            "name": place.get("name"),
+                                            "day": day.get("day"),
+                                            "date": day.get("date"),
+                                            "time": activity.get("time"),
+                                            "duration": activity.get("duration"),
+                                            "place_id": place.get("place_id") or place.get("google_place_id"),
+                                            "google_place_id": place.get("google_place_id"),
+                                            "type": place.get("type"),
+                                            "rating": place.get("rating"),
+                                            "address": place.get("address"),
+                                            "description": place.get("description"),
+                                            "emotional_tags": place.get("emotional_tags", [])
+                                        })
+                                break
+                    
+                    if place_index <= len(places):
+                        place = places[place_index - 1]
+                        print(f"   ✅ Found place #{place_index} on day {day_for_index}: {place['name']}")
+                        # Continue with detailed display (will be handled below)
+                    else:
+                        return (f"❌ Ngày {day_for_index} chỉ có {len(places)} địa điểm. Vui lòng chọn từ 1-{len(places)}.\n\n💡 Hỏi 'Các địa điểm ngày {day_for_index}' để xem danh sách.", None)
+                else:
+                    # Get all places from all days
+                    all_places = []
+                    if itinerary_data.get("route_data_json", {}).get("days"):
+                        for day in itinerary_data["route_data_json"]["days"]:
+                            for activity in day.get("activities", []):
+                                place_data = activity.get("place", {})
+                                if place_data.get("name"):
+                                    all_places.append({
+                                        "name": place_data.get("name"),
+                                        "day": day.get("day"),
+                                        "date": day.get("date"),
+                                        "time": activity.get("time"),
+                                        "duration": activity.get("duration"),
+                                        "place_id": place_data.get("place_id") or place_data.get("google_place_id"),
+                                        "google_place_id": place_data.get("google_place_id"),
+                                        "type": place_data.get("type"),
+                                        "rating": place_data.get("rating"),
+                                        "address": place_data.get("address"),
+                                        "description": place_data.get("description"),
+                                        "emotional_tags": place_data.get("emotional_tags", [])
+                                    })
+                    
+                    if place_index <= len(all_places):
+                        place = all_places[place_index - 1]
+                        print(f"   ✅ Found place #{place_index} (day {place['day']}): {place['name']}")
+                        # Continue with detailed display
+                    else:
+                        return (f"❌ Lộ trình chỉ có {len(all_places)} địa điểm. Vui lòng chọn từ 1-{len(all_places)}.\n\n💡 Hỏi 'Xem lộ trình' để xem danh sách đầy đủ.", None)
+            
+            # Check if no specific place name extracted and not querying by index
+            if not place_name and not place_index:
+                print("      → No specific place name or index extracted, showing all places")
                 details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
                 
                 if details.get("error"):
                     return f"❌ Không thể lấy thông tin lộ trình: {details['error']}"
                 
-                title_suffix = " (Đang tạo)" if is_draft else ""
-                response = f"📋 **Tất cả địa điểm trong lộ trình{title_suffix}:**\n\n"
-                response += f"📍 **Điểm đến:** {details.get('destination', 'N/A')}\n"
-                response += f"⏱️ **Thời gian:** {details.get('duration_days', 0)} ngày\n"
-                response += f"🏛️ **Tổng số địa điểm:** {details.get('total_places', 0)}\n\n"
-                
-                for day in details.get('days', []):
-                    response += f"**📅 Ngày {day['day_number']}** ({day.get('date', 'N/A')}):\n"
-                    for i, place in enumerate(day['places'], 1):
-                        response += f"  {i}. **{place['name']}** ({place['type']})\n"
-                        response += f"     ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')}\n"
-                    response += "\n"
-                
-                if is_draft:
-                    response += "💡 **Lưu ý:** Đây là lộ trình đang tạo. Bạn có thể hỏi tôi chi tiết về bất kỳ địa điểm nào!"
-                
-                return response
+                return _format_itinerary_display(details, is_draft=is_draft, show_title=True)
             
-            if place_name:
+            # If we have place from index query, use it directly
+            # Otherwise, search by name
+            if not place_index and place_name:
                 places = get_place_from_itinerary.invoke({
                     "itinerary_data": itinerary_data,
                     "place_name": place_name
                 })
                 
-                if places:
-                    place = places[0]  # Get first match
-                    
-                    # Check if this is a draft itinerary
-                    draft_note = " _(trong lộ trình đang tạo)_" if is_draft else " _(trong lộ trình của bạn)_"
-                    
-                    response = f"📍 **{place['name']}**{draft_note}\n\n"
-                    response += f"📅 **Ngày {place['day']}** - {place.get('date', 'N/A')}\n"
-                    response += f"⏰ **Thời gian:** {place.get('time', 'N/A')}\n"
-                    response += f"🕐 **Dự kiến:** {place.get('duration', 'N/A')}\n\n"
-                    
-                    if place.get('description'):
-                        response += f"📝 **Mô tả:**\n{place['description']}\n\n"
-                    
-                    response += f"⭐ **Đánh giá:** {place.get('rating', 'N/A')}/5\n"
-                    response += f"📍 **Địa chỉ:** {place.get('address', 'N/A')}\n"
-                    
-                    if place.get('emotional_tags'):
-                        tags = ', '.join(place['emotional_tags'])
-                        response += f"💭 **Cảm xúc:** {tags}\n"
-                    
-                    if place.get('price_level'):
-                        response += f"\n💰 **Mức giá:** {place['price_level']}\n"
-                    
-                    if is_draft:
-                        response += "\n\n💡 **Tip:** Bạn có thể hỏi tôi về bất kỳ địa điểm nào khác trong lộ trình!"
-                    
-                    return response
+                if not places:
+                    return (f"❌ Không tìm thấy địa điểm '{place_name}' trong lộ trình.\n\n💡 Hãy hỏi 'Xem lộ trình' để xem danh sách đầy đủ.", None)
+                
+                place = places[0]  # Get first match
+            
+            # Now we have 'place' - show detailed info
+            if place:
+                place_id = place.get('place_id') or place.get('google_place_id')
+                
+                # Get detailed information from Google Places API
+                print(f"   🔍 Getting detailed info for: {place['name']}")
+                print(f"   📍 place_id: {place_id}")
+                details = get_place_details.invoke({"place_id": place_id}) if place_id else {}
+                
+                if details:
+                    print(f"   ✅ Details received: {len(details)} fields")
                 else:
-                    return f"❌ Không tìm thấy địa điểm '{place_name}' trong lộ trình.\n\n💡 Hãy kiểm tra lại tên địa điểm hoặc hỏi: 'Xem lộ trình' để xem danh sách đầy đủ."
+                    print(f"   ⚠️ No details from Google Places API, using itinerary data only")
+                    # Enrich place object with available data
+                    if not place.get('description'):
+                        # Create basic description from type
+                        place_type = place.get('type', '')
+                        type_desc_map = {
+                            'tourist_attraction': 'Điểm tham quan nổi tiếng',
+                            'cafe': 'Quán cà phê',
+                            'restaurant': 'Nhà hàng',
+                            'bar': 'Quán bar/pub',
+                            'museum': 'Bảo tàng',
+                            'temple': 'Ngôi chùa/đền',
+                            'park': 'Công viên',
+                            'market': 'Khu chợ'
+                        }
+                        basic_desc = type_desc_map.get(place_type, 'Địa điểm thú vị')
+                        if place.get('rating', 0) >= 4.0:
+                            basic_desc += f" được đánh giá cao"
+                        place['description'] = basic_desc
+                
+                draft_note = " _(đang tạo)_" if is_draft else ""
+                response = f"📍 **{place['name']}**{draft_note}\n\n"
+                
+                # Basic info
+                type_label = _format_place_type(place.get('type', ''))
+                response += f"{type_label}\n"
+                
+                # Schedule info
+                response += f"\n📅 **Lịch trình:**\n"
+                response += f"   • Ngày {place['day']}"
+                if place.get('date'):
+                    response += f" - {place.get('date')}"
+                response += "\n"
+                if place.get('time'):
+                    formatted_time = _format_datetime(place.get('time'))
+                    response += f"   • Thời gian: {formatted_time}\n"
+                if place.get('duration'):
+                    formatted_duration = _format_duration(place.get('duration'))
+                    response += f"   • Dự kiến: {formatted_duration}\n"
+                
+                response += "\n"
+                
+                # Detailed info from Google Places API
+                if details:
+                    # Editorial summary / Description (with multiple fallbacks)
+                    description = (
+                        details.get('editorial_summary') or 
+                        details.get('description') or 
+                        place.get('description') or
+                        None
+                    )
+                    
+                    # If no description available, create a basic one from available info
+                    if not description:
+                        place_type = place.get('type', '')
+                        type_desc_map = {
+                            'tourist_attraction': 'Đây là một điểm tham quan nổi tiếng',
+                            'cafe': 'Đây là một quán cà phê',
+                            'restaurant': 'Đây là một nhà hàng',
+                            'bar': 'Đây là một quán bar/pub',
+                            'museum': 'Đây là một bảo tàng',
+                            'temple': 'Đây là một ngôi chùa/đền',
+                            'park': 'Đây là một công viên',
+                            'market': 'Đây là một khu chợ'
+                        }
+                        base_desc = type_desc_map.get(place_type, 'Địa điểm thú vị')
+                        
+                        # Add rating info if available
+                        rating = details.get('rating') or place.get('rating', 0)
+                        if rating >= 4.0:
+                            base_desc += f" được đánh giá cao với {rating}/5 sao"
+                        
+                        # Add emotional tags if available
+                        emotional_tags = place.get('emotional_tags', [])
+                        if emotional_tags:
+                            tags_desc = ', '.join(emotional_tags[:2])
+                            base_desc += f", phù hợp cho không khí {tags_desc}"
+                        
+                        description = base_desc + "."
+                    
+                    # Always show description
+                    response += f"📝 **Giới thiệu:**\n{description}\n\n"
+                        
+                    # Rating & Reviews
+                    rating = details.get('rating') or place.get('rating', 0)
+                    total_ratings = details.get('user_ratings_total', 0)
+                    if rating > 0:
+                        stars = "⭐" * int(rating)
+                        response += f"⭐ **Đánh giá:** {stars} {rating}/5"
+                        if total_ratings > 0:
+                            response += f" ({total_ratings:,} đánh giá)"
+                        response += "\n"
+                    
+                    # Address
+                    address = details.get('formatted_address') or details.get('address') or place.get('address')
+                    if address:
+                        response += f"📍 **Địa chỉ:** {address}\n"
+                    
+                    # Opening hours
+                    if details.get('opening_hours'):
+                        hours = details['opening_hours']
+                        if hours.get('open_now') is not None:
+                            status = "🟢 Đang mở cửa" if hours['open_now'] else "🔴 Đang đóng cửa"
+                            response += f"🕐 **Trạng thái:** {status}\n"
+                    
+                    # Price level
+                    price_level = details.get('price_level')
+                    if price_level:
+                        price_symbols = "$" * price_level if isinstance(price_level, int) else price_level
+                        price_map = {"$": "Rẻ", "$$": "Vừa phải", "$$$": "Đắt", "$$$$": "Rất đắt"}
+                        price_text = price_map.get(price_symbols, price_symbols)
+                        response += f"💰 **Mức giá:** {price_symbols} ({price_text})\n"
+                    
+                    # Contact info
+                    if details.get('phone_number'):
+                        response += f"📞 **Điện thoại:** {details['phone_number']}\n"
+                    if details.get('website'):
+                        response += f"🌐 **Website:** {details['website']}\n"
+                        
+                    # Emotional tags
+                    emotional_tags = place.get('emotional_tags', [])
+                    if emotional_tags:
+                        formatted_tags = _format_emotional_tags(emotional_tags)
+                        response += f"\n💭 **Phù hợp cho:** {formatted_tags}\n"
+                    
+                    # Top review
+                    if details.get('reviews') and len(details['reviews']) > 0:
+                        review = details['reviews'][0]
+                        stars = "⭐" * int(review.get('rating', 0))
+                        author = review.get('author', 'Anonymous')
+                        text = review.get('text', '')[:100]
+                        if len(review.get('text', '')) > 100:
+                            text += "..."
+                        response += f"\n💬 **Đánh giá nổi bật:**\n"
+                        response += f"{stars} - {author}\n_{text}_\n"
+                else:
+                    # Fallback to basic info (when Google Places API doesn't return details)
+                    # But still maintain similar format for consistency
+                    
+                    # Description
+                    description = place.get('description')
+                    if description:
+                        response += f"📝 **Giới thiệu:**\n{description}\n\n"
+                    
+                    # Rating
+                    rating = place.get('rating', 0)
+                    if rating > 0:
+                        stars = "⭐" * int(rating)
+                        response += f"⭐ **Đánh giá:** {stars} {rating}/5\n"
+                    
+                    # Address
+                    if place.get('address'):
+                        response += f"📍 **Địa chỉ:** {place.get('address')}\n"
+                    
+                    # Emotional tags with Vietnamese mapping
+                    emotional_tags = place.get('emotional_tags', [])
+                    if emotional_tags:
+                        formatted_tags = _format_emotional_tags(emotional_tags)
+                        response += f"\n💭 **Phù hợp cho:** {formatted_tags}\n"
+                    
+                    # Price level
+                    if place.get('price_level'):
+                        price_level = place.get('price_level')
+                        price_symbols = "$" * price_level if isinstance(price_level, int) else price_level
+                        price_map = {"$": "Rẻ", "$$": "Vừa phải", "$$$": "Đắt", "$$$$": "Rất đắt"}
+                        price_text = price_map.get(price_symbols, price_symbols)
+                        response += f"💰 **Mức giá:** {price_symbols} ({price_text})\n"
+                    
+                if is_draft:
+                    response += "\n💡 Hỏi tôi về các địa điểm khác trong lộ trình!"
+                
+                return (response, None)
             else:
-                return "❓ Bạn muốn biết thông tin về địa điểm nào trong lộ trình?"
+                return (f"❌ Không tìm thấy địa điểm '{place_name}' trong lộ trình.\n\n💡 Hãy hỏi 'Xem lộ trình' để xem danh sách đầy đủ.", None)
         
         # Suggest adding places or confirm adding a specific place
-        elif any(word in user_text for word in ["thêm", "add", "gợi ý thêm", "nên thêm", "có nên"]):
+        elif any(word in user_text.lower() for word in ["thêm", "add", "gợi ý thêm", "nên thêm", "có nên"]):
             print("      → Handle place suggestion/addition")
             
             # Check if trying to add a specific place (contains place name + day number)
-            place_name_pattern = r'thêm (.+?)( vào ngày|\\s+ngày|$)'
-            place_match = re.search(place_name_pattern, user_text)
-            day_match = re.search(r'ngày (\d+)', user_text)
+            # Use lowercase for pattern matching to handle case-insensitive input
+            place_name_pattern = r'thêm\s+(.+?)\s+vào\s+ngày'
+            place_match = re.search(place_name_pattern, user_text.lower())
+            day_match = re.search(r'ngày\s+(\d+)', user_text.lower())
+            
+            print(f"      → User text: '{user_text}'")
+            print(f"      → Extracted place_name: {place_match.group(1).strip() if place_match else 'None'}")
+            print(f"      → Extracted day_number: {day_match.group(1) if day_match else 'None'}")
             
             if place_match and day_match:
                 # User wants to add a specific place
                 print("      → User requesting to add specific place")
-                place_name = place_match.group(1).strip()
+                # Get place name from lowercase match
+                place_name_lower = place_match.group(1).strip()
                 day_number = int(day_match.group(1))
+                
+                print(f"      → Place name (lowercase): '{place_name_lower}'")
+                print(f"      → Day number: {day_number}")
                 
                 # Validate day number
                 duration_days = itinerary_data.get("duration_days", 1)
                 if day_number > duration_days or day_number < 1:
-                    return f"❌ Ngày {day_number} không hợp lệ. Lộ trình có {duration_days} ngày."
+                    return (f"❌ Ngày {day_number} không hợp lệ. Lộ trình có {duration_days} ngày.", None)
                 
-                # Try to find place in suggestions (via search)
-                suggestions = search_places.invoke({
-                    "query": place_name,
-                    "location_filter": itinerary_data.get("destination", ""),
-                    "limit": 1
-                })
+                # Try to find place in last_suggestions first (faster)
+                place_to_add = None
+                if last_suggestions:
+                    print(f"      → Checking {len(last_suggestions)} last_suggestions...")
+                    for suggestion in last_suggestions:
+                        # Case-insensitive matching
+                        if place_name_lower in suggestion.get('name', '').lower():
+                            place_to_add = suggestion
+                            print(f"      ✅ Found in last_suggestions: {suggestion.get('name')}")
+                            break
                 
-                if suggestions:
-                    place = suggestions[0]
+                # If not found in suggestions, search database
+                if not place_to_add:
+                    print(f"      → Searching for '{place_name_lower}' in database...")
+                    suggestions = search_places.invoke({
+                        "query": place_name_lower,
+                        "location_filter": itinerary_data.get("destination", ""),
+                        "limit": 10  # Get more results for better matching
+                    })
+                    
+                    if suggestions:
+                        print(f"      → Found {len(suggestions)} suggestions from database")
+                        
+                        # Try multiple matching strategies
+                        # Strategy 1: Exact match (all words present)
+                        query_words = set(place_name_lower.split())
+                        for suggestion in suggestions:
+                            sugg_name_lower = suggestion.get('name', '').lower()
+                            sugg_words = set(sugg_name_lower.split())
+                            
+                            # Check if all query words are in suggestion name
+                            if query_words.issubset(sugg_words):
+                                place_to_add = suggestion
+                                print(f"      ✅ Exact match (all words): {suggestion.get('name')}")
+                                break
+                        
+                        # Strategy 2: Partial match (at least 1 key word)
+                        if not place_to_add:
+                            # Extract key words (remove common words)
+                            common_words = {'coffee', 'cafe', 'cà', 'phê', '&', 'and', 'lounge', 'the'}
+                            key_words = query_words - common_words
+                            
+                            if key_words:
+                                for suggestion in suggestions:
+                                    sugg_name_lower = suggestion.get('name', '').lower()
+                                    # Check if any key word is in suggestion
+                                    if any(word in sugg_name_lower for word in key_words):
+                                        place_to_add = suggestion
+                                        print(f"      ✅ Partial match (key words): {suggestion.get('name')}")
+                                        break
+                        
+                        # Strategy 3: Substring match
+                        if not place_to_add:
+                            for suggestion in suggestions:
+                                sugg_name_lower = suggestion.get('name', '').lower()
+                                if place_name_lower in sugg_name_lower or sugg_name_lower in place_name_lower:
+                                    place_to_add = suggestion
+                                    print(f"      ✅ Substring match: {suggestion.get('name')}")
+                                    break
+                        
+                        # Last resort: Ask user to confirm
+                        if not place_to_add and suggestions:
+                            print(f"      ⚠️ No good match found, would need user confirmation")
+                            # Return suggestion list instead of auto-picking
+                            response = f"❓ Không tìm thấy '{place_name_lower}' chính xác.\n\n"
+                            response += "💡 **Có phải bạn muốn thêm một trong những địa điểm này?**\n\n"
+                            for i, sugg in enumerate(suggestions[:3], 1):
+                                response += f"{i}. **{sugg.get('name')}**\n"
+                                if sugg.get('address'):
+                                    addr = sugg.get('address')
+                                    if len(addr) > 50:
+                                        addr = addr[:50] + "..."
+                                    response += f"   📍 {addr}\n"
+                                rating = sugg.get('rating', 0)
+                                if rating > 0:
+                                    response += f"   ⭐ {rating}/5\n"
+                                response += "\n"
+                            response += f"💬 Hãy nói: _\"Thêm [tên chính xác] vào ngày {day_number}\"_"
+                            return (response, suggestions[:3])
+                
+                if place_to_add:
+                    # Check if place already exists in itinerary
+                    existing_places = get_place_from_itinerary.invoke({
+                        "itinerary_data": itinerary_data
+                    })
+                    
+                    place_id = place_to_add.get('place_id') or place_to_add.get('google_place_id')
+                    for existing in existing_places:
+                        existing_id = existing.get('place_id')
+                        if existing_id and existing_id == place_id:
+                            return (f"⚠️ Địa điểm **{place_to_add.get('name')}** đã có trong lộ trình (Ngày {existing.get('day')}).\n\n💡 Bạn muốn thêm địa điểm khác không?", None)
+                    
                     # Call add_place_to_itinerary_backend
                     result = add_place_to_itinerary_backend.invoke({
-                        "place_data": place,
+                        "place_data": place_to_add,
                         "itinerary_data": itinerary_data,
                         "day_number": day_number,
                         "time": "TBD",
@@ -1637,17 +2335,75 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                     })
                     
                     if result.get("success"):
+                        # UPDATE STATE: Add place to itinerary_data immediately
+                        place_added = result.get("place_to_add")
+                        if place_added and itinerary_data.get("route_data_json", {}).get("days"):
+                            days = itinerary_data["route_data_json"]["days"]
+                            for day in days:
+                                if day.get("day") == day_number:
+                                    # Add new activity with place
+                                    new_activity = {
+                                        "time": place_added.get("time", "TBD"),
+                                        "duration": place_added.get("duration", "2 hours"),
+                                        "place": {
+                                            "place_id": place_added.get("google_place_id"),
+                                            "google_place_id": place_added.get("google_place_id"),
+                                            "name": place_added.get("name"),
+                                            "type": place_added.get("type"),
+                                            "address": place_added.get("address"),
+                                            "rating": place_added.get("rating"),
+                                            "description": place_added.get("description"),
+                                            "location": place_added.get("location")
+                                        }
+                                    }
+                                    if "activities" not in day:
+                                        day["activities"] = []
+                                    day["activities"].append(new_activity)
+                                    print(f"      ✅ Updated state: Added to day {day_number} activities")
+                                    break
+                        
                         response = f"✅ {result['message']}\n\n"
-                        response += f"📍 **{place.get('name')}**\n"
-                        response += f"📝 {place.get('address', 'N/A')}\n"
-                        response += f"⭐ {place.get('rating', 'N/A')}/5\n\n"
-                        response += "💾 **Lưu ý**: Thay đổi này sẽ được lưu vào lộ trình của bạn.\n"
+                        response += f"📍 **{place_to_add.get('name')}**\n"
+                        if place_to_add.get('type'):
+                            type_label = _format_place_type(place_to_add.get('type'))
+                            response += f"{type_label}\n"
+                        if place_to_add.get('address'):
+                            response += f"📝 {place_to_add.get('address')}\n"
+                        rating = place_to_add.get('rating', 0)
+                        if rating > 0:
+                            response += f"⭐ {rating}/5\n"
+                        response += "\n"
+                        response += "💾 **Lưu ý**: Thay đổi này sẽ được lưu vào lộ trình của bạn.\n\n"
+                        
+                        # Show updated list of places for this day
+                        response += f"📅 **Địa điểm Ngày {day_number}** (đã cập nhật):\n\n"
+                        current_day_activities = []
+                        for day in itinerary_data["route_data_json"]["days"]:
+                            if day.get("day") == day_number:
+                                current_day_activities = day.get("activities", [])
+                                break
+                        
+                        for i, activity in enumerate(current_day_activities, 1):
+                            place = activity.get("place", {})
+                            response += f"{i}. **{place.get('name', 'N/A')}**\n"
+                            if place.get('type'):
+                                type_icon = _format_place_type(place.get('type'))
+                                response += f"   {type_icon}\n"
+                            if activity.get('time'):
+                                response += f"   ⏰ {activity.get('time')}\n"
+                            if place.get('rating', 0) > 0:
+                                response += f"   ⭐ {place.get('rating')}/5\n"
+                            response += "\n"
+                        
                         response += "💡 Bạn muốn thêm địa điểm khác không?"
-                        return response
+                        return (response, None)
                     else:
-                        return f"❌ Lỗi: {result.get('error', 'Không thể thêm địa điểm')}"
+                        error_msg = result.get('error', 'Không thể thêm địa điểm')
+                        print(f"      ❌ Error from backend: {error_msg}")
+                        return (f"❌ Lỗi: {error_msg}", None)
                 else:
-                    return f"❌ Không tìm thấy địa điểm '{place_name}' ở {itinerary_data.get('destination', 'đây')}."
+                    print(f"      ❌ Place not found: '{place_name_lower}'")
+                    return (f"❌ Không tìm thấy địa điểm '{place_name_lower}' ở {itinerary_data.get('destination', 'đây')}.\n\n💡 Thử: _\"Gợi ý thêm [loại hình]\"_ để xem danh sách gợi ý", None)
             else:
                 # User asking for suggestions only
                 print("      → Suggest additional places")
@@ -1686,29 +2442,58 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                     "preferences": preferences
                 })
                 
-                if suggestions:
+                if suggestions and len(suggestions) > 0:
+                    # Limit to 5 suggestions for better UX
+                    limited_suggestions = suggestions[:5]
+                    
                     response = "💡 **Gợi ý địa điểm bổ sung cho lộ trình:**\n\n"
-                    for i, place in enumerate(suggestions[:5], 1):
-                        response += f"{i}. **{place.get('name', 'Unknown')}**\n"
-                        response += f"   📍 {place.get('address', 'N/A')}\n"
-                        response += f"   ⭐ {place.get('rating', 'N/A')}/5\n"
+                    
+                    for i, place in enumerate(limited_suggestions, 1):
+                        response += f"**{i}. {place.get('name', 'Unknown')}**\n"
                         
+                        type_label = _format_place_type(place.get('type', ''))
+                        response += f"{type_label}"
+                        
+                        rating = place.get('rating', 0)
+                        if rating and rating > 0:
+                            response += f" • ⭐ {rating}/5.0"
+                        
+                        response += "\n"
+                        
+                        # Show either address or distance, not both (to reduce length)
                         if place.get('distance_from_reference'):
-                            response += f"   📏 {place['distance_from_reference']}km từ địa điểm tham khảo\n"
+                            dist = place['distance_from_reference']
+                            response += f"📏 {dist:.1f}km từ trung tâm\n"
+                        elif place.get('address'):
+                            addr = place.get('address')
+                            # Shorten address if too long
+                            if len(addr) > 60:
+                                addr = addr[:60] + "..."
+                            response += f"📍 {addr}\n"
                         
+                        # Show brief description only if available
                         if place.get('description'):
-                            desc = place['description'][:100] + "..." if len(place['description']) > 100 else place['description']
-                            response += f"   📝 {desc}\n"
+                            desc = place['description']
+                            if len(desc) > 70:
+                                desc = desc[:70] + "..."
+                            response += f"📝 {desc}\n"
+                        
                         response += "\n"
                     
-                    response += "**💡 Bạn có thể:**\n"
-                    if day_match:
-                        response += f"• Hỏi: 'Thêm [tên địa điểm] vào ngày {day_match.group(1)}'\n"
-                    response += "• Hỏi chi tiết về địa điểm nào đó\n"
-                    response += "• Yêu cầu gợi ý thêm loại hình khác"
-                    return response
+                    # if len(suggestions) > 5:
+                    #     response += f"_(Và {len(suggestions) - 5} địa điểm khác)_\n\n"
+                    
+                    response += "💬 **Bạn có thể hỏi:**\n"
+                    # # response += "• _\"Giới thiệu địa điểm thứ 1\"_ - Xem chi tiết\n"
+                    # if day_match:
+                    #     response += f"• _\"Thêm [tên] vào ngày {day_match.group(1)}\"_ - Thêm vào lộ trình\n"
+                    # else:
+                    #     response += "• _\"Thêm [tên] vào ngày X\"_ - Thêm vào lộ trình\n"
+                    response += "• _\"Gợi ý thêm [loại hình]\"_ - Gợi ý khác"
+                    
+                    return (response, limited_suggestions)
                 else:
-                    return "😔 Xin lỗi, không tìm thấy địa điểm phù hợp để gợi ý."
+                    return ("😔 Xin lỗi, không tìm thấy địa điểm phù hợp để gợi ý.\n\n💡 Thử cụ thể hơn, ví dụ: \"Gợi ý thêm quán cà phê\" hoặc \"Gợi ý thêm nhà hàng\"", None)
         
         # List places by day
         elif any(word in user_text for word in ["ngày", "day"]):
@@ -1717,19 +2502,36 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
             
             if day_match:
                 day_number = int(day_match.group(1))
-                places = get_place_from_itinerary.invoke({
-                    "itinerary_data": itinerary_data,
-                    "day_number": day_number
-                })
+                
+                # Read directly from state.itinerary (already updated)
+                places = []
+                day_date = "N/A"
+                if itinerary_data.get("route_data_json", {}).get("days"):
+                    for day in itinerary_data["route_data_json"]["days"]:
+                        if day.get("day") == day_number:
+                            day_date = day.get("date", "N/A")
+                            for activity in day.get("activities", []):
+                                place = activity.get("place", {})
+                                if place.get("name"):
+                                    places.append({
+                                        "name": place.get("name"),
+                                        "type": place.get("type"),
+                                        "time": activity.get("time", "N/A"),
+                                        "duration": activity.get("duration", "N/A"),
+                                        "address": place.get("address", ""),
+                                        "rating": place.get("rating", 0),
+                                        "emotional_tags": place.get("emotional_tags", [])
+                                    })
+                            break
                 
                 if places:
-                    response = f"📅 **Ngày {day_number}** ({places[0].get('date', 'N/A')}):\n\n"
+                    response = f"📅 **Ngày {day_number}** ({day_date}):\n\n"
                     for i, place in enumerate(places, 1):
                         response += f"{i}. **{place['name']}**"
                         if place.get('type'):
                             response += f" ({place.get('type')})"
                         response += "\n"
-                        response += f"   ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')} phút\n"
+                        response += f"   ⏰ {place.get('time', 'N/A')} | 🕐 {place.get('duration', 'N/A')}\n"
                         
                         # Only show address if it exists and is not just coordinates
                         address = place.get('address', '')
@@ -1748,25 +2550,25 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                         
                         response += "\n"
                     
-                    return response
+                    return (response, None)
                 else:
-                    return f"❌ Không tìm thấy thông tin cho ngày {day_number}."
+                    return (f"❌ Không tìm thấy thông tin cho ngày {day_number}.", None)
             else:
-                return "❓ Bạn muốn xem lịch trình ngày mấy? (VD: 'ngày 1', 'ngày 2')"
+                return ("❓ Bạn muốn xem lịch trình ngày mấy? (VD: 'ngày 1', 'ngày 2')", None)
         
         # Default: show overview
         else:
             details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
             if details.get("error"):
-                return "❓ Bạn muốn biết gì về lộ trình? (VD: 'xem lộ trình', 'giới thiệu địa điểm X', 'gợi ý thêm quán cà phê')"
+                return ("❓ Bạn muốn biết gì về lộ trình? (VD: 'xem lộ trình', 'giới thiệu địa điểm X', 'gợi ý thêm quán cà phê')", None)
             
-            return f"📋 Bạn có lộ trình **{details.get('title', 'Chưa đặt tên')}** ({details.get('duration_days', 0)} ngày) với {details.get('total_places', 0)} địa điểm.\n\n💡 Bạn muốn:\n• Xem chi tiết lộ trình\n• Giới thiệu về một địa điểm\n• Gợi ý thêm địa điểm mới"
+            return (f"📋 Bạn có lộ trình **{details.get('title', 'Chưa đặt tên')}** ({details.get('duration_days', 0)} ngày) với {details.get('total_places', 0)} địa điểm.\n\n💡 Bạn muốn:\n• Xem chi tiết lộ trình\n• Giới thiệu về một địa điểm\n• Gợi ý thêm địa điểm mới", None)
     
     except Exception as e:
         print(f"      ❌ Error: {e}")
         import traceback
         traceback.print_exc()
-        return "😔 Xin lỗi, có lỗi khi xử lý thông tin lộ trình."
+        return ("😔 Xin lỗi, có lỗi khi xử lý thông tin lộ trình.", None)
 
 
 def _handle_place_introduction_with_itinerary(user_text: str, itinerary_data: Dict, current_location: Optional[Dict]) -> str:
@@ -1794,24 +2596,141 @@ def _handle_place_introduction_with_itinerary(user_text: str, itinerary_data: Di
             if places:
                 # Found in itinerary
                 place = places[0]
+                place_id = place.get('place_id') or place.get('google_place_id')
+                
+                # Get detailed information from Google Places API
+                print(f"   🔍 Getting detailed info for: {place['name']}")
+                details = get_place_details.invoke({"place_id": place_id}) if place_id else {}
+                
+                # Build comprehensive response
                 response = f"📍 **{place['name']}** _(trong lộ trình của bạn)_\n\n"
-                response += f"📅 **Ngày {place['day']}** - {place.get('date', 'N/A')}\n"
-                response += f"⏰ **Thời gian:** {place.get('time', 'N/A')}\n"
-                response += f"🕐 **Dự kiến:** {place.get('duration', 'N/A')}\n\n"
                 
-                if place.get('description'):
-                    response += f"📝 **Giới thiệu:**\n{place['description']}\n\n"
+                # Itinerary info
+                response += f"📅 **Lịch trình:**\n"
+                response += f"   • Ngày {place['day']}" 
+                if place.get('date'):
+                    response += f" - {place.get('date')}"
+                response += "\n"
+                response += f"   • Thời gian: {place.get('time', 'TBD')}\n"
+                response += f"   • Dự kiến: {place.get('duration', 'N/A')}\n\n"
                 
-                response += f"⭐ **Đánh giá:** {place.get('rating', 'N/A')}/5\n"
-                response += f"📍 **Địa chỉ:** {place.get('address', 'N/A')}\n"
+                # Detailed info from Google Places API
+                if details:
+                    # Editorial summary / Description (with multiple fallbacks)
+                    description = (
+                        details.get('editorial_summary') or 
+                        details.get('description') or 
+                        place.get('description') or
+                        None
+                    )
+                    
+                    # If no description available, create a basic one from available info
+                    if not description:
+                        place_type = place.get('type', '')
+                        type_desc_map = {
+                            'tourist_attraction': 'Đây là một điểm tham quan nổi tiếng',
+                            'cafe': 'Đây là một quán cà phê',
+                            'restaurant': 'Đây là một nhà hàng',
+                            'bar': 'Đây là một quán bar/pub',
+                            'museum': 'Đây là một bảo tàng',
+                            'temple': 'Đây là một ngôi chùa/đền',
+                            'park': 'Đây là một công viên',
+                            'market': 'Đây là một khu chợ'
+                        }
+                        base_desc = type_desc_map.get(place_type, 'Địa điểm thú vị')
+                        
+                        # Add rating info if available
+                        rating = details.get('rating') or place.get('rating', 0)
+                        if rating >= 4.0:
+                            base_desc += f" được đánh giá cao với {rating}/5 sao"
+                        
+                        # Add emotional tags if available
+                        emotional_tags = place.get('emotional_tags', [])
+                        if emotional_tags:
+                            tags_desc = ', '.join(emotional_tags[:2])
+                            base_desc += f", phù hợp cho không khí {tags_desc}"
+                        
+                        description = base_desc + "."
+                    
+                    # Always show description
+                    response += f"📝 **Giới thiệu:**\n{description}\n\n"
+                    
+                    # Rating & Reviews
+                    rating = details.get('rating') or place.get('rating', 0)
+                    total_ratings = details.get('user_ratings_total', 0)
+                    if rating > 0:
+                        stars = "⭐" * int(rating)
+                        response += f"⭐ **Đánh giá:** {stars} {rating}/5"
+                        if total_ratings > 0:
+                            response += f" ({total_ratings:,} đánh giá)"
+                        response += "\n"
+                    
+                    # Address
+                    address = details.get('formatted_address') or details.get('address') or place.get('address')
+                    if address:
+                        response += f"📍 **Địa chỉ:** {address}\n"
+                    
+                    # Opening hours
+                    if details.get('opening_hours'):
+                        hours = details['opening_hours']
+                        if hours.get('open_now') is not None:
+                            status = "🟢 Đang mở cửa" if hours['open_now'] else "🔴 Đang đóng cửa"
+                            response += f"🕐 **Giờ mở cửa:** {status}\n"
+                        if hours.get('weekday_text'):
+                            response += f"\n**Giờ hoạt động:**\n"
+                            for day_hours in hours['weekday_text'][:3]:  # Show first 3 days
+                                response += f"   • {day_hours}\n"
+                            if len(hours['weekday_text']) > 3:
+                                response += "   • ...\n"
+                    
+                    # Price level
+                    price_level = details.get('price_level')
+                    if price_level:
+                        price_symbols = "$" * price_level if isinstance(price_level, int) else price_level
+                        price_map = {"$": "Rẻ", "$$": "Vừa phải", "$$$": "Đắt", "$$$$": "Rất đắt"}
+                        price_text = price_map.get(price_symbols, price_symbols)
+                        response += f"💰 **Mức giá:** {price_symbols} ({price_text})\n"
+                    
+                    # Contact info
+                    if details.get('phone_number'):
+                        response += f"📞 **Điện thoại:** {details['phone_number']}\n"
+                    if details.get('website'):
+                        response += f"🌐 **Website:** {details['website']}\n"
+                    
+                    # Emotional tags
+                    emotional_tags = place.get('emotional_tags', [])
+                    if emotional_tags:
+                        tags = ', '.join(emotional_tags[:5])
+                        response += f"\n💭 **Phù hợp cho:** {tags}\n"
+                    
+                    # Top reviews
+                    if details.get('reviews'):
+                        response += f"\n💬 **Đánh giá từ du khách:**\n"
+                        for i, review in enumerate(details['reviews'][:2], 1):  # Show top 2 reviews
+                            stars = "⭐" * int(review.get('rating', 0))
+                            author = review.get('author', 'Anonymous')
+                            text = review.get('text', '')[:150]  # Limit to 150 chars
+                            if len(review.get('text', '')) > 150:
+                                text += "..."
+                            response += f"\n{i}. {stars} - {author}\n"
+                            response += f"   _{text}_\n"
+                else:
+                    # Fallback to basic info if no details available
+                    if place.get('description'):
+                        response += f"📝 **Giới thiệu:**\n{place['description']}\n\n"
+                    
+                    rating = place.get('rating', 0)
+                    if rating > 0:
+                        response += f"⭐ **Đánh giá:** {rating}/5\n"
+                    
+                    if place.get('address'):
+                        response += f"📍 **Địa chỉ:** {place.get('address')}\n"
+                    
+                    if place.get('emotional_tags'):
+                        tags = ', '.join(place['emotional_tags'][:5])
+                        response += f"💭 **Phù hợp cho:** {tags}\n"
                 
-                if place.get('emotional_tags'):
-                    tags = ', '.join(place['emotional_tags'])
-                    response += f"💭 **Cảm xúc:** {tags}\n"
-                
-                if place.get('price_level'):
-                    response += f"💰 **Mức giá:** {place['price_level']}\n"
-                
+                response += "\n💡 _Hỏi tôi về các địa điểm khác trong lộ trình!_"
                 return response
         
         # If not found in itinerary, use regular handler
@@ -1922,7 +2841,8 @@ class TravelCompanion:
                 "messages": [HumanMessage(content=user_message)],
                 "current_location": None,
                 "active_place_id": None,
-                "itinerary": None
+                "itinerary": None,
+                "last_suggestions": None
             }
             print(f"   🆕 Starting new conversation")
         
@@ -1930,6 +2850,10 @@ class TravelCompanion:
         state["current_location"] = current_location if current_location else state.get("current_location")
         state["active_place_id"] = active_place_id if active_place_id else state.get("active_place_id")
         state["itinerary"] = itinerary if itinerary else state.get("itinerary")
+        
+        # Ensure last_suggestions key exists for new states
+        if "last_suggestions" not in state:
+            state["last_suggestions"] = None
         
         # Debug log
         print(f"   📍 State current_location: {state.get('current_location')}")

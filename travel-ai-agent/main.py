@@ -143,7 +143,13 @@ async def chat_with_companion(request: ChatRequest):
             
             if request.context.get('itinerary'):
                 itinerary = request.context['itinerary']
-                logging.info(f"   📋 Itinerary from context: {len(itinerary)} places")
+                # Log itinerary info - handle both dict and list formats
+                if isinstance(itinerary, dict):
+                    logging.info(f"   📋 Itinerary from context: Object with keys: {list(itinerary.keys())[:5]}")
+                elif isinstance(itinerary, list):
+                    logging.info(f"   📋 Itinerary from context: {len(itinerary)} places")
+                else:
+                    logging.info(f"   📋 Itinerary from context: {type(itinerary)}")
         
         # Call the companion
         result = companion.chat(

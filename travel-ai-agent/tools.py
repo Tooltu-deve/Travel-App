@@ -828,6 +828,10 @@ def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
     Lấy thông tin chi tiết về một địa điểm (LIVE COMPANION).
     User hỏi: "Địa điểm này có gì?", "Chỗ này ăn gì ngon?"
     
+    Ưu tiên: 
+    1. Google Places API (nếu có place_id) - để lấy thông tin mới nhất
+    2. MongoDB - fallback
+    
     Args:
         place_id: Google Place ID hoặc MongoDB _id
         place_name: Tên địa điểm (nếu không có place_id)
@@ -836,6 +840,87 @@ def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
         Dict: Thông tin chi tiết về địa điểm
     """
     try:
+        # Try Google Places API first if place_id is provided
+        if place_id:
+            api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+            
+            # Check if place_id looks like a Google Place ID (starts with ChIJ or similar)
+            if api_key and (place_id.startswith('ChIJ') or place_id.startswith('Ei') or place_id.startswith('Gd')):
+                print(f"   → Fetching from Google Places API: {place_id}")
+                try:
+                    # Google Places API (New) - Place Details
+                    url = f"https://places.googleapis.com/v1/places/{place_id}"
+                    
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'X-Goog-Api-Key': api_key,
+                        'X-Goog-FieldMask': (
+                            'id,displayName,formattedAddress,location,rating,userRatingCount,'
+                            'priceLevel,regularOpeningHours,internationalPhoneNumber,websiteUri,'
+                            'editorialSummary,reviews,types,photos'
+                        )
+                    }
+                    
+                    response = requests.get(url, headers=headers, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        print(f"   ✅ Got details from Google Places API")
+                        
+                        # Extract opening hours
+                        opening_hours = {}
+                        if data.get('regularOpeningHours'):
+                            hours_data = data['regularOpeningHours']
+                            opening_hours = {
+                                'open_now': hours_data.get('openNow', False),
+                                'weekday_text': hours_data.get('weekdayDescriptions', [])
+                            }
+                        
+                        # Extract reviews
+                        reviews = []
+                        if data.get('reviews'):
+                            for review in data['reviews'][:5]:  # Get top 5 reviews
+                                reviews.append({
+                                    'rating': review.get('rating', 0),
+                                    'text': review.get('text', {}).get('text', ''),
+                                    'author': review.get('authorAttribution', {}).get('displayName', 'Anonymous'),
+                                    'time': review.get('publishTime', '')
+                                })
+                        
+                        # Format response
+                        details = {
+                            'place_id': place_id,
+                            'google_place_id': place_id,
+                            'name': data.get('displayName', {}).get('text', 'Unknown'),
+                            'description': data.get('editorialSummary', {}).get('text', ''),
+                            'editorial_summary': data.get('editorialSummary', {}).get('text', ''),
+                            'address': data.get('formattedAddress', ''),
+                            'formatted_address': data.get('formattedAddress', ''),
+                            'type': data.get('types', [])[0] if data.get('types') else '',
+                            'types': data.get('types', []),
+                            'rating': data.get('rating', 0),
+                            'user_ratings_total': data.get('userRatingCount', 0),
+                            'price_level': data.get('priceLevel'),
+                            'opening_hours': opening_hours,
+                            'phone_number': data.get('internationalPhoneNumber', ''),
+                            'website': data.get('websiteUri', ''),
+                            'reviews': reviews,
+                            'location': {
+                                'lat': data.get('location', {}).get('latitude'),
+                                'lng': data.get('location', {}).get('longitude')
+                            },
+                            'source': 'google_places_api'
+                        }
+                        
+                        return details
+                    else:
+                        print(f"   ⚠️ Google Places API error: {response.status_code}, falling back to MongoDB")
+                
+                except Exception as e:
+                    print(f"   ⚠️ Error calling Google Places API: {e}, falling back to MongoDB")
+        
+        # Fallback to MongoDB
+        print(f"   → Fetching from MongoDB")
         query = {}
         
         if place_id:
@@ -844,10 +929,16 @@ def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
             try:
                 query = {'$or': [
                     {'googlePlaceId': place_id},
+                    {'google_place_id': place_id},
+                    {'place_id': place_id},
                     {'_id': ObjectId(place_id)}
                 ]}
             except:
-                query = {'googlePlaceId': place_id}
+                query = {'$or': [
+                    {'googlePlaceId': place_id},
+                    {'google_place_id': place_id},
+                    {'place_id': place_id}
+                ]}
         elif place_name:
             query = {'name': {'$regex': place_name, '$options': 'i'}}
         else:
@@ -856,24 +947,28 @@ def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
         place = places_collection.find_one(query, {"_id": 0})
         
         if not place:
-            return {}
+            return {'error': 'Place not found'}
         
-        # Format detailed info
+        # Format detailed info from MongoDB
         details = {
+            'place_id': place.get('googlePlaceId') or place.get('google_place_id') or place.get('place_id', ''),
+            'google_place_id': place.get('googlePlaceId') or place.get('google_place_id') or place.get('place_id', ''),
             'name': place.get('name', 'Unknown'),
             'description': place.get('description', ''),
             'address': place.get('formatted_address') or place.get('address', ''),
+            'formatted_address': place.get('formatted_address') or place.get('address', ''),
             'type': place.get('type', ''),
             'rating': place.get('rating'),
             'user_ratings_total': place.get('user_ratings_total'),
             'price_level': place.get('priceLevel'),
             'budget_range': place.get('budgetRange', 'mid-range'),
             'opening_hours': place.get('openingHours', {}),
-            'phone': place.get('phone', ''),
+            'phone_number': place.get('phone', ''),
             'website': place.get('website', ''),
             'photos': place.get('photos', []),
             'emotional_tags': place.get('emotionalTags', {}),
             'visit_duration_minutes': place.get('visit_duration_minutes', 90),
+            'source': 'mongodb'
         }
         
         return details
@@ -1815,32 +1910,75 @@ def get_itinerary_details(itinerary_data: Dict) -> Dict:
         # Extract route data
         route_data = itinerary_data.get("route_data_json", {})
         
+        # Debug log
+        print(f"[get_itinerary_details] Parsing itinerary...")
+        print(f"   Has route_data_json: {bool(route_data)}")
+        print(f"   Has optimized_route: {bool(route_data.get('optimized_route'))}")
+        print(f"   Has days: {bool(route_data.get('days'))}")
+        
         # Handle both "days" and "optimized_route" structures
         days = route_data.get("days", []) or route_data.get("optimized_route", [])
+        print(f"   Total days found: {len(days)}")
         
-        for day in days:
+        for day_idx, day in enumerate(days):
             day_info = {
-                "day_number": day.get("day", 0),
+                "day_number": day.get("day", day_idx + 1),
                 "date": day.get("date"),
                 "places": []
             }
             
             activities = day.get("activities", [])
-            for activity in activities:
+            print(f"   Day {day_info['day_number']}: {len(activities)} activities")
+            
+            for act_idx, activity in enumerate(activities):
                 # Handle both structures:
                 # 1. Nested: activity.place.name (old structure with saved itineraries)
                 # 2. Direct: activity.name (new structure with optimized_route)
                 place = activity.get("place", {})
+                
+                # Debug first activity of first day
+                if day_idx == 0 and act_idx == 0:
+                    print(f"   First activity structure:")
+                    print(f"      Has 'place' key: {bool(place)}")
+                    print(f"      Has 'name' in activity: {bool(activity.get('name'))}")
+                    print(f"      Has 'name' in place: {bool(place.get('name') if place else False)}")
+                
                 if not place or not place.get("name"):
                     # Try to get place data directly from activity (optimized_route structure)
                     place = activity
                 
-                # Construct address if not provided
+                # Skip if no name found
+                if not place.get("name"):
+                    print(f"      ⚠️ Skipping activity without name")
+                    continue
+                
+                # Get address - prefer provided address, fallback to fetch from Google Places
                 address = place.get("address", "")
+                place_id = place.get("place_id", "") or place.get("google_place_id", "")
+                
+                if not address and place_id:
+                    # Try to get address from Google Places using place_id
+                    try:
+                        place_details = get_place_details.invoke({"place_id": place_id})
+                        if place_details and not place_details.get("error"):
+                            address = place_details.get("address", "")
+                            # Also update rating if not present
+                            if not place.get("rating"):
+                                place["rating"] = place_details.get("rating", 0)
+                            # Update description if not present
+                            if not place.get("description"):
+                                place["description"] = place_details.get("description", "")
+                    except Exception as e:
+                        print(f"      ⚠️ Failed to fetch place details for {place_id}: {e}")
+                
+                # Fallback to coordinates if no address found
                 if not address and place.get("location"):
                     loc = place.get("location", {})
-                    if isinstance(loc, dict) and ("lat" in loc or "lng" in loc):
-                        address = f"Lat: {loc.get('lat', 'N/A')}, Lng: {loc.get('lng', 'N/A')}"
+                    if isinstance(loc, dict):
+                        lat = loc.get('lat')
+                        lng = loc.get('lng')
+                        if lat and lng:
+                            address = f"Lat: {lat}, Lng: {lng}"
                 
                 place_info = {
                     "place_id": place.get("place_id", "") or place.get("google_place_id", ""),
@@ -1857,6 +1995,8 @@ def get_itinerary_details(itinerary_data: Dict) -> Dict:
                 result["total_places"] += 1
             
             result["days"].append(day_info)
+        
+        print(f"   ✅ Parsed {result['total_places']} total places across {len(result['days'])} days")
         
         return result
         
@@ -2052,17 +2192,24 @@ def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[D
         category = preferences.get("category", "")
         emotional_tags = preferences.get("emotional_tags", [])
         
-        # Search for places
+        # Search for places - ONLY from database (not Google Places API)
+        # This ensures all suggestions can be added to itinerary
         query = f"{category} {destination}"
         if emotional_tags:
             query += f" {' '.join(emotional_tags)}"
+        
+        print(f"   🔍 Searching database for: '{query}'")
+        print(f"   📂 Category filter: {category if category else 'None'}")
+        print(f"   🎯 Location: {destination}")
         
         suggestions = search_places.invoke({
             "query": query,
             "location_filter": destination,
             "category_filter": category if category else None,
-            "limit": 20
+            "limit": 20  # Get more to filter duplicates
         })
+        
+        print(f"   ✅ Found {len(suggestions)} places in database")
         
         # Filter out existing places
         new_suggestions = []
@@ -2070,7 +2217,45 @@ def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[D
             if place.get("place_id") not in existing_place_ids:
                 new_suggestions.append(place)
         
-        # If near_place specified, sort by distance
+        # Calculate distance from itinerary center (average of all places) for better ranking
+        if new_suggestions and days:
+            # Calculate center point of itinerary
+            all_coords = []
+            for day in days:
+                for activity in day.get("activities", []):
+                    # Handle both structures
+                    place = activity.get("place", {})
+                    if not place or not place.get("location"):
+                        place = activity
+                    
+                    loc = place.get("location", {})
+                    if loc.get("coordinates"):
+                        all_coords.append(loc["coordinates"])
+            
+            if all_coords:
+                # Calculate average lat/lng
+                avg_lat = sum(coord[0] for coord in all_coords) / len(all_coords)
+                avg_lng = sum(coord[1] for coord in all_coords) / len(all_coords)
+                
+                # Calculate distance from center for each suggestion
+                for suggestion in new_suggestions:
+                    loc = suggestion.get("location", {})
+                    if loc.get("coordinates"):
+                        lat, lng = loc["coordinates"]
+                        distance = _calculate_distance_helper((avg_lat, avg_lng), (lat, lng))
+                        suggestion["distance_from_reference"] = round(distance, 2)
+                
+                # Sort by combination of rating and distance (prefer high rating + closer)
+                def score_suggestion(s):
+                    rating = s.get("rating", 0) or 0
+                    distance = s.get("distance_from_reference", 999)
+                    # Normalize: higher rating is better, lower distance is better
+                    # Score = rating * 2 - distance * 0.5 (adjust weights as needed)
+                    return rating * 2.0 - distance * 0.3
+                
+                new_suggestions.sort(key=score_suggestion, reverse=True)
+        
+        # If near_place specified, prioritize places near it
         near_place = preferences.get("near_place")
         if near_place and new_suggestions:
             # Find the reference place in itinerary
@@ -2087,7 +2272,7 @@ def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[D
                         if ref_location.get("coordinates"):
                             ref_lat, ref_lng = ref_location["coordinates"]
                             
-                            # Calculate distances
+                            # Recalculate distances from this specific place
                             for suggestion in new_suggestions:
                                 loc = suggestion.get("location", {})
                                 if loc.get("coordinates"):
@@ -2095,7 +2280,7 @@ def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[D
                                     distance = _calculate_distance_helper((ref_lat, ref_lng), (lat, lng))
                                     suggestion["distance_from_reference"] = round(distance, 2)
                             
-                            # Sort by distance
+                            # Sort by distance only when near_place is specified
                             new_suggestions.sort(key=lambda x: x.get("distance_from_reference", float('inf')))
                         break
         
