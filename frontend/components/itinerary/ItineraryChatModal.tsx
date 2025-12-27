@@ -357,7 +357,7 @@ export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
       onRequestClose={onClose}
     >
       <LinearGradient
-        colors={[COLORS.bgMain, COLORS.bgSecondary]}
+        colors={[COLORS.gradientBlue1, COLORS.gradientBlue2]}
         style={styles.gradientBackground}
       >
         <View style={styles.container}>
@@ -452,41 +452,25 @@ export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
                     msg.role === 'user' ? styles.userMessageWrapper : styles.assistantMessageWrapper,
                   ]}
                 >
-                  <View
-                    style={[
-                      styles.messageContainer,
-                      msg.role === 'user' ? styles.userMessage : styles.assistantMessage,
-                    ]}
-                  >
-                    <View style={styles.messageHeader}>
-                      <View
-                        style={[
-                          styles.avatarContainer,
-                          msg.role === 'user' ? styles.userAvatar : styles.assistantAvatar,
-                        ]}
-                      >
-                        {msg.role === 'user' ? (
-                          <MaterialIcons name="person" size={16} color={COLORS.textWhite} />
-                        ) : (
+                  {msg.role === 'assistant' ? (
+                    <LinearGradient
+                      colors={[COLORS.gradientBlue1, COLORS.bgMain]}
+                      style={[styles.messageContainer, styles.assistantMessage]}
+                    >
+                      <View style={styles.messageHeader}>
+                        <View style={[styles.avatarContainer, styles.assistantAvatar]}>
                           <MaterialCommunityIcons name="robot" size={16} color={COLORS.textWhite} />
-                        )}
+                        </View>
+                        <Text style={[styles.roleName, styles.assistantRoleName]}>
+                          AI Assistant
+                        </Text>
+                        <Text style={styles.timestamp}>{formatTime(msg.timestamp)}</Text>
                       </View>
-                      <Text
-                        style={[
-                          styles.roleName,
-                          msg.role === 'user' ? styles.userRoleName : styles.assistantRoleName,
-                        ]}
-                      >
-                        {msg.role === 'user' ? 'Bạn' : 'AI Assistant'}
-                      </Text>
-                      <Text style={styles.timestamp}>{formatTime(msg.timestamp)}</Text>
-                    </View>
 
-                    <View style={styles.messageContent}>
-                      <RenderMarkdownText text={msg.content} />
-                    </View>
+                      <View style={styles.messageContent}>
+                        <RenderMarkdownText text={msg.content} />
+                      </View>
 
-                    {msg.role === 'assistant' && (
                       <TouchableOpacity
                         style={styles.copyButton}
                         onPress={() => handleCopyMessage(msg.content)}
@@ -494,8 +478,24 @@ export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
                         <MaterialIcons name="content-copy" size={14} color={COLORS.textSecondary} />
                         <Text style={styles.copyButtonText}>Sao chép</Text>
                       </TouchableOpacity>
-                    )}
-                  </View>
+                    </LinearGradient>
+                  ) : (
+                    <View style={[styles.messageContainer, styles.userMessage]}>
+                      <View style={styles.messageHeader}>
+                        <View style={[styles.avatarContainer, styles.userAvatar]}>
+                          <MaterialIcons name="person" size={16} color={COLORS.textWhite} />
+                        </View>
+                        <Text style={[styles.roleName, styles.userRoleName]}>
+                          Bạn
+                        </Text>
+                        <Text style={styles.timestamp}>{formatTime(msg.timestamp)}</Text>
+                      </View>
+
+                      <View style={styles.messageContent}>
+                        <RenderMarkdownText text={msg.content} />
+                      </View>
+                    </View>
+                  )}
                 </View>
               ))
             )}
@@ -529,7 +529,7 @@ export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
 
           {/* Input */}
           <LinearGradient
-            colors={[COLORS.bgMain, COLORS.bgSecondary + '80']}
+            colors={[COLORS.gradientBlue1, COLORS.bgMain]}
             style={styles.inputContainer}
           >
             <View style={styles.inputWrapper}>
@@ -675,7 +675,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 4,
   },
   assistantMessage: {
-    backgroundColor: COLORS.bgMain,
     borderWidth: 1,
     borderColor: COLORS.borderLight,
     borderTopLeftRadius: 4,
