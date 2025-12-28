@@ -2258,8 +2258,12 @@ def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[D
         # If near_place specified, prioritize places near it
         near_place = preferences.get("near_place")
         if near_place and new_suggestions:
+            print(f"   📍 Looking for reference place: '{near_place}'")
             # Find the reference place in itinerary
+            ref_found = False
             for day in days:
+                if ref_found:
+                    break
                 for activity in day.get("activities", []):
                     # Handle both structures
                     place = activity.get("place", {})
@@ -2267,22 +2271,62 @@ def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[D
                         # Try to get place data directly from activity (optimized_route structure)
                         place = activity
                     
-                    if place.get("name") == near_place or place.get("place_id") == near_place or place.get("google_place_id") == near_place:
+                    place_name = place.get("name", "")
+                    place_id = place.get("place_id") or place.get("google_place_id") or ""
+                    
+                    if place_name == near_place or place_id == near_place or near_place.lower() in place_name.lower():
                         ref_location = place.get("location", {})
+                        print(f"   ✅ Found reference place: {place_name}")
+                        print(f"   📍 Location data: {ref_location}")
+                        
+                        # Extract lat/lng - support both formats:
+                        # Format 1: {coordinates: [lng, lat]} (MongoDB GeoJSON)
+                        # Format 2: {lat: ..., lng: ...} (direct format)
+                        ref_lat = None
+                        ref_lng = None
+                        
                         if ref_location.get("coordinates"):
-                            ref_lat, ref_lng = ref_location["coordinates"]
+                            # MongoDB GeoJSON format: [lng, lat]
+                            coords = ref_location["coordinates"]
+                            if isinstance(coords, list) and len(coords) >= 2:
+                                ref_lng, ref_lat = coords[0], coords[1]
+                        elif ref_location.get("lat") and ref_location.get("lng"):
+                            # Direct lat/lng format
+                            ref_lat = ref_location["lat"]
+                            ref_lng = ref_location["lng"]
+                        
+                        if ref_lat and ref_lng:
+                            print(f"   📍 Reference coordinates: lat={ref_lat}, lng={ref_lng}")
                             
                             # Recalculate distances from this specific place
                             for suggestion in new_suggestions:
                                 loc = suggestion.get("location", {})
+                                sugg_lat = None
+                                sugg_lng = None
+                                
                                 if loc.get("coordinates"):
-                                    lat, lng = loc["coordinates"]
-                                    distance = _calculate_distance_helper((ref_lat, ref_lng), (lat, lng))
+                                    coords = loc["coordinates"]
+                                    if isinstance(coords, list) and len(coords) >= 2:
+                                        sugg_lng, sugg_lat = coords[0], coords[1]
+                                elif loc.get("lat") and loc.get("lng"):
+                                    sugg_lat = loc["lat"]
+                                    sugg_lng = loc["lng"]
+                                
+                                if sugg_lat and sugg_lng:
+                                    distance = _calculate_distance_helper((ref_lat, ref_lng), (sugg_lat, sugg_lng))
                                     suggestion["distance_from_reference"] = round(distance, 2)
                             
                             # Sort by distance only when near_place is specified
                             new_suggestions.sort(key=lambda x: x.get("distance_from_reference", float('inf')))
+                            print(f"   ✅ Sorted {len(new_suggestions)} suggestions by distance from {place_name}")
+                        else:
+                            print(f"   ⚠️ Could not extract coordinates from location: {ref_location}")
+                        
+                        ref_found = True
                         break
+            
+            if not ref_found:
+                print(f"   ⚠️ Reference place '{near_place}' not found in itinerary")
         
         return new_suggestions[:10]  # Return top 10 suggestions
         

@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '../../constants/colors';
 import { SPACING } from '../../constants/spacing';
 import { API_BASE_URL } from '../../services/api';
+import useLocation from '../../hooks/useLocation';
 
 const { width } = Dimensions.get('window');
 
@@ -66,7 +67,7 @@ const parseMarkdownLine = (text: string) => {
 
   // Split by markers
   const tokens = result.split(/(\x01[A-Z/]+\x02)/);
-  
+
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token === '\x01BOLD\x02') {
@@ -98,7 +99,7 @@ const parseMarkdownLine = (text: string) => {
 // Simple markdown text renderer
 const RenderMarkdownText = ({ text }: { text: string }) => {
   const lines = text.split('\n');
-  
+
   return (
     <View>
       {lines.map((line, lineIndex) => {
@@ -110,7 +111,7 @@ const RenderMarkdownText = ({ text }: { text: string }) => {
             </Text>
           );
         }
-        
+
         // Heading 2: ## Text
         if (line.startsWith('## ')) {
           return (
@@ -119,7 +120,7 @@ const RenderMarkdownText = ({ text }: { text: string }) => {
             </Text>
           );
         }
-        
+
         // Heading 3: ### Text
         if (line.startsWith('### ')) {
           return (
@@ -128,7 +129,7 @@ const RenderMarkdownText = ({ text }: { text: string }) => {
             </Text>
           );
         }
-        
+
         // Unordered list: - Item
         if (line.startsWith('- ')) {
           const parts = parseMarkdownLine(line.substring(2));
@@ -146,7 +147,7 @@ const RenderMarkdownText = ({ text }: { text: string }) => {
             </View>
           );
         }
-        
+
         // Ordered list: 1. Item
         const orderedMatch = line.match(/^(\d+)\.\s+(.+)/);
         if (orderedMatch) {
@@ -166,12 +167,12 @@ const RenderMarkdownText = ({ text }: { text: string }) => {
             </View>
           );
         }
-        
+
         // Empty line
         if (line.trim() === '') {
           return <View key={lineIndex} style={{ height: 8 }} />;
         }
-        
+
         // Normal text with inline formatting
         const parts = parseMarkdownLine(line);
         return (
@@ -190,17 +191,18 @@ const RenderMarkdownText = ({ text }: { text: string }) => {
   );
 };
 
-export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({ 
-  visible, 
-  onClose, 
+export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
+  visible,
+  onClose,
   itineraryData,
-  routeId 
+  routeId
 }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const { location, requestLocation, loading: locationLoading } = useLocation();
 
   useEffect(() => {
     if (visible && messages.length === 0) {
@@ -246,21 +248,38 @@ export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
         return;
       }
 
-      console.log('[ItineraryChat] Sending message with itinerary context');
-      console.log('[ItineraryChat] Itinerary data keys:', Object.keys(itineraryData || {}));
-      console.log('[ItineraryChat] Has route_data_json:', !!(itineraryData as any)?.route_data_json);
-      console.log('[ItineraryChat] Has optimized_route:', !!(itineraryData as any)?.route_data_json?.optimized_route);
-      console.log('[ItineraryChat] Optimized route length:', (itineraryData as any)?.route_data_json?.optimized_route?.length || 0);
-      
-      // Debug: Log first day activities
-      const firstDay = (itineraryData as any)?.route_data_json?.optimized_route?.[0];
-      if (firstDay) {
-        console.log('[ItineraryChat] First day:', firstDay.day);
-        console.log('[ItineraryChat] First day activities:', firstDay.activities?.length || 0);
-        if (firstDay.activities?.[0]) {
-          console.log('[ItineraryChat] First activity name:', firstDay.activities[0].name);
+      // Check if message needs GPS location
+      const lowerMessage = message.toLowerCase();
+      const isLocationQuery =
+        lowerMessage.includes('gần') ||
+        lowerMessage.includes('nearby') ||
+        lowerMessage.includes('xung quanh') ||
+        lowerMessage.includes('quanh đây') ||
+        lowerMessage.includes('ở đây') ||
+        lowerMessage.includes('thời tiết') ||
+        lowerMessage.includes('weather') ||
+        lowerMessage.includes('chỉ đường') ||
+        lowerMessage.includes('directions') ||
+        lowerMessage.includes('kẹt xe') ||
+        lowerMessage.includes('traffic') ||
+        lowerMessage.includes('giao thông');
+
+      // If asking location-based question, request GPS permission
+      let currentLocation = location;
+      if (isLocationQuery && !location) {
+        console.log('[ItineraryChat] Location query detected, requesting GPS permission...');
+        try {
+          currentLocation = await requestLocation();
+          if (!currentLocation) {
+            console.warn('[ItineraryChat] Could not get location, proceeding without it');
+          }
+        } catch (err) {
+          console.error('[ItineraryChat] Error requesting location:', err);
         }
       }
+
+      console.log('[ItineraryChat] Sending message with itinerary context');
+      console.log('[ItineraryChat] Has current_location:', !!currentLocation);
 
       const requestBody: any = {
         message,
@@ -268,6 +287,15 @@ export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
           itinerary: itineraryData, // Pass full itinerary object
         }
       };
+
+      // Add GPS location to context if available
+      if (currentLocation) {
+        requestBody.context.current_location = {
+          lat: currentLocation.latitude,
+          lng: currentLocation.longitude
+        };
+        console.log('[ItineraryChat] Sending current_location:', requestBody.context.current_location);
+      }
 
       if (routeId) {
         requestBody.context.routeId = routeId;
@@ -319,7 +347,7 @@ export const ItineraryChatModal: React.FC<ItineraryChatModalProps> = ({
     } catch (error: any) {
       console.error('[ItineraryChat] Error:', error);
       Alert.alert('Lỗi', error.message || 'Không thể kết nối với AI assistant');
-      
+
       // Add error message to chat
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),

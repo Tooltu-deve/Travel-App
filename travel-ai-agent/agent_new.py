@@ -102,6 +102,8 @@ def companion_assistant_node(state: TravelState) -> TravelState:
             "lộ trình", "itinerary", "hành trình", "kế hoạch", 
             "địa điểm trong", "ngày", "thêm địa điểm", "thêm vào",
             "gợi ý thêm", "nên thêm", "có nên", "nên đi",
+            # Near place in itinerary (NOT GPS-based)
+            "gần địa điểm",
             # Additional keywords for draft mode
             "địa điểm này", "chỗ này", "nơi này",
             # Keywords for showing all places or specific place info
@@ -2203,6 +2205,133 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                 return (response, None)
             else:
                 return (f"❌ Không tìm thấy địa điểm '{place_name}' trong lộ trình.\n\n💡 Hãy hỏi 'Xem lộ trình' để xem danh sách đầy đủ.", None)
+        
+        # NEW: Handle "gợi ý [category] gần địa điểm số X" pattern
+        # This must be BEFORE the general suggestion handler
+        near_place_pattern = r'gợi ý\s+(?:thêm\s+)?(quán ăn|nhà hàng|quán cà phê|cà phê|café|cafe|bảo tàng|chùa|đền|chợ|công viên|bar|pub)\s+gần\s+địa điểm\s+(?:số\s+)?(\d+|một|hai|ba|bốn|năm)'
+        near_place_match = re.search(near_place_pattern, user_text.lower())
+        
+        if near_place_match:
+            print("      → Handle suggestion near specific place")
+            
+            # Extract category
+            category_text = near_place_match.group(1)
+            category_map = {
+                "quán cà phê": "cafe",
+                "cà phê": "cafe",
+                "café": "cafe",
+                "cafe": "cafe",
+                "nhà hàng": "restaurant",
+                "quán ăn": "restaurant",
+                "bảo tàng": "museum",
+                "chùa": "temple",
+                "đền": "temple",
+                "chợ": "market",
+                "công viên": "park",
+                "bar": "bar",
+                "pub": "bar"
+            }
+            category = category_map.get(category_text, "restaurant")
+            
+            # Extract place index
+            vn_numbers = {'một': 1, 'hai': 2, 'ba': 3, 'bốn': 4, 'năm': 5}
+            index_str = near_place_match.group(2)
+            place_index = vn_numbers.get(index_str, int(index_str) if index_str.isdigit() else 0)
+            
+            print(f"      → Category: {category}, Place index: {place_index}")
+            
+            if place_index > 0:
+                # Get the reference place from itinerary by index
+                all_places = []
+                route_data = itinerary_data.get("route_data_json", {})
+                # Support both "days" and "optimized_route" structures
+                days = route_data.get("days", []) or route_data.get("optimized_route", [])
+                print(f"      → Parsing itinerary: found {len(days)} days")
+                
+                for day in days:
+                    activities = day.get("activities", [])
+                    for activity in activities:
+                        # Handle both nested (activity.place) and direct (activity.name) structures
+                        place = activity.get("place", {})
+                        if not place or not place.get("name"):
+                            place = activity
+                        if place.get("name"):
+                            all_places.append({
+                                "name": place.get("name"),
+                                "place_id": place.get("place_id") or place.get("google_place_id"),
+                                "location": place.get("location", {}),
+                                "day": day.get("day")
+                            })
+                
+                print(f"      → Total places found: {len(all_places)}")
+                
+                if place_index <= len(all_places):
+                    reference_place = all_places[place_index - 1]
+                    print(f"      → Reference place: {reference_place['name']}")
+                    
+                    # Build preferences with near_place
+                    preferences = {
+                        "category": category,
+                        "near_place": reference_place.get("place_id") or reference_place.get("name")
+                    }
+                    
+                    # Get suggestions near the reference place
+                    suggestions = suggest_additional_places.invoke({
+                        "itinerary_data": itinerary_data,
+                        "preferences": preferences
+                    })
+                    
+                    if suggestions and len(suggestions) > 0:
+                        limited_suggestions = suggestions[:5]
+                        
+                        # Format category name for display
+                        category_display = {
+                            "cafe": "quán cà phê",
+                            "restaurant": "nhà hàng/quán ăn",
+                            "museum": "bảo tàng",
+                            "temple": "chùa/đền",
+                            "market": "chợ",
+                            "park": "công viên",
+                            "bar": "bar/pub"
+                        }.get(category, category_text)
+                        
+                        response = f"💡 **{category_display.capitalize()} gần {reference_place['name']}:**\n\n"
+                        
+                        for i, place in enumerate(limited_suggestions, 1):
+                            response += f"**{i}. {place.get('name', 'Unknown')}**\n"
+                            
+                            type_label = _format_place_type(place.get('type', ''))
+                            response += f"{type_label}"
+                            
+                            rating = place.get('rating', 0)
+                            if rating and rating > 0:
+                                response += f" • ⭐ {rating}/5.0"
+                            
+                            response += "\n"
+                            
+                            # Show distance from reference place
+                            if place.get('distance_from_reference'):
+                                dist = place['distance_from_reference']
+                                response += f"📏 {dist:.1f}km từ {reference_place['name']}\n"
+                            elif place.get('address'):
+                                addr = place.get('address')
+                                if len(addr) > 60:
+                                    addr = addr[:60] + "..."
+                                response += f"📍 {addr}\n"
+                            
+                            response += "\n"
+                        
+                        response += "💬 **Bạn có thể hỏi:**\n"
+                        response += f"• _\"Thêm [tên] vào ngày {reference_place.get('day', 'X')}\"_ - Thêm vào lộ trình\n"
+                        response += "• _\"Giới thiệu địa điểm thứ 1\"_ - Xem chi tiết"
+                        
+                        return (response, limited_suggestions)
+                    else:
+                        return (f"😔 Không tìm thấy {category_display} nào gần {reference_place['name']}.\n\n💡 Thử: _\"Gợi ý thêm {category_display}\"_ để tìm ở khu vực khác", None)
+                else:
+                    return (f"❌ Lộ trình chỉ có {len(all_places)} địa điểm. Vui lòng chọn từ 1-{len(all_places)}.\n\n💡 Hỏi 'Xem lộ trình' để xem danh sách.", None)
+            else:
+                return ("❌ Không xác định được địa điểm. Vui lòng thử lại với format: _\"Gợi ý quán ăn gần địa điểm số 2\"_", None)
         
         # Suggest adding places or confirm adding a specific place
         elif any(word in user_text.lower() for word in ["thêm", "add", "gợi ý thêm", "nên thêm", "có nên"]):
