@@ -1469,22 +1469,71 @@ def _handle_time_suggestions(user_text: str, current_location: Optional[Dict]) -
 def _format_place_type(place_type: str) -> str:
     """Format place type with icon"""
     type_map = {
+        # Điểm tham quan
         'tourist_attraction': '🏛️ Điểm tham quan',
+        'point_of_interest': '📍 Điểm tham quan',
+        'establishment': '📍 Địa điểm',
         'museum': '🏛️ Bảo tàng',
+        'art_gallery': '🎨 Phòng tranh',
         'park': '🌳 Công viên',
+        'natural_feature': '🏞️ Thắng cảnh thiên nhiên',
+        'amusement_park': '🎢 Công viên giải trí',
+        'zoo': '🦁 Vườn thú',
+        'aquarium': '🐠 Thủy cung',
+        'stadium': '🏟️ Sân vận động',
+        # Ăn uống
         'restaurant': '🍽️ Nhà hàng',
         'cafe': '☕ Quán cà phê',
         'bar': '🍸 Bar',
+        'bakery': '🥐 Tiệm bánh',
+        'food': '🍜 Ẩm thực',
+        'meal_delivery': '🍱 Giao đồ ăn',
+        'meal_takeaway': '🥡 Đồ ăn mang đi',
+        # Mua sắm
         'shopping_mall': '🏬 Trung tâm mua sắm',
+        'store': '🏪 Cửa hàng',
+        'department_store': '🏬 Cửa hàng bách hóa',
+        'supermarket': '🛒 Siêu thị',
+        'convenience_store': '🏪 Cửa hàng tiện lợi',
+        'clothing_store': '👗 Cửa hàng thời trang',
+        'jewelry_store': '💎 Tiệm trang sức',
+        'book_store': '📚 Nhà sách',
+        # Lưu trú
         'hotel': '🏨 Khách sạn',
+        'lodging': '🛏️ Nơi lưu trú',
+        'campground': '⛺ Khu cắm trại',
+        # Giải trí
         'night_club': '🎶 Hộp đêm',
+        'casino': '🎰 Sòng bài',
+        'movie_theater': '🎬 Rạp chiếu phim',
+        'bowling_alley': '🎳 Sân bowling',
+        # Sức khỏe & Làm đẹp
         'spa': '💆 Spa',
         'gym': '🏋️ Phòng gym',
-        'movie_theater': '🎬 Rạp chiếu phim',
+        'beauty_salon': '💇 Salon làm đẹp',
+        'hair_care': '💇 Tiệm tóc',
+        # Tôn giáo
         'church': '⛪ Nhà thờ',
         'temple': '🛕 Đền / Chùa',
+        'hindu_temple': '🛕 Đền Hindu',
+        'mosque': '🕌 Nhà thờ Hồi giáo',
+        'synagogue': '🕍 Giáo đường Do Thái',
+        'place_of_worship': '🙏 Nơi thờ phượng',
+        # Thiên nhiên & Biển
         'beach': '🏖️ Bãi biển',
+        'lake': '🏊 Hồ',
+        'mountain': '⛰️ Núi',
+        # Chợ búa
         'market': '🏪 Chợ',
+        'grocery_or_supermarket': '🛒 Siêu thị',
+        # Giao thông
+        'airport': '✈️ Sân bay',
+        'bus_station': '🚌 Bến xe',
+        'train_station': '🚆 Ga tàu',
+        'subway_station': '🚇 Ga metro',
+        'taxi_stand': '🚕 Bến taxi',
+        'transit_station': '🚉 Trạm trung chuyển',
+        # Mặc định
         'default': '📍 Địa điểm'
     }
     return type_map.get(place_type, type_map['default'])
@@ -1493,27 +1542,72 @@ def _format_place_type(place_type: str) -> str:
 def _format_emotional_tags(tags: list) -> str:
     """Map emotional tags to Vietnamese"""
     tag_map = {
-        # English tags
+        # English tags - Basic emotions
         'adventurous': 'Mạo hiểm',
+        'adventure': 'Mạo hiểm',
         'family-friendly': 'Gia đình',
+        'family_friendly': 'Gia đình',
+        'family': 'Gia đình',
+        'kid-friendly': 'Thân thiện trẻ em',
+        'kid_friendly': 'Thân thiện trẻ em',
         'festive': 'Lễ hội',
         'historical': 'Lịch sử',
+        'historic': 'Lịch sử',
         'lively': 'Sôi động',
         'romantic': 'Lãng mạn',
         'peaceful': 'Yên tĩnh',
-        'scenic': 'Đẹp',
+        'quiet': 'Yên tĩnh',
+        'scenic': 'Cảnh đẹp',
         'cultural': 'Văn hóa',
+        'culture': 'Văn hóa',
         'spiritual': 'Tâm linh',
+        'religious': 'Tôn giáo',
         'relaxing': 'Thư giãn',
+        'relaxed': 'Thư giãn',
+        'chill': 'Thư giãn',
         'exciting': 'Hứng thú',
         'educational': 'Giáo dục',
         'luxurious': 'Sang trọng',
+        'luxury': 'Sang trọng',
+        'upscale': 'Cao cấp',
         'trendy': 'Hiện đại',
-        'authentic': 'Truyền thống',
+        'modern': 'Hiện đại',
+        'authentic': 'Chân thật',
+        'traditional': 'Truyền thống',
+        'local': 'Địa phương',
         'vibrant': 'Năng động',
         'serene': 'Tĩnh lặng',
-        'bustling': 'ôn ào',
+        'bustling': 'Nhộn nhịp',
+        'busy': 'Đông đúc',
         'charming': 'Quyến rũ',
+        'cozy': 'Ấm cúng',
+        'beautiful': 'Tuyệt đẹp',
+        'instagram-worthy': 'Đáng check-in',
+        'instagrammable': 'Đáng check-in',
+        'photogenic': 'Đáng chụp ảnh',
+        'iconic': 'Biểu tượng',
+        'famous': 'Nổi tiếng',
+        'popular': 'Phổ biến',
+        'hidden-gem': 'Địa điểm ẩn',
+        'hidden gem': 'Địa điểm ẩn',
+        'outdoor': 'Ngoài trời',
+        'indoor': 'Trong nhà',
+        'nature': 'Thiên nhiên',
+        'natural': 'Thiên nhiên',
+        'food': 'Ẩm thực',
+        'foodie': 'Ẩm thực',
+        'nightlife': 'Về đêm',
+        'artsy': 'Nghệ thuật',
+        'artistic': 'Nghệ thuật',
+        'creative': 'Sáng tạo',
+        'fun': 'Vui nhộn',
+        'entertaining': 'Giải trí',
+        'free': 'Miễn phí',
+        'budget-friendly': 'Bình dân',
+        'affordable': 'Giá rẻ',
+        'exclusive': 'Độc quyền',
+        'unique': 'Độc đáo',
+        'special': 'Đặc biệt',
         # Vietnamese tags (keep as is)
         'mạo hiểm': 'Mạo hiểm',
         'gia đình': 'Gia đình',
@@ -1525,7 +1619,10 @@ def _format_emotional_tags(tags: list) -> str:
         'đẹp': 'Đẹp',
         'văn hóa': 'Văn hóa',
         'tâm linh': 'Tâm linh',
-        'thư giãn': 'Thư giãn'
+        'thư giãn': 'Thư giãn',
+        'truyền thống': 'Truyền thống',
+        'hiện đại': 'Hiện đại',
+        'thiên nhiên': 'Thiên nhiên'
     }
     
     mapped_tags = []
@@ -1955,47 +2052,254 @@ Viết ngắn gọn, tập trung vào thông tin THỰC TẾ và CỤ THỂ cho 
                             
                             if index <= len(all_places):
                                 place = all_places[index - 1]
-                                draft_note = " _(đang tạo)_" if is_draft else ""
                                 
+                                # Fetch detailed info from Google Places API (same as name-based lookup)
+                                place_id = place.get('place_id') or place.get('google_place_id')
+                                api_details = {}
+                                if place_id:
+                                    try:
+                                        print(f"      → Calling Google Places API for {place_id}")
+                                        api_details = get_place_details.invoke({"place_id": place_id})
+                                        if api_details and not api_details.get("error"):
+                                            print(f"      ✅ Fetched details: rating={api_details.get('rating')}, reviews={len(api_details.get('reviews', []))}")
+                                        else:
+                                            print(f"      ⚠️ No detailed info returned: {api_details.get('error', 'Unknown')}")
+                                            api_details = {}
+                                    except Exception as e:
+                                        print(f"      ❌ Failed to fetch details: {e}")
+                                        api_details = {}
+                                
+                                draft_note = " _(đang tạo)_" if is_draft else ""
                                 response = f"📍 **{place['name']}**{draft_note}\n\n"
+                                
+                                # Basic info
                                 type_label = _format_place_type(place.get('type', ''))
                                 response += f"{type_label}\n"
                                 
-                                if place.get('address'):
-                                    response += f"📍 {place.get('address')}\n"
+                                # Schedule info
+                                response += f"\n📅 **Lịch trình:**\n"
+                                response += f"   • Ngày {place.get('day', 'N/A')}"
+                                if place.get('date'):
+                                    response += f" - {place.get('date')}"
                                 response += "\n"
-                                
-                                response += f"📅 **Ngày {place.get('day', 'N/A')}**\n"
                                 if place.get('time'):
                                     formatted_time = _format_datetime(place.get('time'))
-                                    response += f"🕐 {formatted_time}\n"
+                                    response += f"   • Thời gian: {formatted_time}\n"
                                 if place.get('duration'):
                                     formatted_duration = _format_duration(place.get('duration'))
-                                    response += f"⏳ {formatted_duration}\n"
+                                    response += f"   • Dự kiến: {formatted_duration}\n"
+                                
                                 response += "\n"
                                 
-                                rating = place.get('rating', 0)
-                                if rating and rating > 0:
-                                    stars = "⭐" * int(rating)
-                                    response += f"{stars} ({rating}/5.0)\n\n"
-                                
-                                if place.get('description'):
-                                    response += f"**Giới thiệu:**\n{place['description']}\n\n"
-                                
-                                info_items = []
-                                if place.get('emotional_tags'):
-                                    tags = ', '.join(place['emotional_tags'])
-                                    info_items.append(f"💭 {tags}")
-                                if place.get('price_level'):
-                                    price_map = {'$': 'Rẻ', '$$': 'Vừa phải', '$$$': 'Đắt', '$$$$': 'Rất đắt'}
-                                    price = price_map.get(place['price_level'], place['price_level'])
-                                    info_items.append(f"💰 {price}")
-                                
-                                if info_items:
-                                    response += " | ".join(info_items) + "\n"
+                                # Detailed info from Google Places API
+                                if api_details:
+                                    # Editorial summary / Description (with multiple fallbacks)
+                                    description = (
+                                        api_details.get('editorial_summary') or 
+                                        api_details.get('description') or 
+                                        place.get('description') or
+                                        None
+                                    )
+                                    
+                                    # Rating & Reviews
+                                    rating = api_details.get('rating') or place.get('rating', 0)
+                                    total_ratings = api_details.get('user_ratings_total', 0)
+                                    if rating > 0:
+                                        stars = "⭐" * int(rating)
+                                        response += f"⭐ **Đánh giá:** {stars} {rating}/5"
+                                        if total_ratings > 0:
+                                            response += f" ({total_ratings:,} đánh giá)"
+                                        response += "\n"
+                                    
+                                    # Address
+                                    address = api_details.get('formatted_address') or api_details.get('address') or place.get('address')
+                                    if address:
+                                        response += f"📍 **Địa chỉ:** {address}\n"
+                                    
+                                    # Opening hours
+                                    if api_details.get('opening_hours'):
+                                        hours = api_details['opening_hours']
+                                        if hours.get('open_now') is not None:
+                                            status = "🟢 Đang mở cửa" if hours['open_now'] else "🔴 Đang đóng cửa"
+                                            response += f"🕐 **Trạng thái:** {status}\n"
+                                    
+                                    # Price level
+                                    price_level = api_details.get('price_level')
+                                    if price_level:
+                                        price_symbols = "$" * price_level if isinstance(price_level, int) else price_level
+                                        price_map = {"$": "Rẻ", "$$": "Vừa phải", "$$$": "Đắt", "$$$$": "Rất đắt"}
+                                        price_text = price_map.get(price_symbols, price_symbols)
+                                        response += f"💰 **Mức giá:** {price_symbols} ({price_text})\n"
+                                    
+                                    # Contact info
+                                    if api_details.get('phone_number'):
+                                        response += f"📞 **Điện thoại:** {api_details['phone_number']}\n"
+                                    if api_details.get('website'):
+                                        response += f"🌐 **Website:** {api_details['website']}\n"
+                                    
+                                    response += "\n"
+                                    
+                                    # If editorial summary exists, show it first
+                                    if description:
+                                        response += f"📖 **Giới thiệu:**\n{description}\n\n"
+                                    
+                                    # Generate detailed info using LLM for richer content
+                                    destination = itinerary_data.get('destination', '')
+                                    place_type = place.get('type', 'tourist_attraction')
+                                    
+                                    llm_prompt = f"""Bạn là hướng dẫn viên du lịch chuyên nghiệp tại {destination}. Hãy viết giới thiệu CHI TIẾT về địa điểm sau:
+
+Tên: {place['name']}
+Địa chỉ: {address or 'N/A'}
+Loại: {_format_place_type(place_type).replace('📍 ', '').replace('🏛️ ', '').replace('🍽️ ', '').replace('☕ ', '')}
+Đánh giá: {rating}/5 ({total_ratings:,} lượt đánh giá)
+
+YÊU CẦU FORMAT (QUAN TRỌNG):
+- KHÔNG dùng ####, ###, ## headers
+- Dùng emoji + **bold** thay vì headers
+- Mỗi bullet point NGẮN GỌN (tối đa 1-2 dòng)
+- Dễ đọc trên điện thoại
+
+Hãy bao gồm:
+
+✨ **Điểm đặc biệt:**
+• [2-3 điểm nổi bật về địa điểm này]
+
+🎯 **Nên làm gì ở đây:**
+• [3-4 hoạt động thú vị, cụ thể]
+
+📸 **Góc chụp đẹp:**
+• [2-3 vị trí khuyên chụp ảnh]
+
+⏰ **Thời gian phù hợp:**
+• [Khuyến nghị thời gian đẹp nhất]
+
+💡 **Tips du lịch:**
+• [2-3 lời khuyên hữu ích]
+
+Trả lời bằng tiếng Việt, thông tin THỰC TẾ và CỤ THỂ."""
+
+                                    try:
+                                        llm = get_llm()
+                                        llm_response = llm.invoke([HumanMessage(content=llm_prompt)])
+                                        response += llm_response.content + "\n"
+                                    except Exception as e:
+                                        print(f"      ⚠️ LLM generation failed: {e}")
+                                        # Fallback response
+                                        emotional_tags = place.get('emotional_tags', [])
+                                        if emotional_tags:
+                                            formatted_tags = _format_emotional_tags(emotional_tags)
+                                            response += f"💭 **Phù hợp cho:** {formatted_tags}\n\n"
+                                        
+                                        response += "✨ **Điểm đặc biệt:**\n"
+                                        response += f"• Địa điểm được đánh giá cao với {rating}/5 sao\n"
+                                        response += "• Điểm đến phổ biến trong lộ trình du lịch\n\n"
+                                        
+                                        response += "🎯 **Nên làm gì ở đây:**\n"
+                                        response += "• Tham quan và chụp ảnh lưu niệm\n"
+                                        response += "• Trải nghiệm không gian độc đáo\n"
+                                        response += "• Khám phá văn hóa địa phương\n"
+                                    
+                                    # Top review at the end
+                                    if api_details.get('reviews') and len(api_details['reviews']) > 0:
+                                        review = api_details['reviews'][0]
+                                        stars = "⭐" * int(review.get('rating', 0))
+                                        author = review.get('author', 'Anonymous')
+                                        text = review.get('text', '')[:150]
+                                        if len(review.get('text', '')) > 150:
+                                            text += "..."
+                                        response += f"\n💬 **Đánh giá nổi bật:**\n"
+                                        response += f"{stars} - {author}\n_{text}_\n"
+                                else:
+                                    # Fallback: Use LLM to generate detailed info when no API details
+                                    # Still show basic info first
+                                    
+                                    # Rating
+                                    rating = place.get('rating', 0)
+                                    if rating > 0:
+                                        stars = "⭐" * int(rating)
+                                        response += f"⭐ **Đánh giá:** {stars} {rating}/5\n"
+                                    
+                                    # Address
+                                    address = place.get('address', '')
+                                    if address:
+                                        response += f"📍 **Địa chỉ:** {address}\n"
+                                    
+                                    # Emotional tags with Vietnamese mapping
+                                    emotional_tags = place.get('emotional_tags', [])
+                                    if emotional_tags:
+                                        formatted_tags = _format_emotional_tags(emotional_tags)
+                                        response += f"💭 **Phù hợp cho:** {formatted_tags}\n"
+                                    
+                                    # Price level
+                                    if place.get('price_level'):
+                                        price_level = place.get('price_level')
+                                        price_symbols = "$" * price_level if isinstance(price_level, int) else price_level
+                                        price_map = {"$": "Rẻ", "$$": "Vừa phải", "$$$": "Đắt", "$$$$": "Rất đắt"}
+                                        price_text = price_map.get(price_symbols, price_symbols)
+                                        response += f"💰 **Mức giá:** {price_symbols} ({price_text})\n"
+                                    
+                                    response += "\n"
+                                    
+                                    # Description if available
+                                    description = place.get('description')
+                                    if description:
+                                        response += f"📖 **Giới thiệu:**\n{description}\n\n"
+                                    
+                                    # Generate detailed info using LLM
+                                    destination = itinerary_data.get('destination', '')
+                                    place_type = place.get('type', 'tourist_attraction')
+                                    
+                                    llm_prompt = f"""Bạn là hướng dẫn viên du lịch chuyên nghiệp tại {destination}. Hãy viết giới thiệu CHI TIẾT về địa điểm sau:
+
+Tên: {place['name']}
+Địa chỉ: {address or 'N/A'}
+Loại: {_format_place_type(place_type).replace('📍 ', '').replace('🏛️ ', '').replace('🍽️ ', '').replace('☕ ', '')}
+Đánh giá: {rating}/5
+
+YÊU CẦU FORMAT (QUAN TRỌNG):
+- KHÔNG dùng ####, ###, ## headers
+- Dùng emoji + **bold** thay vì headers
+- Mỗi bullet point NGẮN GỌN (tối đa 1-2 dòng)
+- Dễ đọc trên điện thoại
+
+Hãy bao gồm:
+
+✨ **Điểm đặc biệt:**
+• [2-3 điểm nổi bật về địa điểm này]
+
+🎯 **Nên làm gì ở đây:**
+• [3-4 hoạt động thú vị, cụ thể]
+
+📸 **Góc chụp đẹp:**
+• [2-3 vị trí khuyên chụp ảnh]
+
+⏰ **Thời gian phù hợp:**
+• [Khuyến nghị thời gian đẹp nhất]
+
+💡 **Tips du lịch:**
+• [2-3 lời khuyên hữu ích]
+
+Trả lời bằng tiếng Việt, thông tin THỰC TẾ và CỤ THỂ."""
+
+                                    try:
+                                        llm = get_llm()
+                                        llm_response = llm.invoke([HumanMessage(content=llm_prompt)])
+                                        response += llm_response.content + "\n"
+                                    except Exception as e:
+                                        print(f"      ⚠️ LLM generation failed: {e}")
+                                        # Minimal fallback
+                                        response += "✨ **Điểm đặc biệt:**\n"
+                                        response += f"• Địa điểm được đánh giá cao trong lộ trình\n"
+                                        response += "• Điểm đến phổ biến với du khách\n\n"
+                                        
+                                        response += "🎯 **Nên làm gì ở đây:**\n"
+                                        response += "• Tham quan và chụp ảnh lưu niệm\n"
+                                        response += "• Trải nghiệm không gian độc đáo\n"
+                                        response += "• Khám phá văn hóa địa phương\n"
                                 
                                 if is_draft:
-                                    response += "\n💡 Hỏi tôi về các địa điểm khác!"
+                                    response += "\n💡 Hỏi tôi về các địa điểm khác trong lộ trình!"
                                 
                                 return (response, None)
                             else:
@@ -2205,7 +2509,7 @@ Viết ngắn gọn, tập trung vào thông tin THỰC TẾ và CỤ THỂ cho 
                         # Add emotional tags if available
                         emotional_tags = place.get('emotional_tags', [])
                         if emotional_tags:
-                            tags_desc = ', '.join(emotional_tags[:2])
+                            tags_desc = _format_emotional_tags(emotional_tags[:2])
                             base_desc += f", phù hợp cho không khí {tags_desc}"
                         
                         description = base_desc + "."
@@ -3090,7 +3394,7 @@ def _handle_place_introduction_with_itinerary(user_text: str, itinerary_data: Di
                         # Add emotional tags if available
                         emotional_tags = place.get('emotional_tags', [])
                         if emotional_tags:
-                            tags_desc = ', '.join(emotional_tags[:2])
+                            tags_desc = _format_emotional_tags(emotional_tags[:2])
                             base_desc += f", phù hợp cho không khí {tags_desc}"
                         
                         description = base_desc + "."
