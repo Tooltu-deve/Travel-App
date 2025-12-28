@@ -40,7 +40,11 @@ from tools import (
     suggest_additional_places,
     add_place_to_itinerary_backend,
     # Core search tool
-    search_places
+    search_places,
+    # Save Google Places to DB
+    save_google_place_to_db,
+    # DB Helper
+    find_place_by_id_db
 )
 
 load_dotenv()
@@ -1608,6 +1612,39 @@ def _format_duration(minutes: any) -> str:
         return str(minutes)
 
 
+def _generate_basic_travel_tips(destination: str, place_names: List[str], place_types: List[str]) -> tuple:
+    """
+    Generate basic travel tips when LLM is unavailable
+    """
+    response = f"💡 **Lời khuyên khi du lịch {destination}:**\n\n"
+    
+    response += "**🕐 Thời điểm:**\n"
+    response += "• Nên đến các địa điểm nổi tiếng sớm (7-8h sáng) để tránh đông\n"
+    response += "• Các quán cafe/nhà hàng vui nhất từ 17-21h\n\n"
+    
+    response += "**👕 Trang phục:**\n"
+    response += "• Mặc thoải mái, giày đi bộ êm chân\n"
+    response += "• Nếu vào chùa/đền: mặc kín đáo\n"
+    response += "• Mang theo áo khoác mỏng phòng máy lạnh\n\n"
+    
+    response += "**🍜 Ẩm thực:**\n"
+    response += "• Thử các món đặc sản địa phương\n"
+    response += "• Hỏi người dân về quán ăn ngon\n"
+    response += "• Uống đủ nước trong ngày\n\n"
+    
+    response += "**⚠️ Lưu ý:**\n"
+    response += "• Mang theo tiền mặt, nhiều nơi không nhận thẻ\n"
+    response += "• Giữ đồ đạc cá nhân cẩn thận\n"
+    response += "• Lưu số điện thoại khẩn cấp\n\n"
+    
+    if place_names:
+        response += f"**📍 Địa điểm của bạn:** {', '.join(place_names[:5])}\n\n"
+    
+    response += "---\n💬 Hỏi 'Giới thiệu [tên địa điểm]' để biết chi tiết hơn!"
+    
+    return (response, None)
+
+
 def _format_itinerary_display(details: Dict, is_draft: bool = False, show_title: bool = True) -> str:
     """
     Format itinerary details for beautiful display
@@ -1713,8 +1750,70 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
         # Get last suggestions from state (if available)
         last_suggestions = state.get('last_suggestions', []) if state else []
         
-        # View itinerary overview
-        if any(word in user_text for word in ["xem lộ trình", "lộ trình của tôi", "cho tôi xem", "show", "hiển thị"]):
+        # PRIORITY 1: Itinerary consultation - provide travel tips and advice
+        # Must be BEFORE "xem lộ trình" to catch "tư vấn lộ trình"
+        if any(word in user_text for word in ["tư vấn", "lời khuyên", "tips", "kinh nghiệm", "nên biết", "cần lưu ý", "advice"]):
+            print("      → Itinerary consultation")
+            details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
+            
+            if details.get("error"):
+                return (f"❌ Không thể lấy thông tin lộ trình: {details['error']}", None)
+            
+            # Build place list for AI context
+            place_names = []
+            place_types = []
+            for day_info in details.get("days", []):
+                for place in day_info.get("places", []):
+                    place_names.append(place.get("name", ""))
+                    place_types.append(place.get("type", ""))
+            
+            destination = itinerary_data.get("destination", "")
+            duration = details.get("duration_days", 0)
+            
+            # Generate advice using LLM with better formatting
+            llm = get_llm()
+            # Build detailed place info for context
+            place_details_str = ""
+            for i, name in enumerate(place_names[:20], 1):
+                place_type = place_types[i-1] if i-1 < len(place_types) else ""
+                place_details_str += f"{i}. {name} ({place_type})\n"
+            
+            prompt = f"""Bạn là hướng dẫn viên du lịch giàu kinh nghiệm tại {destination}. 
+
+Lộ trình {duration} ngày của khách gồm các địa điểm:
+{place_details_str}
+
+Hãy tư vấn CỤ THỂ theo format sau:
+
+📍 **TƯ VẤN TỪNG ĐỊA ĐIỂM:**
+
+{chr(10).join([f"**{i}. {name}:**" + chr(10) + "• Thời điểm đẹp nhất: [giờ cụ thể]" + chr(10) + "• Nên làm gì: [hoạt động cụ thể]" + chr(10) + "• Lưu ý: [tips quan trọng]" + chr(10) for i, name in enumerate(place_names[:10], 1)])}
+
+---
+
+🌟 **LỜI KHUYÊN CHUNG:**
+
+🕐 **Di chuyển:** [Tips di chuyển giữa các điểm]
+👕 **Trang phục:** [Nên mặc gì]
+🍜 **Ẩm thực:** [Món ngon gần lộ trình]
+💡 **Lưu ý:** [Điều hay bị bỏ qua]
+
+Viết ngắn gọn, tập trung vào thông tin THỰC TẾ và CỤ THỂ cho từng địa điểm."""
+
+            try:
+                response = llm.invoke([HumanMessage(content=prompt)])
+                advice_text = response.content
+                
+                result = f"✨ **Lời khuyên cho lộ trình {destination} ({duration} ngày):**\n\n"
+                result += advice_text
+                
+                return (result, None)
+            except Exception as e:
+                print(f"      ❌ LLM error: {e}")
+                return _generate_basic_travel_tips(destination, place_names, place_types)
+        
+        # PRIORITY 2: View itinerary overview
+        elif any(word in user_text for word in ["xem lộ trình", "lộ trình của tôi", "cho tôi xem", "show", "hiển thị", "chi tiết lộ trình", "xem chi tiết"]):
             print("      → View itinerary overview")
             details = get_itinerary_details.invoke({"itinerary_data": itinerary_data})
             
@@ -2269,17 +2368,41 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                     reference_place = all_places[place_index - 1]
                     print(f"      → Reference place: {reference_place['name']}")
                     
-                    # Build preferences with near_place
-                    preferences = {
-                        "category": category,
-                        "near_place": reference_place.get("place_id") or reference_place.get("name")
-                    }
+                    # Extract location from reference place
+                    ref_location = reference_place.get("location", {})
+                    ref_lat = None
+                    ref_lng = None
                     
-                    # Get suggestions near the reference place
-                    suggestions = suggest_additional_places.invoke({
-                        "itinerary_data": itinerary_data,
-                        "preferences": preferences
-                    })
+                    # Support both formats: {coordinates: [lng, lat]} and {lat, lng}
+                    if ref_location.get("coordinates"):
+                        coords = ref_location["coordinates"]
+                        if isinstance(coords, list) and len(coords) >= 2:
+                            ref_lng, ref_lat = coords[0], coords[1]
+                    elif ref_location.get("lat") and ref_location.get("lng"):
+                        ref_lat = ref_location["lat"]
+                        ref_lng = ref_location["lng"]
+                    
+                    print(f"      → Reference coordinates: lat={ref_lat}, lng={ref_lng}")
+                    
+                    if ref_lat and ref_lng:
+                        # Use Google Places API to search for places near the reference location
+                        suggestions = search_nearby_places.invoke({
+                            "current_location": {"lat": ref_lat, "lng": ref_lng},
+                            "radius_km": 2.0,  # 2km radius
+                            "category": category,
+                            "limit": 10
+                        })
+                    else:
+                        # Fallback to database search if no coordinates
+                        print(f"      ⚠️ No coordinates found, falling back to database search")
+                        preferences = {
+                            "category": category,
+                            "near_place": reference_place.get("place_id") or reference_place.get("name")
+                        }
+                        suggestions = suggest_additional_places.invoke({
+                            "itinerary_data": itinerary_data,
+                            "preferences": preferences
+                        })
                     
                     if suggestions and len(suggestions) > 0:
                         limited_suggestions = suggestions[:5]
@@ -2307,11 +2430,12 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                             if rating and rating > 0:
                                 response += f" • ⭐ {rating}/5.0"
                             
-                            response += "\n"
+                            # response += "\n"
                             
                             # Show distance from reference place
-                            if place.get('distance_from_reference'):
-                                dist = place['distance_from_reference']
+                            # Support both distance_km (Google) and distance_from_reference (database)
+                            dist = place.get('distance_km') or place.get('distance_from_reference')
+                            if dist:
                                 response += f"📏 {dist:.1f}km từ {reference_place['name']}\n"
                             elif place.get('address'):
                                 addr = place.get('address')
@@ -2319,11 +2443,11 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                                     addr = addr[:60] + "..."
                                 response += f"📍 {addr}\n"
                             
-                            response += "\n"
+                            # response += "\n"
                         
-                        response += "💬 **Bạn có thể hỏi:**\n"
-                        response += f"• _\"Thêm [tên] vào ngày {reference_place.get('day', 'X')}\"_ - Thêm vào lộ trình\n"
-                        response += "• _\"Giới thiệu địa điểm thứ 1\"_ - Xem chi tiết"
+                        # response += "💬 **Bạn có thể hỏi:**\n"
+                        # response += f"• _\"Thêm [tên] vào ngày {reference_place.get('day', 'X')}\"_ - Thêm vào lộ trình\n"
+                        # response += "• _\"Giới thiệu địa điểm thứ 1\"_ - Xem chi tiết"
                         
                         return (response, limited_suggestions)
                     else:
@@ -2334,12 +2458,13 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                 return ("❌ Không xác định được địa điểm. Vui lòng thử lại với format: _\"Gợi ý quán ăn gần địa điểm số 2\"_", None)
         
         # Suggest adding places or confirm adding a specific place
-        elif any(word in user_text.lower() for word in ["thêm", "add", "gợi ý thêm", "nên thêm", "có nên"]):
+        elif any(word in user_text.lower() for word in ["thêm", "add", "gợi ý thêm", "gợi ý", "nên thêm", "có nên"]):
             print("      → Handle place suggestion/addition")
             
             # Check if trying to add a specific place (contains place name + day number)
             # Use lowercase for pattern matching to handle case-insensitive input
-            place_name_pattern = r'thêm\s+(.+?)\s+vào\s+ngày'
+            # Pattern handles: "thêm X vào ngày Y", "thêm X vào đầu ngày Y", "thêm X vào ngày Y sau địa điểm Z"
+            place_name_pattern = r'thêm\s+(.+?)\s+vào\s+(?:đầu\s+)?ngày'
             place_match = re.search(place_name_pattern, user_text.lower())
             day_match = re.search(r'ngày\s+(\d+)', user_text.lower())
             
@@ -2354,18 +2479,41 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                 place_name_lower = place_match.group(1).strip()
                 day_number = int(day_match.group(1))
                 
+                # Check for [PLACE_ID:xxx] or [place_id:xxx] marker from frontend (case-insensitive)
+                place_id_match = re.search(r'\[place_id:([^\]]+)\]', user_text, re.IGNORECASE)
+                target_place_id = place_id_match.group(1) if place_id_match else None
+                
+                # Clean place name (remove PLACE_ID marker if present) - case insensitive
+                place_name_lower = re.sub(r'\s*\[place_id:[^\]]+\]', '', place_name_lower, flags=re.IGNORECASE).strip()
+                
                 print(f"      → Place name (lowercase): '{place_name_lower}'")
                 print(f"      → Day number: {day_number}")
+                print(f"      → Target place_id: {target_place_id}")
                 
                 # Validate day number
                 duration_days = itinerary_data.get("duration_days", 1)
                 if day_number > duration_days or day_number < 1:
                     return (f"❌ Ngày {day_number} không hợp lệ. Lộ trình có {duration_days} ngày.", None)
                 
-                # Try to find place in last_suggestions first (faster)
+                # Try to find place by place_id first (most accurate)
                 place_to_add = None
-                if last_suggestions:
-                    print(f"      → Checking {len(last_suggestions)} last_suggestions...")
+                print(f"      → last_suggestions: {len(last_suggestions) if last_suggestions else 'None/Empty'}")
+                print(f"      → target_place_id: {target_place_id}")
+                if target_place_id and last_suggestions:
+                    print(f"      → Looking for place_id '{target_place_id}' in {len(last_suggestions)} last_suggestions...")
+                    # Debug: print all place_ids in suggestions
+                    for idx, suggestion in enumerate(last_suggestions):
+                        sugg_id = suggestion.get('place_id') or suggestion.get('google_place_id') or suggestion.get('id', '')
+                        print(f"         [{idx}] '{suggestion.get('name')}' -> place_id: '{sugg_id}'")
+                        # Check for match
+                        if sugg_id == target_place_id:
+                            place_to_add = suggestion
+                            print(f"      ✅ Found by place_id: {suggestion.get('name')}")
+                            break
+                
+                # Fallback: Try name matching in last_suggestions
+                if not place_to_add and last_suggestions:
+                    print(f"      → Fallback: Checking {len(last_suggestions)} last_suggestions by name...")
                     for suggestion in last_suggestions:
                         # Case-insensitive matching
                         if place_name_lower in suggestion.get('name', '').lower():
@@ -2421,26 +2569,60 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                                     place_to_add = suggestion
                                     print(f"      ✅ Substring match: {suggestion.get('name')}")
                                     break
-                        
-                        # Last resort: Ask user to confirm
-                        if not place_to_add and suggestions:
-                            print(f"      ⚠️ No good match found, would need user confirmation")
-                            # Return suggestion list instead of auto-picking
-                            response = f"❓ Không tìm thấy '{place_name_lower}' chính xác.\n\n"
-                            response += "💡 **Có phải bạn muốn thêm một trong những địa điểm này?**\n\n"
-                            for i, sugg in enumerate(suggestions[:3], 1):
-                                response += f"{i}. **{sugg.get('name')}**\n"
-                                if sugg.get('address'):
-                                    addr = sugg.get('address')
-                                    if len(addr) > 50:
-                                        addr = addr[:50] + "..."
-                                    response += f"   📍 {addr}\n"
-                                rating = sugg.get('rating', 0)
-                                if rating > 0:
-                                    response += f"   ⭐ {rating}/5\n"
-                                response += "\n"
-                            response += f"💬 Hãy nói: _\"Thêm [tên chính xác] vào ngày {day_number}\"_"
-                            return (response, suggestions[:3])
+                
+                # Strategy 4: If we have place_id, check DB or fetch from Google Places API
+                if not place_to_add and target_place_id:
+                    # 4.1 Check DB first (case-insensitive lookup logic handled in find_place_by_id_db)
+                    print(f"      → Checking MongoDB for place_id: {target_place_id}...")
+                    db_place = find_place_by_id_db(target_place_id)
+                    
+                    if db_place:
+                         place_to_add = db_place
+                         print(f"      ✅ Found in MongoDB by ID: {db_place.get('name')} (ID case corrected)")
+                         # Update target_place_id to correct case for downstream usage if needed
+                         target_place_id = db_place.get('googlePlaceId') or db_place.get('google_place_id') or target_place_id
+
+                    # 4.2 If not in DB, fetch from Google API
+                    if not place_to_add:
+                        print(f"      → Fetching place by place_id from Google Places API...")
+                    try:
+                        place_details = get_place_details.invoke({"place_id": target_place_id})
+                        if place_details and place_details.get('name'):
+                            place_to_add = place_details
+                            print(f"      ✅ Found via Google Places API: {place_details.get('name')}")
+                            
+                            # Save to database for future lookups
+                            try:
+                                save_result = save_google_place_to_db(place_to_add)
+                                if save_result.get("success"):
+                                    print(f"      💾 Saved to DB: {place_to_add.get('name')}")
+                            except Exception as e:
+                                print(f"      ⚠️ Failed to save to DB: {e}")
+                        else:
+                            print(f"      ⚠️ Google API returned no details for place_id: {target_place_id}")
+                    except Exception as e:
+                        print(f"      ⚠️ Error fetching from Google API: {e}")
+                
+                # Last resort: Ask user to confirm
+                if not place_to_add:
+                    if suggestions and len(suggestions) > 0:
+                        print(f"      ⚠️ No good match found, would need user confirmation")
+                        # Return suggestion list instead of auto-picking
+                        response = f"❓ Không tìm thấy '{place_name_lower}' chính xác.\n\n"
+                        response += "💡 **Có phải bạn muốn thêm một trong những địa điểm này?**\n\n"
+                        for i, sugg in enumerate(suggestions[:3], 1):
+                            response += f"{i}. **{sugg.get('name')}**\n"
+                            if sugg.get('address'):
+                                addr = sugg.get('address')
+                                if len(addr) > 50:
+                                    addr = addr[:50] + "..."
+                                response += f"   📍 {addr}\n"
+                            rating = sugg.get('rating', 0)
+                            if rating > 0:
+                                response += f"   ⭐ {rating}/5\n"
+                            response += "\n"
+                        response += f"💬 Hãy nói: _\"Thêm [tên chính xác] vào ngày {day_number}\"_"
+                        return (response, suggestions[:3])
                 
                 if place_to_add:
                     # Check if place already exists in itinerary
@@ -2454,6 +2636,15 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                         if existing_id and existing_id == place_id:
                             return (f"⚠️ Địa điểm **{place_to_add.get('name')}** đã có trong lộ trình (Ngày {existing.get('day')}).\n\n💡 Bạn muốn thêm địa điểm khác không?", None)
                     
+                    # If place is from Google API (has 'source' = 'google_places_api_new'), save to database first
+                    if place_to_add.get('source') == 'google_places_api_new':
+                        print(f"      → Saving Google API place to database first...")
+                        save_result = save_google_place_to_db(place_to_add)
+                        if save_result.get("success"):
+                            print(f"      ✅ Place saved to DB: {save_result.get('name')}")
+                        else:
+                            print(f"      ⚠️ Could not save to DB: {save_result.get('error')}")
+                    
                     # Call add_place_to_itinerary_backend
                     result = add_place_to_itinerary_backend.invoke({
                         "place_data": place_to_add,
@@ -2466,11 +2657,13 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                     if result.get("success"):
                         # UPDATE STATE: Add place to itinerary_data immediately
                         place_added = result.get("place_to_add")
-                        if place_added and itinerary_data.get("route_data_json", {}).get("days"):
-                            days = itinerary_data["route_data_json"]["days"]
+                        route_data = itinerary_data.get("route_data_json", {})
+                        days = route_data.get("days") or route_data.get("optimized_route")
+                        
+                        if place_added and days:
                             for day in days:
                                 if day.get("day") == day_number:
-                                    # Add new activity with place
+                                    # Add new activity with place (Full schema)
                                     new_activity = {
                                         "time": place_added.get("time", "TBD"),
                                         "duration": place_added.get("duration", "2 hours"),
@@ -2482,7 +2675,14 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                                             "address": place_added.get("address"),
                                             "rating": place_added.get("rating"),
                                             "description": place_added.get("description"),
-                                            "location": place_added.get("location")
+                                            "location": place_added.get("location"),
+                                            # Enhanced fields
+                                            "opening_hours": place_added.get("opening_hours"),
+                                            "price_level": place_added.get("price_level"),
+                                            "phone": place_added.get("phone"),
+                                            "website": place_added.get("website"),
+                                            "photos": place_added.get("photos", []),
+                                            "emotional_tags": place_added.get("emotional_tags")
                                         }
                                     }
                                     if "activities" not in day:
@@ -2491,7 +2691,33 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                                     print(f"      ✅ Updated state: Added to day {day_number} activities")
                                     break
                         
-                        response = f"✅ {result['message']}\n\n"
+                        # Build action marker with place data for frontend to update itinerary
+                        import json
+                        place_action_data = {
+                            "day_number": day_number,
+                            "place": {
+                                "place_id": place_to_add.get("google_place_id") or place_to_add.get("place_id"),
+                                "google_place_id": place_to_add.get("google_place_id") or place_to_add.get("place_id"),
+                                "name": place_to_add.get("name"),
+                                "type": place_to_add.get("type"),
+                                "address": place_to_add.get("address"),
+                                "rating": place_to_add.get("rating"),
+                                "location": place_to_add.get("location"),
+                                "description": place_to_add.get("description"),
+                                # Enhanced fields from source (DB or API)
+                                "opening_hours": place_to_add.get("opening_hours") or place_to_add.get("openingHours"),
+                                "price_level": place_to_add.get("price_level") or place_to_add.get("budgetRange"),
+                                "phone": place_to_add.get("formatted_phone_number") or place_to_add.get("contactNumber") or place_to_add.get("phone"),
+                                "website": place_to_add.get("website") or place_to_add.get("websiteUri"),
+                                "photos": place_to_add.get("photos", []),
+                                "emotional_tags": place_to_add.get("emotional_tags", {})
+                            },
+                            "time": "TBD",
+                            "duration": "2 hours"
+                        }
+                        action_marker = f"[ACTION:PLACE_ADDED:{json.dumps(place_action_data)}]"
+                        
+                        response = f"{action_marker}\n✅ {result['message']}\n\n"
                         response += f"📍 **{place_to_add.get('name')}**\n"
                         if place_to_add.get('type'):
                             type_label = _format_place_type(place_to_add.get('type'))
@@ -2507,21 +2733,44 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                         # Show updated list of places for this day
                         response += f"📅 **Địa điểm Ngày {day_number}** (đã cập nhật):\n\n"
                         current_day_activities = []
-                        for day in itinerary_data["route_data_json"]["days"]:
+                        route_data = itinerary_data.get("route_data_json", {})
+                        days = route_data.get("days") or route_data.get("optimized_route") or []
+                        for day in days:
                             if day.get("day") == day_number:
                                 current_day_activities = day.get("activities", [])
                                 break
                         
+                        # Prepare description for display (Handling both nested and flat structures)
                         for i, activity in enumerate(current_day_activities, 1):
+                            # Try nested place first
                             place = activity.get("place", {})
-                            response += f"{i}. **{place.get('name', 'N/A')}**\n"
-                            if place.get('type'):
-                                type_icon = _format_place_type(place.get('type'))
+                            place_name = place.get("name")
+                            
+                            # Fallback to direct name (flat structure)
+                            if not place_name:
+                                place_name = activity.get("name", "N/A")
+                                # If flat structure, treat activity as the place object for other properties
+                                if place_name != "N/A":
+                                    place = activity
+                            
+                            response += f"{i}. **{place_name}**\n"
+                            
+                            # Helper to safely get property
+                            def get_prop(key):
+                                return place.get(key)
+                                
+                            item_type = get_prop('type')
+                            if item_type:
+                                type_icon = _format_place_type(item_type)
                                 response += f"   {type_icon}\n"
-                            if activity.get('time'):
-                                response += f"   ⏰ {activity.get('time')}\n"
-                            if place.get('rating', 0) > 0:
-                                response += f"   ⭐ {place.get('rating')}/5\n"
+                                
+                            item_time = activity.get('time') or get_prop('time')
+                            if item_time and item_time != "TBD":
+                                response += f"   ⏰ {item_time}\n"
+                                
+                            rating = get_prop('rating')
+                            if rating and isinstance(rating, (int, float)) and rating > 0:
+                                response += f"   ⭐ {rating}/5\n"
                             response += "\n"
                         
                         response += "💡 Bạn muốn thêm địa điểm khác không?"
@@ -2565,17 +2814,82 @@ def _handle_itinerary_query(user_text: str, itinerary_data: Dict, current_locati
                 if day_match:
                     preferences["day_number"] = int(day_match.group(1))
                 
-                # Get suggestions
-                suggestions = suggest_additional_places.invoke({
-                    "itinerary_data": itinerary_data,
-                    "preferences": preferences
-                })
+                # Get itinerary center location for Google API search
+                route_data = itinerary_data.get("route_data_json", {})
+                days = route_data.get("days", []) or route_data.get("optimized_route", [])
+                
+                # Try to get center location from first place in itinerary
+                center_lat = None
+                center_lng = None
+                if days:
+                    for day in days:
+                        for activity in day.get("activities", []):
+                            place = activity.get("place", {}) or activity
+                            loc = place.get("location", {})
+                            if loc.get("coordinates"):
+                                coords = loc["coordinates"]
+                                if isinstance(coords, list) and len(coords) >= 2:
+                                    center_lng, center_lat = coords[0], coords[1]
+                                    break
+                            elif loc.get("lat") and loc.get("lng"):
+                                center_lat = loc["lat"]
+                                center_lng = loc["lng"]
+                                break
+                        if center_lat:
+                            break
+                
+                # If we have a center location, use Google API
+                if center_lat and center_lng:
+                    print(f"      → Using Google Places API with center: {center_lat}, {center_lng}")
+                    suggestions = search_nearby_places.invoke({
+                        "current_location": {"lat": center_lat, "lng": center_lng},
+                        "radius_km": 5.0,  # 5km radius for general suggestions
+                        "category": preferences.get("category"),
+                        "limit": 10
+                    })
+                    print(f"      → Got {len(suggestions) if suggestions else 0} suggestions from Google API")
+                    
+                    # Save Google Places results to database immediately
+                    # This ensures they can be found by name search even if session is lost
+                    if suggestions:
+                        for place in suggestions:
+                            if place.get('place_id'):
+                                try:
+                                    save_result = save_google_place_to_db(place)
+                                    if save_result.get("success"):
+                                        print(f"      💾 Saved to DB: {place.get('name')}")
+                                except Exception as e:
+                                    print(f"      ⚠️ Failed to save {place.get('name')}: {e}")
+                else:
+                    # Fallback to database search
+                    print(f"      → Fallback to database search (no center location)")
+                    suggestions = suggest_additional_places.invoke({
+                        "itinerary_data": itinerary_data,
+                        "preferences": preferences
+                    })
                 
                 if suggestions and len(suggestions) > 0:
-                    # Limit to 5 suggestions for better UX
-                    limited_suggestions = suggestions[:5]
+                    # Parse requested count from user text (e.g., "10 quán", "5 nhà hàng")
+                    count_match = re.search(r'(\d+)\s*(?:quán|địa điểm|chỗ|nơi|tiệm|nhà hàng|bảo tàng|chùa|đền|chợ|công viên|bar|pub|cafe|cà phê)', user_text.lower())
+                    requested_count = int(count_match.group(1)) if count_match else 5
+                    # Limit to max 10 suggestions
+                    requested_count = min(max(requested_count, 1), 10)
                     
-                    response = "💡 **Gợi ý địa điểm bổ sung cho lộ trình:**\n\n"
+                    limited_suggestions = suggestions[:requested_count]
+                    print(f"      → Showing {len(limited_suggestions)} suggestions (requested: {requested_count})")
+                    
+                    category_name = preferences.get("category", "địa điểm")
+                    category_display = {
+                        "cafe": "quán cà phê",
+                        "restaurant": "nhà hàng/quán ăn",
+                        "museum": "bảo tàng",
+                        "temple": "chùa/đền",
+                        "market": "chợ",
+                        "park": "công viên",
+                        "bar": "bar/pub"
+                    }.get(category_name, "địa điểm")
+                    
+                    response = f"💡 **{len(limited_suggestions)} {category_display} gợi ý cho bạn:**\n\n"
                     
                     for i, place in enumerate(limited_suggestions, 1):
                         response += f"**{i}. {place.get('name', 'Unknown')}**\n"
@@ -3002,6 +3316,7 @@ class TravelCompanion:
             return {
                 "response": latest_response,
                 "state": final_state,
+                "suggestions": final_state.get("last_suggestions"),
                 "status": "success"
             }
         

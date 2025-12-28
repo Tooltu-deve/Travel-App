@@ -75,6 +75,7 @@ class ChatResponse(BaseModel):
     """Response model for chat endpoint"""
     response: str
     session_id: str
+    suggestions: Optional[List[Dict[str, Any]]] = None
     metadata: Dict[str, Any] = {}
 
 class ResetRequest(BaseModel):
@@ -199,6 +200,7 @@ async def chat_with_companion(request: ChatRequest):
         return ChatResponse(
             response=response_text,
             session_id=session_id,
+            suggestions=result.get("suggestions"),
             metadata=metadata
         )
         

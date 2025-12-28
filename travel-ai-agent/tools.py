@@ -31,6 +31,137 @@ places_collection = db["places"]
 # Load embedding model for similarity search
 # embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Commented out to save RAM
 
+
+def save_google_place_to_db(place_data: Dict) -> Dict:
+    """
+    Lưu địa điểm từ Google Places API vào MongoDB.
+    Sử dụng upsert để tránh duplicate.
+    
+    Args:
+        place_data: Dictionary chứa thông tin địa điểm từ Google Places API
+        
+    Returns:
+        Dict: Kết quả lưu với place_id trong database
+    """
+    try:
+        if not place_data:
+            return {"success": False, "error": "No place data provided"}
+        
+        place_id = place_data.get("place_id") or place_data.get("google_place_id")
+        if not place_id:
+            return {"success": False, "error": "No place_id found"}
+        
+        # Prepare document for MongoDB
+        # Use both field names for compatibility (camelCase for existing schema, snake_case for consistency)
+        # Extract location coordinates
+        lat = None
+        lng = None
+        
+        # Try various location formats
+        loc = place_data.get("location")
+        if loc and isinstance(loc, dict):
+            if "lat" in loc and "lng" in loc:
+                lat = loc["lat"]
+                lng = loc["lng"]
+            elif "coordinates" in loc and isinstance(loc["coordinates"], list):
+                 # Already GeoJSON?
+                 if len(loc["coordinates"]) >= 2:
+                     lng = loc["coordinates"][0]
+                     lat = loc["coordinates"][1]
+        
+        if lat is None:
+            # Check for geometry.location (Google API)
+            geometry = place_data.get("geometry")
+            if geometry and "location" in geometry:
+                lat = geometry["location"].get("lat")
+                lng = geometry["location"].get("lng")
+                
+        if lat is None:
+            # Check flat fields
+            lat = place_data.get("latitude")
+            lng = place_data.get("longitude")
+            
+        # Construct GeoJSON location
+        location_geojson = None
+        if lat is not None and lng is not None:
+             location_geojson = {
+                "type": "Point",
+                "coordinates": [float(lng), float(lat)]
+            }
+
+        doc = {
+            "googlePlaceId": place_id,
+            "google_place_id": place_id,
+            "place_id": place_id,
+            "name": place_data.get("name", ""),
+            "type": place_data.get("type") or (place_data.get("types", [])[0] if place_data.get("types") else "tourist_attraction"),
+            "address": place_data.get("address") or place_data.get("formattedAddress", "") or place_data.get("vicinity", ""),
+            "rating": place_data.get("rating", 0),
+            "user_ratings_total": place_data.get("user_ratings_total", 0),
+            "description": place_data.get("description", "") or place_data.get("editorial_summary", {}).get("overview") if isinstance(place_data.get("editorial_summary"), dict) else "",
+            "location": location_geojson,
+            "source": "google_places_api",
+            "created_at": datetime.utcnow(),
+            
+            # Additional fields to match backend schema
+            "openingHours": place_data.get("opening_hours"),
+            "contactNumber": place_data.get("formatted_phone_number") or place_data.get("international_phone_number"),
+            "websiteUri": place_data.get("website"),
+            "photos": place_data.get("photos", []),
+            "editorialSummary": place_data.get("editorial_summary", {}).get("overview") if isinstance(place_data.get("editorial_summary"), dict) else None,
+            "budgetRange": place_data.get("price_level"),
+            "utc_offset": place_data.get("utc_offset") or place_data.get("utc_offset_minutes")
+        }
+        
+        # Upsert to avoid duplicates - use googlePlaceId to match existing index
+        result = places_collection.update_one(
+            {"googlePlaceId": place_id},
+            {"$set": doc},
+            upsert=True
+        )
+        
+        print(f"   💾 Saved place to DB: {doc['name']} (upserted: {result.upserted_id is not None})")
+        
+        return {
+            "success": True,
+            "place_id": place_id,
+            "name": doc["name"],
+            "upserted": result.upserted_id is not None
+        }
+        
+    except Exception as e:
+        print(f"   ❌ Error saving place to DB: {e}")
+        return {"success": False, "error": str(e)}
+
+        return {"success": False, "error": str(e)}
+
+def find_place_by_id_db(place_id: str) -> Optional[Dict]:
+    """
+    Find place in DB by ID (case insensitive).
+    Helper function to recover from case mismatch issues.
+    """
+    try:
+        if not place_id:
+            return None
+            
+        # Try exact match first (both field names)
+        place = places_collection.find_one({"googlePlaceId": place_id}, {"_id": 0})
+        if not place:
+            place = places_collection.find_one({"google_place_id": place_id}, {"_id": 0})
+            
+        # Try case-insensitive regex if not found
+        if not place:
+            import re
+            pattern = re.compile(f"^{re.escape(place_id)}$", re.IGNORECASE)
+            place = places_collection.find_one({"googlePlaceId": pattern}, {"_id": 0})
+            if not place:
+                place = places_collection.find_one({"google_place_id": pattern}, {"_id": 0})
+                
+        return place
+    except Exception as e:
+        print(f"Error searching place by ID in DB: {e}")
+        return None
+
 @tool
 def search_places(query: str, location_filter: Optional[str] = None, category_filter: Optional[str] = None, limit: int = 50) -> List[Dict]:
     """
@@ -2120,7 +2251,7 @@ def add_place_to_itinerary_backend(place_data: Dict, itinerary_data: Dict, day_n
                 "error": f"Ngày {day_number} không hợp lệ. Lộ trình có {duration_days} ngày."
             }
         
-        # Prepare place data to add
+        # Prepare place data to add (Full schema matching backend service)
         place_to_add = {
             "google_place_id": place_data.get("google_place_id") or place_data.get("place_id"),
             "name": place_data.get("name", ""),
@@ -2129,6 +2260,14 @@ def add_place_to_itinerary_backend(place_data: Dict, itinerary_data: Dict, day_n
             "rating": place_data.get("rating", 0),
             "description": place_data.get("description", ""),
             "location": place_data.get("location", {}),
+            # Enhanced fields
+            "opening_hours": place_data.get("openingHours") or place_data.get("opening_hours"),
+            "price_level": place_data.get("budgetRange") or place_data.get("price_level"),
+            "phone": place_data.get("contactNumber") or place_data.get("formatted_phone_number"),
+            "website": place_data.get("websiteUri") or place_data.get("website"),
+            "photos": place_data.get("photos", []),
+            "emotional_tags": place_data.get("emotional_tags", {}),
+            
             "time": time,
             "duration": duration
         }
