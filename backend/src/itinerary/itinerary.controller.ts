@@ -22,7 +22,7 @@ import { CustomRouteDto } from './dto/custom-route.dto';
 
 @Controller('itineraries')
 export class ItineraryController {
-  constructor(private readonly itineraryService: ItineraryService) {}
+  constructor(private readonly itineraryService: ItineraryService) { }
 
   @UseGuards(JwtAuthGuard)
   @Post('generate')
@@ -102,9 +102,8 @@ export class ItineraryController {
     const routesResponse = routes.map((route) => this.mapToResponse(route));
 
     return {
-      message: `Đã tìm thấy ${routesResponse.length} lộ trình${
-        status ? ` với status ${status}` : ''
-      }.`,
+      message: `Đã tìm thấy ${routesResponse.length} lộ trình${status ? ` với status ${status}` : ''
+        }.`,
       routes: routesResponse,
       total: routesResponse.length,
     };
@@ -178,6 +177,61 @@ export class ItineraryController {
     return {
       message: dto.message || 'Lộ trình đã được xử lý thành công.',
       route: this.mapToResponse(savedRoute),
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('active')
+  @HttpCode(HttpStatus.OK)
+  async getActiveItinerary(
+    @Request() req,
+  ): Promise<{
+    message: string;
+    route: ItineraryResponseDto | null;
+  }> {
+    const userId = req.user.userId;
+    const itinerary = await this.itineraryService.getActiveItinerary(userId);
+
+    if (!itinerary) {
+      return {
+        message: 'Không tìm thấy lộ trình đang hoạt động.',
+        route: null,
+      };
+    }
+
+    return {
+      message: 'Đã tìm thấy lộ trình đang hoạt động.',
+      route: this.mapToResponse(itinerary),
+    };
+  }
+
+  @UseGuards(JwtAuthGuard) 
+  @Post(':routeId/add-place')
+  @HttpCode(HttpStatus.OK)
+  async addPlaceToItinerary(
+    @Request() req,
+    @Param('routeId') routeId: string,
+    @Body()
+    body: {
+      place_id: string;
+      day_number: number;
+      time?: string;
+      duration?: string;
+    },
+  ): Promise<{
+    message: string;
+    route: ItineraryResponseDto;
+  }> {
+    const userId = req.user.userId;
+    const updatedRoute = await this.itineraryService.addPlaceToItinerary(
+      routeId,
+      userId,
+      body,
+    );
+
+    return {
+      message: 'Địa điểm đã được thêm vào lộ trình thành công.',
+      route: this.mapToResponse(updatedRoute),
     };
   }
 

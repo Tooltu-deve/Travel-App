@@ -22,7 +22,7 @@
  *   const API_BASE_URL = 'https://api.yourapp.com';
  */
 // const API_BASE_URL = 'https://travel-app-r9qu.onrender.com'; // ⬅️ Render Cloud URL
-const API_BASE_URL = 'https://localhost:3000'; // ⬅️ Local URL (Simulator only)
+const API_BASE_URL = 'http://localhost:3000'; // ⬅️ Local URL (Simulator only)
 // const API_BASE_URL = 'http://192.168.1.178:3000'; // ⬅️ WiFi IP (cho điện thoại thật)
 // ============================================
 // TYPES

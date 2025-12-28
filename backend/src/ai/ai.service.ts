@@ -33,6 +33,9 @@ export class AiService {
             // Prepare context - include itinerary_id from latest DRAFT itinerary if not provided
             let requestContext = chatRequest.context || {};
 
+            // Log incoming context for debugging
+            this.logger.log(`Incoming context has itinerary: ${!!requestContext.itinerary}`);
+            
             // If context doesn't have itinerary_id, try to get latest itinerary (DRAFT or CONFIRMED)
             if (!requestContext.itinerary_id) {
                 try {
@@ -60,7 +63,15 @@ export class AiService {
                 } catch (err) {
                     this.logger.warn(`Failed to fetch itinerary status: ${err.message}`);
                 }
-            } const response = await firstValueFrom(
+            }
+            
+            // Forward the full itinerary object from frontend if provided
+            // This is needed for draft/preview itineraries that aren't saved yet
+            if (requestContext.itinerary) {
+                this.logger.log('Forwarding full itinerary object from frontend to AI Agent');
+            }
+            
+            const response = await firstValueFrom(
                 this.httpService.post(`${this.AI_AGENT_URL}/chat`, {
                     message: chatRequest.message,
                     user_id: chatRequest.userId,

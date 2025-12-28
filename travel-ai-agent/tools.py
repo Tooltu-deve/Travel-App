@@ -31,6 +31,137 @@ places_collection = db["places"]
 # Load embedding model for similarity search
 # embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Commented out to save RAM
 
+
+def save_google_place_to_db(place_data: Dict) -> Dict:
+    """
+    Lưu địa điểm từ Google Places API vào MongoDB.
+    Sử dụng upsert để tránh duplicate.
+    
+    Args:
+        place_data: Dictionary chứa thông tin địa điểm từ Google Places API
+        
+    Returns:
+        Dict: Kết quả lưu với place_id trong database
+    """
+    try:
+        if not place_data:
+            return {"success": False, "error": "No place data provided"}
+        
+        place_id = place_data.get("place_id") or place_data.get("google_place_id")
+        if not place_id:
+            return {"success": False, "error": "No place_id found"}
+        
+        # Prepare document for MongoDB
+        # Use both field names for compatibility (camelCase for existing schema, snake_case for consistency)
+        # Extract location coordinates
+        lat = None
+        lng = None
+        
+        # Try various location formats
+        loc = place_data.get("location")
+        if loc and isinstance(loc, dict):
+            if "lat" in loc and "lng" in loc:
+                lat = loc["lat"]
+                lng = loc["lng"]
+            elif "coordinates" in loc and isinstance(loc["coordinates"], list):
+                 # Already GeoJSON?
+                 if len(loc["coordinates"]) >= 2:
+                     lng = loc["coordinates"][0]
+                     lat = loc["coordinates"][1]
+        
+        if lat is None:
+            # Check for geometry.location (Google API)
+            geometry = place_data.get("geometry")
+            if geometry and "location" in geometry:
+                lat = geometry["location"].get("lat")
+                lng = geometry["location"].get("lng")
+                
+        if lat is None:
+            # Check flat fields
+            lat = place_data.get("latitude")
+            lng = place_data.get("longitude")
+            
+        # Construct GeoJSON location
+        location_geojson = None
+        if lat is not None and lng is not None:
+             location_geojson = {
+                "type": "Point",
+                "coordinates": [float(lng), float(lat)]
+            }
+
+        doc = {
+            "googlePlaceId": place_id,
+            "google_place_id": place_id,
+            "place_id": place_id,
+            "name": place_data.get("name", ""),
+            "type": place_data.get("type") or (place_data.get("types", [])[0] if place_data.get("types") else "tourist_attraction"),
+            "address": place_data.get("address") or place_data.get("formattedAddress", "") or place_data.get("vicinity", ""),
+            "rating": place_data.get("rating", 0),
+            "user_ratings_total": place_data.get("user_ratings_total", 0),
+            "description": place_data.get("description", "") or place_data.get("editorial_summary", {}).get("overview") if isinstance(place_data.get("editorial_summary"), dict) else "",
+            "location": location_geojson,
+            "source": "google_places_api",
+            "created_at": datetime.utcnow(),
+            
+            # Additional fields to match backend schema
+            "openingHours": place_data.get("opening_hours"),
+            "contactNumber": place_data.get("formatted_phone_number") or place_data.get("international_phone_number"),
+            "websiteUri": place_data.get("website"),
+            "photos": place_data.get("photos", []),
+            "editorialSummary": place_data.get("editorial_summary", {}).get("overview") if isinstance(place_data.get("editorial_summary"), dict) else None,
+            "budgetRange": place_data.get("price_level"),
+            "utc_offset": place_data.get("utc_offset") or place_data.get("utc_offset_minutes")
+        }
+        
+        # Upsert to avoid duplicates - use googlePlaceId to match existing index
+        result = places_collection.update_one(
+            {"googlePlaceId": place_id},
+            {"$set": doc},
+            upsert=True
+        )
+        
+        print(f"   💾 Saved place to DB: {doc['name']} (upserted: {result.upserted_id is not None})")
+        
+        return {
+            "success": True,
+            "place_id": place_id,
+            "name": doc["name"],
+            "upserted": result.upserted_id is not None
+        }
+        
+    except Exception as e:
+        print(f"   ❌ Error saving place to DB: {e}")
+        return {"success": False, "error": str(e)}
+
+        return {"success": False, "error": str(e)}
+
+def find_place_by_id_db(place_id: str) -> Optional[Dict]:
+    """
+    Find place in DB by ID (case insensitive).
+    Helper function to recover from case mismatch issues.
+    """
+    try:
+        if not place_id:
+            return None
+            
+        # Try exact match first (both field names)
+        place = places_collection.find_one({"googlePlaceId": place_id}, {"_id": 0})
+        if not place:
+            place = places_collection.find_one({"google_place_id": place_id}, {"_id": 0})
+            
+        # Try case-insensitive regex if not found
+        if not place:
+            import re
+            pattern = re.compile(f"^{re.escape(place_id)}$", re.IGNORECASE)
+            place = places_collection.find_one({"googlePlaceId": pattern}, {"_id": 0})
+            if not place:
+                place = places_collection.find_one({"google_place_id": pattern}, {"_id": 0})
+                
+        return place
+    except Exception as e:
+        print(f"Error searching place by ID in DB: {e}")
+        return None
+
 @tool
 def search_places(query: str, location_filter: Optional[str] = None, category_filter: Optional[str] = None, limit: int = 50) -> List[Dict]:
     """
@@ -631,16 +762,61 @@ def search_nearby_places(
             return _search_nearby_from_database(current_location, radius_km, category, limit)
         
         # Map categories to Google Places types (New API)
+        # Full list: https://developers.google.com/maps/documentation/places/web-service/place-types
         type_map = {
+            # Ẩm thực
             'restaurant': 'restaurant',
             'cafe': 'cafe',
+            'bar': 'bar',
+            'bakery': 'bakery',
+            'food': 'restaurant',
+            # Tham quan
             'attraction': 'tourist_attraction',
-            'shopping': 'shopping_mall',
-            'hospital': 'hospital',
-            'atm': 'atm',
-            'pharmacy': 'pharmacy',
+            'tourist_attraction': 'tourist_attraction',
             'museum': 'museum',
-            'park': 'park'
+            'art_gallery': 'art_gallery',
+            'temple': 'hindu_temple',
+            'church': 'church',
+            'market': 'shopping_mall',  # Google API doesn't have 'market', use shopping_mall
+            'park': 'park',
+            # Thiên nhiên
+            'beach': 'natural_feature',
+            'mountain': 'natural_feature',
+            'lake': 'natural_feature',
+            'natural_feature': 'natural_feature',
+            # Giải trí
+            'movie_theater': 'movie_theater',
+            'night_club': 'night_club',
+            'zoo': 'zoo',
+            'aquarium': 'aquarium',
+            'amusement_park': 'amusement_park',
+            'bowling_alley': 'bowling_alley',
+            'casino': 'casino',
+            # Mua sắm
+            'shopping': 'shopping_mall',
+            'shopping_mall': 'shopping_mall',
+            'supermarket': 'supermarket',
+            'store': 'store',
+            'book_store': 'book_store',
+            'jewelry_store': 'jewelry_store',
+            'clothing_store': 'clothing_store',
+            # Sức khỏe & Làm đẹp
+            'spa': 'spa',
+            'gym': 'gym',
+            'beauty_salon': 'beauty_salon',
+            'hair_care': 'hair_care',
+            'hospital': 'hospital',
+            'pharmacy': 'pharmacy',
+            # Lưu trú
+            'hotel': 'lodging',
+            'lodging': 'lodging',
+            # Dịch vụ
+            'atm': 'atm',
+            'bank': 'bank',
+            'gas_station': 'gas_station',
+            # Thể thao
+            'stadium': 'stadium',
+            'swimming_pool': 'swimming_pool'
         }
         
         place_type = type_map.get(category.lower() if category else None, None)
@@ -828,6 +1004,10 @@ def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
     Lấy thông tin chi tiết về một địa điểm (LIVE COMPANION).
     User hỏi: "Địa điểm này có gì?", "Chỗ này ăn gì ngon?"
     
+    Ưu tiên: 
+    1. Google Places API (nếu có place_id) - để lấy thông tin mới nhất
+    2. MongoDB - fallback
+    
     Args:
         place_id: Google Place ID hoặc MongoDB _id
         place_name: Tên địa điểm (nếu không có place_id)
@@ -836,6 +1016,87 @@ def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
         Dict: Thông tin chi tiết về địa điểm
     """
     try:
+        # Try Google Places API first if place_id is provided
+        if place_id:
+            api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+            
+            # Check if place_id looks like a Google Place ID (starts with ChIJ or similar)
+            if api_key and (place_id.startswith('ChIJ') or place_id.startswith('Ei') or place_id.startswith('Gd')):
+                print(f"   → Fetching from Google Places API: {place_id}")
+                try:
+                    # Google Places API (New) - Place Details
+                    url = f"https://places.googleapis.com/v1/places/{place_id}"
+                    
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'X-Goog-Api-Key': api_key,
+                        'X-Goog-FieldMask': (
+                            'id,displayName,formattedAddress,location,rating,userRatingCount,'
+                            'priceLevel,regularOpeningHours,internationalPhoneNumber,websiteUri,'
+                            'editorialSummary,reviews,types,photos'
+                        )
+                    }
+                    
+                    response = requests.get(url, headers=headers, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        print(f"   ✅ Got details from Google Places API")
+                        
+                        # Extract opening hours
+                        opening_hours = {}
+                        if data.get('regularOpeningHours'):
+                            hours_data = data['regularOpeningHours']
+                            opening_hours = {
+                                'open_now': hours_data.get('openNow', False),
+                                'weekday_text': hours_data.get('weekdayDescriptions', [])
+                            }
+                        
+                        # Extract reviews
+                        reviews = []
+                        if data.get('reviews'):
+                            for review in data['reviews'][:5]:  # Get top 5 reviews
+                                reviews.append({
+                                    'rating': review.get('rating', 0),
+                                    'text': review.get('text', {}).get('text', ''),
+                                    'author': review.get('authorAttribution', {}).get('displayName', 'Anonymous'),
+                                    'time': review.get('publishTime', '')
+                                })
+                        
+                        # Format response
+                        details = {
+                            'place_id': place_id,
+                            'google_place_id': place_id,
+                            'name': data.get('displayName', {}).get('text', 'Unknown'),
+                            'description': data.get('editorialSummary', {}).get('text', ''),
+                            'editorial_summary': data.get('editorialSummary', {}).get('text', ''),
+                            'address': data.get('formattedAddress', ''),
+                            'formatted_address': data.get('formattedAddress', ''),
+                            'type': data.get('types', [])[0] if data.get('types') else '',
+                            'types': data.get('types', []),
+                            'rating': data.get('rating', 0),
+                            'user_ratings_total': data.get('userRatingCount', 0),
+                            'price_level': data.get('priceLevel'),
+                            'opening_hours': opening_hours,
+                            'phone_number': data.get('internationalPhoneNumber', ''),
+                            'website': data.get('websiteUri', ''),
+                            'reviews': reviews,
+                            'location': {
+                                'lat': data.get('location', {}).get('latitude'),
+                                'lng': data.get('location', {}).get('longitude')
+                            },
+                            'source': 'google_places_api'
+                        }
+                        
+                        return details
+                    else:
+                        print(f"   ⚠️ Google Places API error: {response.status_code}, falling back to MongoDB")
+                
+                except Exception as e:
+                    print(f"   ⚠️ Error calling Google Places API: {e}, falling back to MongoDB")
+        
+        # Fallback to MongoDB
+        print(f"   → Fetching from MongoDB")
         query = {}
         
         if place_id:
@@ -844,10 +1105,16 @@ def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
             try:
                 query = {'$or': [
                     {'googlePlaceId': place_id},
+                    {'google_place_id': place_id},
+                    {'place_id': place_id},
                     {'_id': ObjectId(place_id)}
                 ]}
             except:
-                query = {'googlePlaceId': place_id}
+                query = {'$or': [
+                    {'googlePlaceId': place_id},
+                    {'google_place_id': place_id},
+                    {'place_id': place_id}
+                ]}
         elif place_name:
             query = {'name': {'$regex': place_name, '$options': 'i'}}
         else:
@@ -856,24 +1123,28 @@ def get_place_details(place_id: str = None, place_name: str = None) -> Dict:
         place = places_collection.find_one(query, {"_id": 0})
         
         if not place:
-            return {}
+            return {'error': 'Place not found'}
         
-        # Format detailed info
+        # Format detailed info from MongoDB
         details = {
+            'place_id': place.get('googlePlaceId') or place.get('google_place_id') or place.get('place_id', ''),
+            'google_place_id': place.get('googlePlaceId') or place.get('google_place_id') or place.get('place_id', ''),
             'name': place.get('name', 'Unknown'),
             'description': place.get('description', ''),
             'address': place.get('formatted_address') or place.get('address', ''),
+            'formatted_address': place.get('formatted_address') or place.get('address', ''),
             'type': place.get('type', ''),
             'rating': place.get('rating'),
             'user_ratings_total': place.get('user_ratings_total'),
             'price_level': place.get('priceLevel'),
             'budget_range': place.get('budgetRange', 'mid-range'),
             'opening_hours': place.get('openingHours', {}),
-            'phone': place.get('phone', ''),
+            'phone_number': place.get('phone', ''),
             'website': place.get('website', ''),
             'photos': place.get('photos', []),
             'emotional_tags': place.get('emotionalTags', {}),
             'visit_duration_minutes': place.get('visit_duration_minutes', 90),
+            'source': 'mongodb'
         }
         
         return details
@@ -1782,6 +2053,472 @@ def get_time_based_activity_suggestions(
             "activities": ["Nghỉ ngơi", "Ăn uống", "Tham quan"]
         }
 
+@tool
+def get_itinerary_details(itinerary_data: Dict) -> Dict:
+    """
+    Lấy thông tin chi tiết về itinerary của user.
+    
+    Args:
+        itinerary_data: Dictionary chứa thông tin itinerary từ frontend/backend
+        
+    Returns:
+        Dict: Thông tin chi tiết về lộ trình bao gồm:
+        - title: Tiêu đề lộ trình
+        - destination: Điểm đến
+        - duration_days: Số ngày
+        - route_data: Dữ liệu chi tiết từng ngày và địa điểm
+    """
+    try:
+        if not itinerary_data:
+            return {"error": "No itinerary data provided"}
+        
+        # Parse itinerary structure
+        result = {
+            "route_id": itinerary_data.get("route_id", ""),
+            "title": itinerary_data.get("title", ""),
+            "destination": itinerary_data.get("destination", ""),
+            "duration_days": itinerary_data.get("duration_days", 0),
+            "start_datetime": itinerary_data.get("start_datetime"),
+            "total_places": 0,
+            "days": []
+        }
+        
+        # Extract route data
+        route_data = itinerary_data.get("route_data_json", {})
+        
+        # Debug log
+        print(f"[get_itinerary_details] Parsing itinerary...")
+        print(f"   Has route_data_json: {bool(route_data)}")
+        print(f"   Has optimized_route: {bool(route_data.get('optimized_route'))}")
+        print(f"   Has days: {bool(route_data.get('days'))}")
+        
+        # Handle both "days" and "optimized_route" structures
+        days = route_data.get("days", []) or route_data.get("optimized_route", [])
+        print(f"   Total days found: {len(days)}")
+        
+        for day_idx, day in enumerate(days):
+            day_info = {
+                "day_number": day.get("day", day_idx + 1),
+                "date": day.get("date"),
+                "places": []
+            }
+            
+            activities = day.get("activities", [])
+            print(f"   Day {day_info['day_number']}: {len(activities)} activities")
+            
+            for act_idx, activity in enumerate(activities):
+                # Handle both structures:
+                # 1. Nested: activity.place.name (old structure with saved itineraries)
+                # 2. Direct: activity.name (new structure with optimized_route)
+                place = activity.get("place", {})
+                
+                # Debug first activity of first day
+                if day_idx == 0 and act_idx == 0:
+                    print(f"   First activity structure:")
+                    print(f"      Has 'place' key: {bool(place)}")
+                    print(f"      Has 'name' in activity: {bool(activity.get('name'))}")
+                    print(f"      Has 'name' in place: {bool(place.get('name') if place else False)}")
+                
+                if not place or not place.get("name"):
+                    # Try to get place data directly from activity (optimized_route structure)
+                    place = activity
+                
+                # Skip if no name found
+                if not place.get("name"):
+                    print(f"      ⚠️ Skipping activity without name")
+                    continue
+                
+                # Get address - prefer provided address, fallback to fetch from Google Places
+                address = place.get("address", "")
+                place_id = place.get("place_id", "") or place.get("google_place_id", "")
+                
+                if not address and place_id:
+                    # Try to get address from Google Places using place_id
+                    try:
+                        place_details = get_place_details.invoke({"place_id": place_id})
+                        if place_details and not place_details.get("error"):
+                            address = place_details.get("address", "")
+                            # Also update rating if not present
+                            if not place.get("rating"):
+                                place["rating"] = place_details.get("rating", 0)
+                            # Update description if not present
+                            if not place.get("description"):
+                                place["description"] = place_details.get("description", "")
+                    except Exception as e:
+                        print(f"      ⚠️ Failed to fetch place details for {place_id}: {e}")
+                
+                # Fallback to coordinates if no address found
+                if not address and place.get("location"):
+                    loc = place.get("location", {})
+                    if isinstance(loc, dict):
+                        lat = loc.get('lat')
+                        lng = loc.get('lng')
+                        if lat and lng:
+                            address = f"Lat: {lat}, Lng: {lng}"
+                
+                place_info = {
+                    "place_id": place.get("place_id", "") or place.get("google_place_id", ""),
+                    "name": place.get("name", ""),
+                    "type": place.get("type", ""),
+                    "address": address,
+                    "rating": place.get("rating", 0),
+                    "description": place.get("description", ""),
+                    "location": place.get("location", {}),
+                    "time": activity.get("time", activity.get("estimated_arrival", "")),
+                    "duration": activity.get("duration", activity.get("visit_duration_minutes", ""))
+                }
+                day_info["places"].append(place_info)
+                result["total_places"] += 1
+            
+            result["days"].append(day_info)
+        
+        print(f"   ✅ Parsed {result['total_places']} total places across {len(result['days'])} days")
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error in get_itinerary_details: {e}")
+        return {"error": str(e)}
+
+
+@tool
+def get_place_from_itinerary(itinerary_data: Dict, place_name: str = None, day_number: int = None) -> List[Dict]:
+    """
+    Lấy thông tin chi tiết về một hoặc nhiều địa điểm trong itinerary.
+    
+    Args:
+        itinerary_data: Dictionary chứa thông tin itinerary
+        place_name: Tên địa điểm cần tìm (tìm kiếm không phân biệt hoa thường)
+        day_number: Số ngày trong lộ trình (1, 2, 3...)
+        
+    Returns:
+        List[Dict]: Danh sách địa điểm matching với search criteria
+    """
+    try:
+        if not itinerary_data:
+            return []
+        
+        route_data = itinerary_data.get("route_data_json", {})
+        
+        # Handle both "days" and "optimized_route" structures
+        days = route_data.get("days", []) or route_data.get("optimized_route", [])
+        
+        matching_places = []
+        
+        for day in days:
+            # Filter by day if specified
+            if day_number and day.get("day") != day_number:
+                continue
+            
+            activities = day.get("activities", [])
+            for activity in activities:
+                # Handle both structures:
+                # 1. Nested: activity.place.name (old structure)
+                # 2. Direct: activity.name (optimized_route structure)
+                place = activity.get("place", {})
+                if not place or not place.get("name"):
+                    # Try to get place data directly from activity (optimized_route structure)
+                    place = activity
+                
+                # Filter by place name if specified
+                if place_name:
+                    place_name_lower = place_name.lower()
+                    current_place_name = place.get("name", "").lower()
+                    if place_name_lower not in current_place_name:
+                        continue
+                
+                # Build place info
+                # Note: optimized_route might not have address, so we construct it if needed
+                address = place.get("address", "")
+                if not address and place.get("location"):
+                    # Fallback: construct location string from coordinates if no address provided
+                    loc = place.get("location", {})
+                    if isinstance(loc, dict) and ("lat" in loc or "lng" in loc):
+                        address = f"Lat: {loc.get('lat', 'N/A')}, Lng: {loc.get('lng', 'N/A')}"
+                
+                # Extract emotional tags - handle both list and dict formats
+                emotional_tags = place.get("emotional_tags", [])
+                if isinstance(emotional_tags, dict):
+                    emotional_tags = list(emotional_tags.keys())
+                elif not isinstance(emotional_tags, list):
+                    emotional_tags = []
+                
+                place_info = {
+                    "day": day.get("day"),
+                    "date": day.get("date"),
+                    "place_id": place.get("place_id", "") or place.get("google_place_id", ""),
+                    "name": place.get("name", ""),
+                    "type": place.get("type", ""),
+                    "address": address,
+                    "rating": place.get("rating", 0),
+                    "description": place.get("description", ""),
+                    "location": place.get("location", {}),
+                    "opening_hours": place.get("opening_hours", {}),
+                    "time": activity.get("time", activity.get("estimated_arrival", "")),
+                    "duration": activity.get("duration", activity.get("visit_duration_minutes", "")),
+                    "emotional_tags": emotional_tags,
+                    "price_level": place.get("price_level", "")
+                }
+                matching_places.append(place_info)
+        
+        return matching_places
+        
+    except Exception as e:
+        print(f"Error in get_place_from_itinerary: {e}")
+        return []
+
+
+@tool
+def add_place_to_itinerary_backend(place_data: Dict, itinerary_data: Dict, day_number: int, time: str = "TBD", duration: str = "2 hours") -> Dict:
+    """
+    Thêm địa điểm mới vào itinerary. Hỗ trợ cả saved + draft itinerary.
+    Note: Frontend sẽ handle actual API call - function này chuẩn bị data.
+    
+    Args:
+        place_data: Dictionary chứa thông tin địa điểm (name, google_place_id, etc.)
+        itinerary_data: Dictionary chứa thông tin itinerary hiện tại
+        day_number: Ngày muốn thêm địa điểm (1, 2, 3...)
+        time: Thời gian dự kiến (VD: "09:00", "14:30")
+        duration: Thời gian dự kiến ở địa điểm (VD: "2 hours", "90 minutes")
+        
+    Returns:
+        Dict: Thông tin xác nhận thêm địa điểm (frontend sẽ xử lý actual save)
+    """
+    try:
+        if not place_data or not itinerary_data:
+            return {"success": False, "error": "Missing place or itinerary data"}
+        
+        # Validate day number
+        duration_days = itinerary_data.get("duration_days", 1)
+        if day_number > duration_days or day_number < 1:
+            return {
+                "success": False,
+                "error": f"Ngày {day_number} không hợp lệ. Lộ trình có {duration_days} ngày."
+            }
+        
+        # Prepare place data to add (Full schema matching backend service)
+        place_to_add = {
+            "google_place_id": place_data.get("google_place_id") or place_data.get("place_id"),
+            "name": place_data.get("name", ""),
+            "type": place_data.get("type", "tourist_attraction"),
+            "address": place_data.get("address", ""),
+            "rating": place_data.get("rating", 0),
+            "description": place_data.get("description", ""),
+            "location": place_data.get("location", {}),
+            # Enhanced fields
+            "opening_hours": place_data.get("openingHours") or place_data.get("opening_hours"),
+            "price_level": place_data.get("budgetRange") or place_data.get("price_level"),
+            "phone": place_data.get("contactNumber") or place_data.get("formatted_phone_number"),
+            "website": place_data.get("websiteUri") or place_data.get("website"),
+            "photos": place_data.get("photos", []),
+            "emotional_tags": place_data.get("emotional_tags", {}),
+            
+            "time": time,
+            "duration": duration
+        }
+        
+        return {
+            "success": True,
+            "message": f"✅ Thêm '{place_data.get('name')}' vào ngày {day_number} lúc {time}",
+            "place_to_add": place_to_add,
+            "day_number": day_number,
+            "route_id": itinerary_data.get("route_id"),
+            "instruction": "Frontend sẽ gọi API backend để lưu thay đổi này vào itinerary."
+        }
+        
+    except Exception as e:
+        print(f"Error in add_place_to_itinerary_backend: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@tool  
+def suggest_additional_places(itinerary_data: Dict, preferences: Dict) -> List[Dict]:
+    """
+    Gợi ý các địa điểm bổ sung phù hợp với itinerary hiện tại.
+    
+    Args:
+        itinerary_data: Dictionary chứa thông tin itinerary hiện tại
+        preferences: Dictionary chứa preferences của user:
+            - category: Loại địa điểm (restaurant, cafe, museum...)
+            - emotional_tags: Tags cảm xúc mong muốn
+            - day_number: Ngày muốn thêm địa điểm
+            - near_place: Tìm gần địa điểm nào trong itinerary
+            
+    Returns:
+        List[Dict]: Danh sách địa điểm gợi ý
+    """
+    try:
+        if not itinerary_data:
+            return []
+        
+        # Get destination from itinerary
+        destination = itinerary_data.get("destination", "")
+        
+        # Get existing places to avoid duplicates
+        route_data = itinerary_data.get("route_data_json", {})
+        # Handle both "days" and "optimized_route" structures
+        days = route_data.get("days", []) or route_data.get("optimized_route", [])
+        existing_place_ids = set()
+        
+        for day in days:
+            for activity in day.get("activities", []):
+                # Handle both structures
+                place = activity.get("place", {})
+                if not place or not place.get("place_id"):
+                    # Try to get place data directly from activity (optimized_route structure)
+                    place = activity
+                
+                place_id = place.get("place_id") or place.get("google_place_id")
+                if place_id:
+                    existing_place_ids.add(place_id)
+        
+        # Build search query
+        category = preferences.get("category", "")
+        emotional_tags = preferences.get("emotional_tags", [])
+        
+        # Search for places - ONLY from database (not Google Places API)
+        # This ensures all suggestions can be added to itinerary
+        query = f"{category} {destination}"
+        if emotional_tags:
+            query += f" {' '.join(emotional_tags)}"
+        
+        print(f"   🔍 Searching database for: '{query}'")
+        print(f"   📂 Category filter: {category if category else 'None'}")
+        print(f"   🎯 Location: {destination}")
+        
+        suggestions = search_places.invoke({
+            "query": query,
+            "location_filter": destination,
+            "category_filter": category if category else None,
+            "limit": 20  # Get more to filter duplicates
+        })
+        
+        print(f"   ✅ Found {len(suggestions)} places in database")
+        
+        # Filter out existing places
+        new_suggestions = []
+        for place in suggestions:
+            if place.get("place_id") not in existing_place_ids:
+                new_suggestions.append(place)
+        
+        # Calculate distance from itinerary center (average of all places) for better ranking
+        if new_suggestions and days:
+            # Calculate center point of itinerary
+            all_coords = []
+            for day in days:
+                for activity in day.get("activities", []):
+                    # Handle both structures
+                    place = activity.get("place", {})
+                    if not place or not place.get("location"):
+                        place = activity
+                    
+                    loc = place.get("location", {})
+                    if loc.get("coordinates"):
+                        all_coords.append(loc["coordinates"])
+            
+            if all_coords:
+                # Calculate average lat/lng
+                avg_lat = sum(coord[0] for coord in all_coords) / len(all_coords)
+                avg_lng = sum(coord[1] for coord in all_coords) / len(all_coords)
+                
+                # Calculate distance from center for each suggestion
+                for suggestion in new_suggestions:
+                    loc = suggestion.get("location", {})
+                    if loc.get("coordinates"):
+                        lat, lng = loc["coordinates"]
+                        distance = _calculate_distance_helper((avg_lat, avg_lng), (lat, lng))
+                        suggestion["distance_from_reference"] = round(distance, 2)
+                
+                # Sort by combination of rating and distance (prefer high rating + closer)
+                def score_suggestion(s):
+                    rating = s.get("rating", 0) or 0
+                    distance = s.get("distance_from_reference", 999)
+                    # Normalize: higher rating is better, lower distance is better
+                    # Score = rating * 2 - distance * 0.5 (adjust weights as needed)
+                    return rating * 2.0 - distance * 0.3
+                
+                new_suggestions.sort(key=score_suggestion, reverse=True)
+        
+        # If near_place specified, prioritize places near it
+        near_place = preferences.get("near_place")
+        if near_place and new_suggestions:
+            print(f"   📍 Looking for reference place: '{near_place}'")
+            # Find the reference place in itinerary
+            ref_found = False
+            for day in days:
+                if ref_found:
+                    break
+                for activity in day.get("activities", []):
+                    # Handle both structures
+                    place = activity.get("place", {})
+                    if not place or not place.get("name"):
+                        # Try to get place data directly from activity (optimized_route structure)
+                        place = activity
+                    
+                    place_name = place.get("name", "")
+                    place_id = place.get("place_id") or place.get("google_place_id") or ""
+                    
+                    if place_name == near_place or place_id == near_place or near_place.lower() in place_name.lower():
+                        ref_location = place.get("location", {})
+                        print(f"   ✅ Found reference place: {place_name}")
+                        print(f"   📍 Location data: {ref_location}")
+                        
+                        # Extract lat/lng - support both formats:
+                        # Format 1: {coordinates: [lng, lat]} (MongoDB GeoJSON)
+                        # Format 2: {lat: ..., lng: ...} (direct format)
+                        ref_lat = None
+                        ref_lng = None
+                        
+                        if ref_location.get("coordinates"):
+                            # MongoDB GeoJSON format: [lng, lat]
+                            coords = ref_location["coordinates"]
+                            if isinstance(coords, list) and len(coords) >= 2:
+                                ref_lng, ref_lat = coords[0], coords[1]
+                        elif ref_location.get("lat") and ref_location.get("lng"):
+                            # Direct lat/lng format
+                            ref_lat = ref_location["lat"]
+                            ref_lng = ref_location["lng"]
+                        
+                        if ref_lat and ref_lng:
+                            print(f"   📍 Reference coordinates: lat={ref_lat}, lng={ref_lng}")
+                            
+                            # Recalculate distances from this specific place
+                            for suggestion in new_suggestions:
+                                loc = suggestion.get("location", {})
+                                sugg_lat = None
+                                sugg_lng = None
+                                
+                                if loc.get("coordinates"):
+                                    coords = loc["coordinates"]
+                                    if isinstance(coords, list) and len(coords) >= 2:
+                                        sugg_lng, sugg_lat = coords[0], coords[1]
+                                elif loc.get("lat") and loc.get("lng"):
+                                    sugg_lat = loc["lat"]
+                                    sugg_lng = loc["lng"]
+                                
+                                if sugg_lat and sugg_lng:
+                                    distance = _calculate_distance_helper((ref_lat, ref_lng), (sugg_lat, sugg_lng))
+                                    suggestion["distance_from_reference"] = round(distance, 2)
+                            
+                            # Sort by distance only when near_place is specified
+                            new_suggestions.sort(key=lambda x: x.get("distance_from_reference", float('inf')))
+                            print(f"   ✅ Sorted {len(new_suggestions)} suggestions by distance from {place_name}")
+                        else:
+                            print(f"   ⚠️ Could not extract coordinates from location: {ref_location}")
+                        
+                        ref_found = True
+                        break
+            
+            if not ref_found:
+                print(f"   ⚠️ Reference place '{near_place}' not found in itinerary")
+        
+        return new_suggestions[:10]  # Return top 10 suggestions
+        
+    except Exception as e:
+        print(f"Error in suggest_additional_places: {e}")
+        return []
+
+
 # Export all tools for LangGraph
 TOOLS = [
     search_places,
@@ -1800,6 +2537,11 @@ TOOLS = [
     get_weather_alerts_and_suggestions,
     get_smart_directions,
     get_time_based_activity_suggestions,
+    # NEW: Itinerary Integration Tools
+    get_itinerary_details,
+    get_place_from_itinerary,
+    suggest_additional_places,
+    add_place_to_itinerary_backend,
 ]
 
 if __name__ == "__main__":
