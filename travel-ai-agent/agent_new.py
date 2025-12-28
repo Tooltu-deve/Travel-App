@@ -2611,7 +2611,7 @@ Trả lời bằng tiếng Việt, thông tin THỰC TẾ và CỤ THỂ."""
         
         # NEW: Handle "gợi ý [category] gần địa điểm số X" pattern
         # This must be BEFORE the general suggestion handler
-        near_place_pattern = r'gợi ý\s+(?:thêm\s+)?(quán ăn|nhà hàng|quán cà phê|cà phê|café|cafe|bảo tàng|chùa|đền|chợ|công viên|bar|pub)\s+gần\s+địa điểm\s+(?:số\s+)?(\d+|một|hai|ba|bốn|năm)'
+        near_place_pattern = r'gợi ý\s+(?:thêm\s+)?(quán ăn|nhà hàng|tiệm ăn|quán cà phê|cà phê|café|cafe|coffee|bảo tàng|triển lãm|gallery|phòng tranh|chùa|đền|miếu|nhà thờ|thánh đường|chợ|chợ đêm|công viên|vườn hoa|vườn bách thảo|bãi biển|biển|núi|thác|thác nước|hồ|sông|hang động|rạp chiếu phim|rạp phim|cinema|karaoke|hộp đêm|club|vườn thú|sở thú|thủy cung|công viên nước|công viên giải trí|khu vui chơi|trung tâm thương mại|siêu thị|cửa hàng|shop|nhà sách|tiệm vàng|spa|massage|phòng gym|gym|fitness|salon|tiệm tóc|cắt tóc|khách sạn|hotel|homestay|hostel|resort|sân golf|sân bóng|bể bơi|hồ bơi|bowling|bar|pub|bia|tiệm bánh|bánh|quán nhậu)\s+gần\s+địa điểm\s+(?:số\s+)?(\d+|một|hai|ba|bốn|năm)'
         near_place_match = re.search(near_place_pattern, user_text.lower())
         
         if near_place_match:
@@ -2620,21 +2620,88 @@ Trả lời bằng tiếng Việt, thông tin THỰC TẾ và CỤ THỂ."""
             # Extract category
             category_text = near_place_match.group(1)
             category_map = {
+                # Ẩm thực
                 "quán cà phê": "cafe",
                 "cà phê": "cafe",
                 "café": "cafe",
                 "cafe": "cafe",
+                "coffee": "cafe",
                 "nhà hàng": "restaurant",
                 "quán ăn": "restaurant",
+                "tiệm ăn": "restaurant",
+                "quán nhậu": "bar",
+                "bar": "bar",
+                "pub": "bar",
+                "bia": "bar",
+                "tiệm bánh": "bakery",
+                "bánh": "bakery",
+                # Tham quan
                 "bảo tàng": "museum",
+                "triển lãm": "museum",
+                "gallery": "art_gallery",
+                "phòng tranh": "art_gallery",
                 "chùa": "temple",
                 "đền": "temple",
+                "miếu": "temple",
+                "nhà thờ": "church",
+                "thánh đường": "church",
                 "chợ": "market",
+                "chợ đêm": "market",
                 "công viên": "park",
-                "bar": "bar",
-                "pub": "bar"
+                "vườn hoa": "park",
+                "vườn bách thảo": "park",
+                # Thiên nhiên
+                "bãi biển": "beach",
+                "biển": "beach",
+                "núi": "mountain",
+                "thác": "natural_feature",
+                "thác nước": "natural_feature",
+                "hồ": "lake",
+                "sông": "natural_feature",
+                "hang động": "natural_feature",
+                # Giải trí
+                "rạp chiếu phim": "movie_theater",
+                "rạp phim": "movie_theater",
+                "cinema": "movie_theater",
+                "karaoke": "night_club",
+                "hộp đêm": "night_club",
+                "club": "night_club",
+                "vườn thú": "zoo",
+                "sở thú": "zoo",
+                "thủy cung": "aquarium",
+                "công viên nước": "amusement_park",
+                "công viên giải trí": "amusement_park",
+                "khu vui chơi": "amusement_park",
+                # Mua sắm
+                "trung tâm thương mại": "shopping_mall",
+                "siêu thị": "supermarket",
+                "cửa hàng": "store",
+                "shop": "store",
+                "nhà sách": "book_store",
+                "tiệm vàng": "jewelry_store",
+                # Sức khỏe & Làm đẹp
+                "spa": "spa",
+                "massage": "spa",
+                "phòng gym": "gym",
+                "gym": "gym",
+                "fitness": "gym",
+                "salon": "beauty_salon",
+                "tiệm tóc": "hair_care",
+                "cắt tóc": "hair_care",
+                # Lưu trú
+                "khách sạn": "hotel",
+                "hotel": "hotel",
+                "homestay": "lodging",
+                "hostel": "lodging",
+                "resort": "lodging",
+                # Thể thao
+                "sân golf": "stadium",
+                "sân bóng": "stadium",
+                "bể bơi": "swimming_pool",
+                "hồ bơi": "swimming_pool",
+                "bowling": "bowling_alley"
             }
-            category = category_map.get(category_text, "restaurant")
+            category = category_map.get(category_text, "tourist_attraction")
             
             # Extract place index
             vn_numbers = {'một': 1, 'hai': 2, 'ba': 3, 'bốn': 4, 'năm': 5}
@@ -3093,20 +3160,79 @@ Trả lời bằng tiếng Việt, thông tin THỰC TẾ và CỤ THỂ."""
                 # Extract preferences from user text
                 preferences = {}
                 
-                # Detect category
+                # Detect category with expanded list
                 category_map = {
+                    # Ẩm thực
                     "quán cà phê": "cafe",
                     "cà phê": "cafe",
                     "café": "cafe",
+                    "coffee": "cafe",
                     "nhà hàng": "restaurant",
                     "quán ăn": "restaurant",
+                    "tiệm ăn": "restaurant",
+                    "quán nhậu": "bar",
+                    "bar": "bar",
+                    "pub": "bar",
+                    "bia": "bar",
+                    "tiệm bánh": "bakery",
+                    "bánh": "bakery",
+                    # Tham quan
                     "bảo tàng": "museum",
+                    "triển lãm": "museum",
+                    "gallery": "art_gallery",
+                    "phòng tranh": "art_gallery",
                     "chùa": "temple",
                     "đền": "temple",
+                    "miếu": "temple",
+                    "nhà thờ": "church",
+                    "thánh đường": "church",
                     "chợ": "market",
+                    "chợ đêm": "market",
                     "công viên": "park",
-                    "bar": "bar",
-                    "pub": "bar"
+                    "vườn hoa": "park",
+                    "vườn bách thảo": "park",
+                    # Thiên nhiên
+                    "bãi biển": "beach",
+                    "biển": "beach",
+                    "núi": "mountain",
+                    "thác": "natural_feature",
+                    "thác nước": "natural_feature",
+                    "hồ": "lake",
+                    "sông": "natural_feature",
+                    "hang động": "natural_feature",
+                    # Giải trí
+                    "rạp chiếu phim": "movie_theater",
+                    "rạp phim": "movie_theater",
+                    "cinema": "movie_theater",
+                    "karaoke": "night_club",
+                    "hộp đêm": "night_club",
+                    "club": "night_club",
+                    "vườn thú": "zoo",
+                    "sở thú": "zoo",
+                    "thủy cung": "aquarium",
+                    "công viên nước": "amusement_park",
+                    "công viên giải trí": "amusement_park",
+                    "khu vui chơi": "amusement_park",
+                    # Mua sắm
+                    "trung tâm thương mại": "shopping_mall",
+                    "siêu thị": "supermarket",
+                    "cửa hàng": "store",
+                    "shop": "store",
+                    "nhà sách": "book_store",
+                    # Sức khỏe & Làm đẹp
+                    "spa": "spa",
+                    "massage": "spa",
+                    "phòng gym": "gym",
+                    "gym": "gym",
+                    "fitness": "gym",
+                    "salon": "beauty_salon",
+                    "tiệm tóc": "hair_care",
+                    # Lưu trú
+                    "khách sạn": "hotel",
+                    "hotel": "hotel",
+                    "homestay": "lodging",
+                    "hostel": "lodging",
+                    "resort": "lodging"
                 }
                 
                 for key, value in category_map.items():
@@ -3184,13 +3310,49 @@ Trả lời bằng tiếng Việt, thông tin THỰC TẾ và CỤ THỂ."""
                     
                     category_name = preferences.get("category", "địa điểm")
                     category_display = {
+                        # Ẩm thực
                         "cafe": "quán cà phê",
-                        "restaurant": "nhà hàng/quán ăn",
+                        "restaurant": "nhà hàng/quán ăn/ăn uống",
+                        "bar": "bar/pub",
+                        "bakery": "tiệm bánh",
+                        # Tham quan
                         "museum": "bảo tàng",
+                        "art_gallery": "phòng tranh",
                         "temple": "chùa/đền",
+                        "church": "nhà thờ",
                         "market": "chợ",
                         "park": "công viên",
-                        "bar": "bar/pub"
+                        # Thiên nhiên
+                        "beach": "bãi biển",
+                        "mountain": "núi",
+                        "lake": "hồ",
+                        "natural_feature": "thắng cảnh",
+                        # Giải trí
+                        "movie_theater": "rạp chiếu phim",
+                        "night_club": "hộp đêm/karaoke",
+                        "zoo": "vườn thú",
+                        "aquarium": "thủy cung",
+                        "amusement_park": "công viên giải trí",
+                        # Mua sắm
+                        "shopping_mall": "trung tâm thương mại",
+                        "supermarket": "siêu thị",
+                        "store": "cửa hàng",
+                        "book_store": "nhà sách",
+                        "jewelry_store": "tiệm vàng",
+                        # Sức khỏe
+                        "spa": "spa/massage",
+                        "gym": "phòng gym",
+                        "beauty_salon": "salon làm đẹp",
+                        "hair_care": "tiệm tóc",
+                        # Lưu trú
+                        "hotel": "khách sạn",
+                        "lodging": "nơi lưu trú",
+                        # Khác
+                        "tourist_attraction": "điểm tham quan",
+                        "stadium": "sân vận động",
+                        "swimming_pool": "hồ bơi",
+                        "bowling_alley": "sân bowling",
+                        "bookstore": "nhà sách"
                     }.get(category_name, "địa điểm")
                     
                     response = f"💡 **{len(limited_suggestions)} {category_display} gợi ý cho bạn:**\n\n"

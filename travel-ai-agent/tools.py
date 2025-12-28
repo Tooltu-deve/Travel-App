@@ -762,16 +762,61 @@ def search_nearby_places(
             return _search_nearby_from_database(current_location, radius_km, category, limit)
         
         # Map categories to Google Places types (New API)
+        # Full list: https://developers.google.com/maps/documentation/places/web-service/place-types
         type_map = {
+            # Ẩm thực
             'restaurant': 'restaurant',
             'cafe': 'cafe',
+            'bar': 'bar',
+            'bakery': 'bakery',
+            'food': 'restaurant',
+            # Tham quan
             'attraction': 'tourist_attraction',
-            'shopping': 'shopping_mall',
-            'hospital': 'hospital',
-            'atm': 'atm',
-            'pharmacy': 'pharmacy',
+            'tourist_attraction': 'tourist_attraction',
             'museum': 'museum',
-            'park': 'park'
+            'art_gallery': 'art_gallery',
+            'temple': 'hindu_temple',
+            'church': 'church',
+            'market': 'shopping_mall',  # Google API doesn't have 'market', use shopping_mall
+            'park': 'park',
+            # Thiên nhiên
+            'beach': 'natural_feature',
+            'mountain': 'natural_feature',
+            'lake': 'natural_feature',
+            'natural_feature': 'natural_feature',
+            # Giải trí
+            'movie_theater': 'movie_theater',
+            'night_club': 'night_club',
+            'zoo': 'zoo',
+            'aquarium': 'aquarium',
+            'amusement_park': 'amusement_park',
+            'bowling_alley': 'bowling_alley',
+            'casino': 'casino',
+            # Mua sắm
+            'shopping': 'shopping_mall',
+            'shopping_mall': 'shopping_mall',
+            'supermarket': 'supermarket',
+            'store': 'store',
+            'book_store': 'book_store',
+            'jewelry_store': 'jewelry_store',
+            'clothing_store': 'clothing_store',
+            # Sức khỏe & Làm đẹp
+            'spa': 'spa',
+            'gym': 'gym',
+            'beauty_salon': 'beauty_salon',
+            'hair_care': 'hair_care',
+            'hospital': 'hospital',
+            'pharmacy': 'pharmacy',
+            # Lưu trú
+            'hotel': 'lodging',
+            'lodging': 'lodging',
+            # Dịch vụ
+            'atm': 'atm',
+            'bank': 'bank',
+            'gas_station': 'gas_station',
+            # Thể thao
+            'stadium': 'stadium',
+            'swimming_pool': 'swimming_pool'
         }
         
         place_type = type_map.get(category.lower() if category else None, None)
