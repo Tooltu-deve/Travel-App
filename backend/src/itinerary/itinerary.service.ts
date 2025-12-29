@@ -1310,21 +1310,17 @@ export class ItineraryService {
       });
     }
 
-    // Chuyển đổi openingHours
-    // Lưu ý: Schema hiện tại chỉ lưu openNow và weekdayDescriptions
-    // Nếu cần periods, cần cập nhật schema hoặc lấy từ raw data
+    // Chuyển đổi openingHours - ưu tiên periods để check giờ mở cửa chính xác
     let openingHours: any = {};
     if (poi.openingHours) {
+      const poiAny = poi as any;
       openingHours = {
         openNow: poi.openingHours.openNow,
-        weekdayDescriptions: poi.openingHours.weekdayDescriptions,
+        // Ưu tiên periods TRƯỚC (dữ liệu có cấu trúc, dễ parse)
+        periods: poiAny.openingHours?.periods || [],
+        // weekdayDescriptions làm fallback (dạng text, khó parse hơn)
+        weekdayDescriptions: poi.openingHours.weekdayDescriptions || [],
       };
-
-      // Nếu có periods trong raw data (từ MongoDB document), thêm vào
-      const poiAny = poi as any;
-      if (poiAny.openingHours?.periods) {
-        openingHours.periods = poiAny.openingHours.periods;
-      }
     }
 
     return {

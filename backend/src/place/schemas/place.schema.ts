@@ -20,6 +20,28 @@ class Point {
     coordinates: number[]; // [longitude, latitude]
 }
 
+// Định nghĩa cấu trúc cho thời gian mở/đóng cửa
+@Schema({ _id: false })
+class OpeningTime {
+    @Prop({ type: Number })
+    day?: number; // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+
+    @Prop({ type: Number })
+    hour?: number; // 0-23
+
+    @Prop({ type: Number })
+    minute?: number; // 0-59
+}
+
+@Schema({ _id: false })
+class OpeningPeriod {
+    @Prop({ type: OpeningTime })
+    open?: OpeningTime;
+
+    @Prop({ type: OpeningTime })
+    close?: OpeningTime;
+}
+
 // Định nghĩa cấu trúc cho Giờ mở cửa
 @Schema({ _id: false })
 class OpeningHours {
@@ -28,6 +50,9 @@ class OpeningHours {
 
     @Prop([String])
     weekdayDescriptions?: string[];
+
+    @Prop({ type: [OpeningPeriod], default: [] })
+    periods?: OpeningPeriod[]; // Danh sách các khoảng thời gian mở cửa
 }
 
 @Schema({ _id: false })
