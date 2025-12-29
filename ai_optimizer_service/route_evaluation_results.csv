@@ -1,0 +1,4 @@
+﻿Algorithm,Overall Score,Feasibility,Optimality (TSP),Personalization (ECS),Clustering (K-Means),POIs/Day,Travel Time %,Distance (km),ECS-Emotion,ECS-Context,ECS-Social,Silhouette,Davies-Bouldin
+SmartGo Optimized,89.7,90.0,100.0,93.3,70.9,3.0,9.5%,31.5,83.3,100.0,100.0,0.374,0.347
+Random Baseline,41.5,70.0,0.0,80.0,0.0,2.0,35.0%,52.5,50.0,100.0,100.0,0.000,0.000
+Greedy Nearest-Neighbor,80.7,100.0,76.2,73.3,73.4,3.0,7.7%,12.5,33.3,100.0,100.0,0.357,0.224
