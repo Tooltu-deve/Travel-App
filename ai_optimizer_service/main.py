@@ -17,8 +17,8 @@ from sklearn.cluster import KMeans
 load_dotenv()
 app = FastAPI(title="AI Optimizer Service")
 
-# Debug logging config (set to False to reduce logs)
-DEBUG_LOGGING = False
+# Debug logging config (set to True to see detailed opening hours checks)
+DEBUG_LOGGING = True
 
 GOOGLE_DISTANCE_MATRIX_API_KEY = os.getenv("GOOGLE_DISTANCE_MATRIX_API_KEY", "")
 GOOGLE_GEOCODING_API_KEY = os.getenv("GOOGLE_GEOCODING_API_KEY", "") or os.getenv("GOOGLE_DISTANCE_MATRIX_API_KEY", "")
@@ -306,19 +306,156 @@ def parse_time_string(time_str: str) -> Optional[int]:
     return None
 
 
-def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime) -> bool:
+def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime, strict_mode: bool = False) -> bool:
+    """
+    Kiểm tra POI có mở cửa tại thời điểm arrival_dt không.
+    
+    Args:
+        poi: Thông tin POI
+        arrival_dt: Thời gian dự kiến đến
+        strict_mode: Nếu True, POI không có opening_hours sẽ được kiểm tra theo giờ mặc định (6h-22h)
+                    Nếu False (default), POI không có opening_hours sẽ được cho phép
+    
+    Fallback order (ƯU TIÊN periods TRƯỚC vì có cấu trúc rõ ràng):
+        1. opening_hours.periods (từ Google Places API - dữ liệu có cấu trúc)
+        2. opening_hours.weekdayDescriptions (dạng text, khó parse hơn)
+        3. regularOpeningHours / openingHours 
+        4. weekdayDescriptions trực tiếp từ POI (fallback cuối)
+        5. strict_mode check (6h-22h) nếu không có data
+    
+    QUAN TRỌNG: Nếu có opening_hours data nhưng giờ không khớp → return False (đóng cửa)
+    """
     poi_name = poi.get('name', 'Unknown POI')
+    
+    # === TÌM OPENING DATA ===
+    # Ưu tiên 1: opening_hours object
     opening_data = poi.get('opening_hours')
     if not opening_data or not isinstance(opening_data, dict):
         opening_data = poi.get('regularOpeningHours') or poi.get('openingHours')
+    
+    # Ưu tiên 2: Fallback sang weekdayDescriptions trực tiếp từ POI nếu không có opening_hours
     if not opening_data or not isinstance(opening_data, dict):
-        # Không có dữ liệu giờ mở cửa → mặc định cho phép
-        return True
+        # Thử lấy weekdayDescriptions trực tiếp từ POI
+        weekday_descriptions_fallback = poi.get('weekdayDescriptions')
+        if weekday_descriptions_fallback and isinstance(weekday_descriptions_fallback, list):
+            if DEBUG_LOGGING:
+                print(f"    ℹ️  {poi_name}: Dùng weekdayDescriptions fallback từ POI")
+            # Tạo opening_data giả với weekdayDescriptions
+            opening_data = {'weekdayDescriptions': weekday_descriptions_fallback}
+    
+    # Không có bất kỳ dữ liệu giờ mở cửa nào
+    if not opening_data or not isinstance(opening_data, dict):
+        if strict_mode:
+            # Strict mode: Giả định POI mở cửa từ 6h-22h (giờ hợp lý cho du lịch)
+            arrival_hour = arrival_dt.hour
+            if arrival_hour < 6 or arrival_hour >= 22:
+                if DEBUG_LOGGING:
+                    print(f"    ❌ {poi_name}: Không có opening_hours, giờ {arrival_hour}h ngoài khung 6h-22h → Loại")
+                return False
+            if DEBUG_LOGGING:
+                print(f"    ✅ {poi_name}: Không có opening_hours, giờ {arrival_hour}h trong khung 6h-22h → Cho phép")
+            return True
+        else:
+            # Non-strict mode: Mặc định cho phép
+            return True
 
     arrival_minutes = minutes_since_midnight(arrival_dt)
-    arrival_day = arrival_dt.weekday()
+    arrival_day = arrival_dt.weekday()  # Python: Monday=0, Sunday=6
+    
+    # DEBUG: Log dữ liệu opening_hours nhận được
+    if DEBUG_LOGGING:
+        periods_data = opening_data.get('periods') if opening_data else None
+        weekday_data = opening_data.get('weekdayDescriptions') if opening_data else None
+        print(f"    🔍 {poi_name}: arrival={arrival_dt.strftime('%A %H:%M')} (day={arrival_day})")
+        print(f"       periods={len(periods_data) if periods_data else 0} entries, weekdayDescriptions={len(weekday_data) if weekday_data else 0} entries")
+        if periods_data and len(periods_data) > 0:
+            print(f"       First period: {periods_data[0]}")
+    
+    # Flag để theo dõi xem đã tìm thấy data hợp lệ chưa
+    has_valid_opening_data = False
 
-    # ✅ BƯỚC 1: Ưu tiên kiểm tra weekdayDescriptions trước
+    # ✅ BƯỚC 1: ƯU TIÊN kiểm tra periods TRƯỚC (dữ liệu có cấu trúc, dễ xử lý)
+    periods = opening_data.get('periods') or opening_data.get('regularPeriods')
+    if isinstance(periods, list) and periods:
+        for period in periods:
+            if not isinstance(period, dict):
+                continue
+            open_info = period.get('open') or {}
+            close_info = period.get('close') or {}
+            
+            # Google API dùng: 0=Sunday, 1=Monday, ..., 6=Saturday
+            # Python weekday(): Monday=0, ..., Sunday=6
+            # Cần convert Google format sang Python format
+            google_open_day = open_info.get('day')
+            google_close_day = close_info.get('day')
+            
+            # Convert Google day (0=Sun, 1=Mon) sang Python day (0=Mon, 6=Sun)
+            if google_open_day is not None:
+                open_day = (google_open_day - 1) % 7 if google_open_day > 0 else 6
+            else:
+                open_day = None
+                
+            if google_close_day is not None:
+                close_day = (google_close_day - 1) % 7 if google_close_day > 0 else 6
+            else:
+                close_day = None
+            
+            open_hour = open_info.get('hour')
+            open_minute = open_info.get('minute', 0)
+            close_hour = close_info.get('hour')
+            close_minute = close_info.get('minute', 0)
+
+            if open_day is None and close_day is None:
+                continue
+            
+            # Đánh dấu có data hợp lệ
+            has_valid_opening_data = True
+
+            open_minutes = (open_hour or 0) * 60 + open_minute
+            if close_hour is not None:
+                close_minutes = close_hour * 60 + close_minute
+            else:
+                close_minutes = 24 * 60
+
+            if close_day is None:
+                close_day = open_day
+
+            if open_day is None:
+                open_day = close_day if close_day is not None else arrival_day
+
+            if open_day is None:
+                continue
+
+            if close_day == open_day:
+                # Cùng ngày
+                if arrival_day == open_day and open_minutes <= arrival_minutes < close_minutes:
+                    if DEBUG_LOGGING:
+                        print(f"    ✅ {poi_name}: Mở cửa (periods): {open_hour}:{open_minute:02d} - {close_hour}:{close_minute:02d}, arrival={arrival_dt.strftime('%H:%M')}")
+                    return True
+            else:
+                # Thời gian vượt qua nửa đêm
+                if arrival_day == open_day and arrival_minutes >= open_minutes:
+                    if DEBUG_LOGGING:
+                        print(f"    ✅ {poi_name}: Mở cửa (qua đêm - open day): từ {open_hour}:{open_minute:02d}")
+                    return True
+                if arrival_day == close_day and arrival_minutes < close_minutes:
+                    if DEBUG_LOGGING:
+                        print(f"    ✅ {poi_name}: Mở cửa (qua đêm - close day): đến {close_hour}:{close_minute:02d}")
+                    return True
+                span = (close_day - open_day) % 7
+                diff = (arrival_day - open_day) % 7
+                if span > 1 and diff < span:
+                    if DEBUG_LOGGING:
+                        print(f"    ✅ {poi_name}: Mở cửa (nhiều ngày liên tiếp)")
+                    return True
+        
+        # Đã check hết periods nhưng không match → ĐÓNG CỬA
+        if has_valid_opening_data:
+            if DEBUG_LOGGING:
+                print(f"    ❌ {poi_name}: Có periods nhưng không match, arrival={arrival_dt.strftime('%A %H:%M')} (day={arrival_day}) → Đóng cửa")
+            return False
+
+    # ✅ BƯỚC 2: FALLBACK sang weekdayDescriptions nếu không có periods hoặc periods rỗng
     weekday_descriptions = opening_data.get('weekdayDescriptions') or opening_data.get('weekdayDescriptionsText')
     if isinstance(weekday_descriptions, list) and weekday_descriptions:
         # Map tiếng Anh và tiếng Việt
@@ -346,26 +483,29 @@ def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime) -> bool:
             if day_part not in [arrival_day_name_en, arrival_day_name_vi]:
                 continue
             
+            # Đã tìm thấy mô tả cho ngày này
+            has_valid_opening_data = True
+            
             # Format 1: "Closed" → đóng cửa
             if not hours_part or hours_part.lower() == 'closed':
+                if DEBUG_LOGGING:
+                    print(f"    ❌ {poi_name}: {day_part} = Closed → Loại")
                 return False
             
             # Format 2: "Open 24 hours" → mở cửa cả ngày
             if 'open 24 hours' in hours_part.lower() or '24 hours' in hours_part.lower():
+                if DEBUG_LOGGING:
+                    print(f"    ✅ {poi_name}: {day_part} = Open 24 hours → Cho phép")
                 return True
             
-            # Format 3: "8:00 AM – 5:00 PM" hoặc nhiều khoảng thời gian "8:00 AM – 12:00 PM, 2:00 PM – 5:00 PM"
-            # Thay thế các dấu gạch ngang khác nhau
+            # Format 3: "8:00 AM – 5:00 PM" hoặc nhiều khoảng thời gian
             normalized_hours = hours_part.replace('–', '-').replace('—', '-').replace('−', '-')
-            
-            # Split theo dấu phẩy để xử lý nhiều khoảng thời gian
             intervals = [segment.strip() for segment in normalized_hours.split(',') if segment.strip()]
             
             for interval in intervals:
                 if '-' not in interval:
                     continue
                 
-                # Split "8:00 AM - 5:00 PM" thành ["8:00 AM", "5:00 PM"]
                 time_parts = interval.split('-', 1)
                 if len(time_parts) != 2:
                     continue
@@ -377,79 +517,139 @@ def is_poi_open_at_datetime(poi: Dict[str, Any], arrival_dt: datetime) -> bool:
                 end_minutes = parse_time_string(end_str)
                 
                 if start_minutes is None or end_minutes is None:
-                    print(f"    ⚠️  Không parse được: '{interval}'")
+                    if DEBUG_LOGGING:
+                        print(f"    ⚠️  {poi_name}: Không parse được: '{interval}'")
                     continue
                 
                 # Kiểm tra xem arrival_minutes có nằm trong khoảng [start, end) không
                 if end_minutes <= start_minutes:
                     # Qua nửa đêm (ví dụ: 10:00 PM - 2:00 AM)
                     if arrival_minutes >= start_minutes or arrival_minutes < end_minutes:
-                        print(f"    ✅ Mở cửa (qua đêm): {start_str} - {end_str}")
+                        if DEBUG_LOGGING:
+                            print(f"    ✅ {poi_name}: Mở cửa (qua đêm): {start_str} - {end_str}, arrival={arrival_minutes}min")
                         return True
                 else:
                     # Trong ngày (ví dụ: 8:00 AM - 5:00 PM)
                     if start_minutes <= arrival_minutes < end_minutes:
-                        print(f"    ✅ Mở cửa: {start_str} - {end_str}")
+                        if DEBUG_LOGGING:
+                            print(f"    ✅ {poi_name}: Mở cửa: {start_str} - {end_str}, arrival={arrival_minutes}min")
                         return True
             
-            # Đã tìm thấy mô tả ngày nhưng không match giờ → đóng cửa
+            # Đã tìm thấy mô tả ngày nhưng không match giờ → ĐÓNG CỬA
+            if DEBUG_LOGGING:
+                print(f"    ❌ {poi_name}: {day_part} mở {hours_part}, arrival={arrival_dt.strftime('%H:%M')} ({arrival_minutes}min) → Ngoài giờ mở cửa")
             return False
         
-        # Không tìm thấy mô tả cho ngày này → không xác định → cho phép
-    # ✅ BƯỚC 2: Fallback sang periods nếu không có weekdayDescriptions
-    periods = opening_data.get('periods')or opening_data.get('regularPeriods')
+        # Không tìm thấy ngày trong weekdayDescriptions → đánh dấu không có data
+        # (có thể POI đóng cửa ngày đó hoặc data không đầy đủ)
+        if has_valid_opening_data:
+            if DEBUG_LOGGING:
+                print(f"    ❌ {poi_name}: weekdayDescriptions không có thông tin cho {arrival_day_name_en} → Đóng cửa")
+            return False
+
+    # ❗ CÓ opening_hours object nhưng không có periods/weekdayDescriptions hợp lệ
+    # Fallback: kiểm tra theo giờ hợp lý (6h-22h)
+    arrival_hour = arrival_dt.hour
+    if arrival_hour < 6 or arrival_hour >= 22:
+        if DEBUG_LOGGING:
+            print(f"    ❌ {poi_name}: opening_hours không parse được, giờ {arrival_hour}h ngoài khung 6h-22h → Loại")
+        return False
+    
+    if DEBUG_LOGGING:
+        print(f"    ✅ {poi_name}: opening_hours không parse được, giờ {arrival_hour}h trong khung 6h-22h → Cho phép")
+    return True
+
+
+def get_earliest_opening_time(poi: Dict[str, Any], after_time: datetime) -> Optional[datetime]:
+    """
+    Tìm thời điểm mở cửa sớm nhất của POI sau after_time.
+    
+    Returns:
+        datetime: Thời điểm mở cửa sớm nhất (cùng ngày hoặc ngày sau)
+        None: Không tìm thấy opening hours hoặc không parse được
+    """
+    opening_data = poi.get('opening_hours') or poi.get('regularOpeningHours') or poi.get('openingHours')
+    if not opening_data or not isinstance(opening_data, dict):
+        return None
+    
+    # Ưu tiên periods
+    periods = opening_data.get('periods') or opening_data.get('regularPeriods')
     if isinstance(periods, list) and periods:
+        earliest_opens = []
+        
         for period in periods:
             if not isinstance(period, dict):
                 continue
             open_info = period.get('open') or {}
-            close_info = period.get('close') or {}
-            open_day = to_day_index(open_info.get('day'))
-            close_day = to_day_index(close_info.get('day'))
+            google_open_day = open_info.get('day')
             open_hour = open_info.get('hour')
             open_minute = open_info.get('minute', 0)
-            close_hour = close_info.get('hour')
-            close_minute = close_info.get('minute', 0)
-
-            if open_day is None and close_day is None:
+            
+            if google_open_day is None or open_hour is None:
                 continue
-
-            open_minutes = (open_hour or 0) * 60 + open_minute
-            if close_hour is not None:
-                close_minutes = close_hour * 60 + close_minute
+            
+            # Convert Google day sang Python day
+            if google_open_day > 0:
+                open_day = (google_open_day - 1) % 7
             else:
-                close_minutes = 24 * 60  # Mặc định đến hết ngày nếu không có close
-
-            if close_day is None:
-                close_day = open_day
-
-            if open_day is None:
-                open_day = close_day if close_day is not None else arrival_day
-
-            if open_day is None:
-                continue
-
-            if close_day == open_day:
-                if arrival_day == open_day and open_minutes <= arrival_minutes < close_minutes:
-                    print(f"    ✅ Mở cửa (periods): {open_hour}:{open_minute:02d} - {close_hour}:{close_minute:02d}")
-                    return True
+                open_day = 6
+            
+            # Tính toán datetime cho ngày mở cửa
+            after_day = after_time.weekday()
+            
+            # Tìm ngày gần nhất có open_day
+            days_until_open = (open_day - after_day) % 7
+            if days_until_open == 0:
+                # Cùng ngày - kiểm tra giờ
+                opening_datetime = after_time.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+                if opening_datetime > after_time:
+                    earliest_opens.append(opening_datetime)
+                else:
+                    # Đã qua giờ mở cửa hôm nay, lấy tuần sau
+                    opening_datetime = opening_datetime + timedelta(days=7)
+                    earliest_opens.append(opening_datetime)
             else:
-                # Thời gian vượt qua nửa đêm
-                if arrival_day == open_day and arrival_minutes >= open_minutes:
-                    print(f"    ✅ Mở cửa (qua đêm - open day): từ {open_hour}:{open_minute:02d}")
-                    return True
-                if arrival_day == close_day and arrival_minutes < close_minutes:
-                    print(f"    ✅ Mở cửa (qua đêm - close day): đến {close_hour}:{close_minute:02d}")
-                    return True
-                # Trường hợp mở nhiều ngày liên tiếp (ví dụ open thứ 6, đóng thứ 7)
-                span = (close_day - open_day) % 7
-                diff = (arrival_day - open_day) % 7
-                if span > 1 and diff < span:
-                    print(f"    ✅ Mở cửa (nhiều ngày liên tiếp)")
-                    return True
+                # Ngày khác trong tuần
+                opening_datetime = after_time.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+                opening_datetime = opening_datetime + timedelta(days=days_until_open)
+                earliest_opens.append(opening_datetime)
+        
+        if earliest_opens:
+            return min(earliest_opens)
     
-    # ❗ NẾU có opening_hours nhưng không có periods/weekdayDescriptions → không xác định → cho phép
-    return True
+    # Fallback: weekdayDescriptions
+    weekday_descriptions = opening_data.get('weekdayDescriptions')
+    if isinstance(weekday_descriptions, list) and weekday_descriptions:
+        # Parse first available time from descriptions
+        for desc in weekday_descriptions:
+            if not isinstance(desc, str) or ':' not in desc:
+                continue
+            
+            parts = desc.split(':', 1)
+            if len(parts) != 2:
+                continue
+            
+            hours_part = parts[1].strip()
+            if 'closed' in hours_part.lower():
+                continue
+            
+            # Try to parse opening time
+            if '-' in hours_part or '–' in hours_part:
+                normalized = hours_part.replace('–', '-').replace('—', '-')
+                intervals = normalized.split(',')
+                for interval in intervals:
+                    if '-' in interval:
+                        start_str = interval.split('-')[0].strip()
+                        start_minutes = parse_time_string(start_str)
+                        if start_minutes is not None:
+                            open_hour = start_minutes // 60
+                            open_minute = start_minutes % 60
+                            opening_datetime = after_time.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+                            if opening_datetime > after_time:
+                                return opening_datetime
+    
+    # Không parse được → giả định mở 6h
+    return after_time.replace(hour=6, minute=0, second=0, microsecond=0) + timedelta(days=1)
 
 
 
@@ -587,11 +787,17 @@ async def optimize_for_chatbot(request: OptimizerRequest):
             return max(scores) if scores else 0.0
         return 0.0
 
-    # BƯỚC 1: Lọc POIs đang mở cửa tại thời điểm khởi hành (TỐI ƯU: lọc TRƯỚC khi tính ECS để giảm số lượng POI cần tính)
+    # BƯỚC 1: Lọc POIs đang mở cửa tại thời điểm khởi hành
+    # Sử dụng strict_mode nếu giờ khởi hành ngoài khung giờ hợp lý (6h-22h)
+    start_hour = start_datetime.hour
+    use_strict_mode = start_hour < 6 or start_hour >= 22
+    if use_strict_mode:
+        print(f"⚠️  Giờ khởi hành {start_hour}h ngoài khung 6h-22h → Bật strict_mode để lọc POI không có opening_hours")
+    
     open_pois = []
     for poi in request.poi_list:
         # Sử dụng hàm is_poi_open_at_datetime để kiểm tra giờ mở cửa tại thời điểm khởi hành
-        if is_poi_open_at_datetime(poi, start_datetime):
+        if is_poi_open_at_datetime(poi, start_datetime, strict_mode=use_strict_mode):
             open_pois.append(poi)
     filtered_count = len(request.poi_list) - len(open_pois)
     print(f"Bước 1: Lọc giờ mở cửa → Giữ {len(open_pois)}, loại {filtered_count} POI")
@@ -763,23 +969,59 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         used_poi_ids.add(pid)
         return True
     
-    # === BƯỚC 1: Phân bổ CORE_ATTRACTION theo cluster địa lý ===
-    # Mỗi cluster tương ứng với 1 ngày, đảm bảo POI cùng khu vực
+    # === TIME WINDOW CHECK HELPER ===
+    def poi_likely_open_in_day_window(poi: Dict[str, Any], day_start: datetime) -> bool:
+        """
+        Kiểm tra xem POI có khả năng mở cửa trong time window của ngày không.
+        Time window: [day_start, day_start + 12h] (giả định tour kéo dài tối đa 12h/ngày)
+        Nếu POI không có opening_hours → cho phép (fallback)
+        """
+        opening_data = poi.get('opening_hours') or poi.get('regularOpeningHours') or poi.get('openingHours')
+        if not opening_data or not isinstance(opening_data, dict):
+            # Không có data → cho phép (sẽ check lại ở optimize_route_for_day)
+            return True
+        
+        # Kiểm tra trong khung giờ 8h-20h của ngày (reasonable tour hours)
+        # Thử 3 thời điểm: 8h, 12h, 16h
+        test_hours = [8, 12, 16]
+        for hour in test_hours:
+            test_time = day_start.replace(hour=hour, minute=0, second=0)
+            if is_poi_open_at_datetime(poi, test_time, strict_mode=False):
+                return True
+        
+        # Không mở trong cả 3 thời điểm → có thể không phù hợp
+        if DEBUG_LOGGING:
+            print(f"    ⚠️  {poi.get('name', 'Unknown')}: Không mở trong time window của ngày")
+        return False
+    
+    # === BƯỚC 1: Phân bổ CORE_ATTRACTION theo cluster địa lý với TIME WINDOW CHECK ===
+    # Mỗi cluster tương ứng với 1 ngày, đảm bảo POI cùng khu vực VÀ phù hợp giờ
     for day_idx in range(request.duration_days):
         cluster_idx = day_idx % len(core_clusters)
         cluster = core_clusters[cluster_idx]
+        day_start = start_datetime + timedelta(days=day_idx)
         
         # Sắp xếp cluster theo mood của ngày (xen kẽ mood)
         mood_idx = day_idx % len(moods_list)
         cluster.sort(key=lambda p: score_for_mood(p, mood_idx), reverse=True)
         
-        # Lấy 2-3 CORE cho ngày này
+        # Lấy 2-3 CORE cho ngày này, ƯU TIÊN POI có khả năng mở cửa
         count = 0
+        # Lần 1: Thử với POI có time window match
         for poi in cluster:
             if count >= constraints['core_max']:
                 break
-            if add_poi_to_day(poi, day_idx):
-                count += 1
+            if poi_likely_open_in_day_window(poi, day_start):
+                if add_poi_to_day(poi, day_idx):
+                    count += 1
+        
+        # Lần 2: Nếu chưa đủ, thử POI còn lại (không check time window)
+        if count < constraints['core_min']:
+            for poi in cluster:
+                if count >= constraints['core_max']:
+                    break
+                if add_poi_to_day(poi, day_idx):
+                    count += 1
     
     # Phân bổ CORE còn lại (nếu có) cho ngày thiếu
     remaining_core = [p for p in pois_by_function['CORE_ATTRACTION'] if get_poi_id(p) not in used_poi_ids]
@@ -810,10 +1052,12 @@ async def optimize_for_chatbot(request: OptimizerRequest):
         add_poi_to_day(poi, day_idx)
         heapq.heappush(day_poi_count, (len(daily_poi_groups[day_idx]), day_idx))
     
-    # === BƯỚC 3: Phân bổ ACTIVITY (max 2/ngày, cân bằng địa lý) ===
+    # === BƯỚC 3: Phân bổ ACTIVITY (max 2/ngày, cân bằng địa lý + time window) ===
     activity_pois = [p for p in pois_by_function['ACTIVITY'] if get_poi_id(p) not in used_poi_ids]
     
     for day_idx in range(request.duration_days):
+        day_start = start_datetime + timedelta(days=day_idx)
+        
         # Lấy vị trí trung tâm của ngày hiện tại
         day_lats = [p.get('location', {}).get('lat', 0) for p in daily_poi_groups[day_idx] if p.get('location')]
         day_lngs = [p.get('location', {}).get('lng', 0) for p in daily_poi_groups[day_idx] if p.get('location')]
@@ -832,20 +1076,33 @@ async def optimize_for_chatbot(request: OptimizerRequest):
             ))
         
         count = 0
+        # Ưu tiên ACTIVITY mở cửa trong time window
         for poi in activity_pois[:]:
             if count >= constraints['activity_max']:
                 break
-            if add_poi_to_day(poi, day_idx):
-                activity_pois.remove(poi)
-                count += 1
+            if poi_likely_open_in_day_window(poi, day_start):
+                if add_poi_to_day(poi, day_idx):
+                    activity_pois.remove(poi)
+                    count += 1
+        
+        # Nếu chưa đủ, lấy bất kỳ
+        if count < constraints['activity_max']:
+            for poi in activity_pois[:]:
+                if count >= constraints['activity_max']:
+                    break
+                if add_poi_to_day(poi, day_idx):
+                    activity_pois.remove(poi)
+                    count += 1
     
-    # === BƯỚC 4: Phân bổ F&B/DINING (max 1/ngày, gần cluster) ===
+    # === BƯỚC 4: Phân bổ F&B/DINING (max 1/ngày, gần cluster + time window) ===
     fb_dining = [p for p in (pois_by_function['FOOD_BEVERAGE'] + pois_by_function['DINING']) 
                  if get_poi_id(p) not in used_poi_ids]
     
     for day_idx in range(request.duration_days):
         if not fb_dining:
             break
+        
+        day_start = start_datetime + timedelta(days=day_idx)
             
         # Tìm F&B gần nhất với các POI đã chọn trong ngày
         day_lats = [p.get('location', {}).get('lat', 0) for p in daily_poi_groups[day_idx] if p.get('location')]
@@ -855,15 +1112,26 @@ async def optimize_for_chatbot(request: OptimizerRequest):
             center_lat = sum(day_lats) / len(day_lats)
             center_lng = sum(day_lngs) / len(day_lngs)
             
-            # Chọn F&B gần nhất
+            # Chọn F&B gần nhất VÀ mở cửa trong time window
             fb_dining.sort(key=lambda p: haversine_km(
                 p.get('location', {}).get('lat', 0),
                 p.get('location', {}).get('lng', 0),
                 center_lat, center_lng
             ))
         
-        if fb_dining and add_poi_to_day(fb_dining[0], day_idx):
-            fb_dining.pop(0)
+        # Ưu tiên F&B mở cửa trong time window (giờ ăn: 11h-14h, 17h-21h)
+        added = False
+        for poi in fb_dining[:]:
+            if poi_likely_open_in_day_window(poi, day_start):
+                if add_poi_to_day(poi, day_idx):
+                    fb_dining.remove(poi)
+                    added = True
+                    break
+        
+        # Nếu không có F&B nào mở, lấy bất kỳ
+        if not added and fb_dining:
+            if add_poi_to_day(fb_dining[0], day_idx):
+                fb_dining.pop(0)
     
     # === BƯỚC 5: Phân bổ OTHER cho ngày thiếu POI (heap-based, với constraint check) ===
     other_pois = [p for p in pois_by_function['OTHER'] if get_poi_id(p) not in used_poi_ids]
@@ -950,7 +1218,12 @@ async def optimize_for_chatbot(request: OptimizerRequest):
 
     # Hàm tối ưu lộ trình cho một ngày
     def optimize_route_for_day(day_pois: List[Dict[str, Any]], day_number: int, day_start_time: datetime) -> List[Dict[str, Any]]:
-        """Tối ưu thứ tự thăm POI cho một ngày bằng Nearest Neighbor heuristic và tính thời gian đến"""
+        """
+        Tối ưu thứ tự thăm POI cho một ngày bằng Nearest Neighbor heuristic và tính thời gian đến.
+        
+        Cải tiến: POI không mở cửa sẽ được defer để thử lại sau thay vì skip ngay.
+        Ví dụ: Chợ mở 8h, arrival 6h → defer → sau khi visit các POI khác, thử lại lúc 9h.
+        """
         if not day_pois:
             return []
         
@@ -972,9 +1245,11 @@ async def optimize_for_chatbot(request: OptimizerRequest):
 
         # Tính lịch trình dựa trên thứ tự đã chọn
         schedule: List[Dict[str, Any]] = []
+        deferred_pois: List[Dict[str, Any]] = []  # POI chưa mở cửa, defer để thử lại
         current_time = day_start_time
         previous_poi: Optional[Dict[str, Any]] = None
 
+        # PASS 1: Xử lý POI theo thứ tự Nearest Neighbor
         for poi in selected_order:
             if previous_poi is None:
                 travel_minutes = eta_from_current_for(poi)
@@ -986,7 +1261,14 @@ async def optimize_for_chatbot(request: OptimizerRequest):
 
             arrival_time = current_time + timedelta(minutes=travel_minutes)
 
-            if not is_poi_open_at_datetime(poi, arrival_time):
+            # Sử dụng strict_mode nếu arrival_time ngoài khung giờ hợp lý
+            arrival_hour = arrival_time.hour
+            check_strict = arrival_hour < 6 or arrival_hour >= 22
+            
+            if not is_poi_open_at_datetime(poi, arrival_time, strict_mode=check_strict):
+                if DEBUG_LOGGING:
+                    print(f"    ⏸️  Defer {poi.get('name', 'Unknown')}: không mở cửa lúc {arrival_time.strftime('%H:%M')}, sẽ thử lại sau")
+                deferred_pois.append(poi)
                 continue
 
             poi_with_timing = deepcopy(poi)
@@ -1003,6 +1285,93 @@ async def optimize_for_chatbot(request: OptimizerRequest):
             schedule.append(poi_with_timing)
             current_time = departure_time
             previous_poi = poi
+
+        # PASS 2: Retry deferred POI (có thể đã mở cửa với current_time mới)
+        if deferred_pois and DEBUG_LOGGING:
+            print(f"    🔄 Retry {len(deferred_pois)} deferred POI với current_time = {current_time.strftime('%H:%M')}")
+        
+        max_retries = 3  # Tối đa 3 lần retry
+        max_time_jumps = 2  # Tối đa 2 lần jump thời gian
+        time_jumps_used = 0
+        
+        for retry_round in range(max_retries):
+            if not deferred_pois:
+                break
+            
+            still_deferred = []
+            prev_current_time = current_time  # Lưu lại để detect nếu không progress
+            
+            for poi in deferred_pois:
+                # Tính travel time từ POI cuối trong schedule (hoặc current_location nếu schedule rỗng)
+                if schedule:
+                    last_poi = schedule[-1]
+                    travel_minutes = eta_between(get_poi_id(last_poi), get_poi_id(poi), candidates)
+                else:
+                    travel_minutes = eta_from_current_for(poi)
+                
+                if travel_minutes >= 9999.0:
+                    still_deferred.append(poi)
+                    continue
+                
+                arrival_time = current_time + timedelta(minutes=travel_minutes)
+                arrival_hour = arrival_time.hour
+                check_strict = arrival_hour < 6 or arrival_hour >= 22
+                
+                if not is_poi_open_at_datetime(poi, arrival_time, strict_mode=check_strict):
+                    if DEBUG_LOGGING:
+                        print(f"    ⏸️  {poi.get('name', 'Unknown')}: vẫn chưa mở lúc {arrival_time.strftime('%H:%M')}")
+                    still_deferred.append(poi)
+                    continue
+                
+                # POI đã mở! Thêm vào schedule
+                if DEBUG_LOGGING:
+                    print(f"    ✅ {poi.get('name', 'Unknown')}: đã mở lúc {arrival_time.strftime('%H:%M')} (retry thành công)")
+                
+                poi_with_timing = deepcopy(poi)
+                poi_with_timing['estimated_arrival'] = arrival_time.isoformat()
+                visit_duration = get_estimated_visit_duration(poi)
+                poi_with_timing['visit_duration_minutes'] = visit_duration
+                departure_time = arrival_time + timedelta(minutes=visit_duration)
+                poi_with_timing['estimated_departure'] = departure_time.isoformat()
+                
+                schedule.append(poi_with_timing)
+                current_time = departure_time
+            
+            deferred_pois = still_deferred
+            
+            # Nếu vẫn còn deferred POI và current_time không đổi (không progress)
+            # → Nhảy current_time đến giờ mở cửa sớm nhất
+            if deferred_pois and current_time == prev_current_time and time_jumps_used < max_time_jumps:
+                # Tìm thời gian mở cửa sớm nhất trong các POI deferred
+                earliest_opening = None
+                for poi in deferred_pois:
+                    opening_time = get_earliest_opening_time(poi, current_time)
+                    if opening_time:
+                        if earliest_opening is None or opening_time < earliest_opening:
+                            earliest_opening = opening_time
+                
+                if earliest_opening and earliest_opening > current_time:
+                    # Giới hạn jump: không nhảy quá 4 tiếng (để tránh jump đến ngày hôm sau)
+                    max_jump_hours = 4
+                    if (earliest_opening - current_time).total_seconds() / 3600 <= max_jump_hours:
+                        if DEBUG_LOGGING:
+                            print(f"    ⏰ Jump time: {current_time.strftime('%H:%M')} → {earliest_opening.strftime('%H:%M')} (chờ POI mở cửa)")
+                        current_time = earliest_opening
+                        time_jumps_used += 1
+                        # Không break, tiếp tục retry với thời gian mới
+                    else:
+                        if DEBUG_LOGGING:
+                            print(f"    ⚠️  Earliest opening quá xa ({earliest_opening.strftime('%H:%M')}), dừng retry")
+                        break
+                else:
+                    # Không tìm thấy opening time hợp lệ
+                    break
+        
+        # Log POI vẫn không thể visit sau retry
+        if deferred_pois and DEBUG_LOGGING:
+            print(f"    ❌ {len(deferred_pois)} POI không thể visit (không mở cửa trong khoảng thời gian hợp lý):")
+            for poi in deferred_pois:
+                print(f"       - {poi.get('name', 'Unknown')}")
 
         return schedule
 
@@ -1113,7 +1482,13 @@ async def optimize_with_kmeans(request: OptimizerRequest):
         return 0.0
 
     # BƯỚC 1: Lọc mở cửa
-    open_pois = [poi for poi in request.poi_list if is_poi_open_at_datetime(poi, start_datetime)]
+    # Sử dụng strict_mode nếu giờ khởi hành ngoài khung giờ hợp lý (6h-22h)
+    start_hour = start_datetime.hour
+    use_strict_mode = start_hour < 6 or start_hour >= 22
+    if use_strict_mode:
+        print(f"⚠️  Giờ khởi hành {start_hour}h ngoài khung 6h-22h → Bật strict_mode để lọc POI không có opening_hours")
+    
+    open_pois = [poi for poi in request.poi_list if is_poi_open_at_datetime(poi, start_datetime, strict_mode=use_strict_mode)]
     filtered_count = len(request.poi_list) - len(open_pois)
     print(f"Bước 1: Lọc giờ mở cửa → Giữ {len(open_pois)}, loại {filtered_count} POI")
 
@@ -1338,7 +1713,14 @@ async def optimize_with_kmeans(request: OptimizerRequest):
             if travel_min >= 9999:
                 continue
             arrival = current_time + timedelta(minutes=travel_min)
-            if not is_poi_open_at_datetime(poi, arrival):
+            
+            # Sử dụng strict_mode nếu arrival ngoài khung giờ hợp lý
+            arrival_hour = arrival.hour
+            check_strict = arrival_hour < 6 or arrival_hour >= 22
+            
+            if not is_poi_open_at_datetime(poi, arrival, strict_mode=check_strict):
+                if DEBUG_LOGGING:
+                    print(f"    ⏭️  Skip {poi.get('name', 'Unknown')}: không mở cửa lúc {arrival.strftime('%H:%M')}")
                 continue
             poi_copy = deepcopy(poi)
             # Return Vietnam time directly

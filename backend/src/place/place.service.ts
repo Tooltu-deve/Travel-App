@@ -60,6 +60,7 @@ export class PlaceService {
                 ? {
                     openNow: restData.opening_hours.openNow,
                     weekdayDescriptions: restData.opening_hours.weekdayDescriptions,
+                    periods: restData.opening_hours.periods, // Thêm periods để check giờ mở cửa
                 }
                 : undefined,
             
@@ -502,6 +503,7 @@ export class PlaceService {
         place.openingHours = {
           openNow: data.regularOpeningHours.openNow,
           weekdayDescriptions: data.regularOpeningHours.weekdayDescriptions || [],
+          periods: data.regularOpeningHours.periods || [], // Thêm periods để check giờ mở cửa
         };
       }
       if (data.photos) {
